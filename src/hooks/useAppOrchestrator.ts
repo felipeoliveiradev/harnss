@@ -10,6 +10,7 @@ import { useBackgroundAgents } from "@/hooks/useBackgroundAgents";
 import { useAgentRegistry } from "@/hooks/useAgentRegistry";
 import { useNotifications } from "@/hooks/useNotifications";
 import { resolveModelValue } from "@/lib/model-utils";
+import { isWindows } from "@/lib/utils";
 import type { ToolId } from "@/components/ToolPicker";
 import type { TodoItem, ImageAttachment, Space, SpaceColor, InstalledAgent, AcpPermissionBehavior, EngineId } from "@/types";
 import type { NotificationSettings } from "@/types/ui";
@@ -573,6 +574,13 @@ export function useAppOrchestrator() {
     if (mode !== settings.permissionMode) settings.setPermissionMode(mode);
   }, [manager.sessionInfo?.permissionMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Keep plan toggle scoped to the active chat session.
+  useEffect(() => {
+    if (!manager.activeSessionId || manager.isDraft || !manager.activeSession) return;
+    const nextPlanMode = !!manager.activeSession.planMode;
+    if (settings.planMode !== nextPlanMode) settings.setPlanMode(nextPlanMode);
+  }, [manager.activeSessionId, manager.activeSession?.planMode, manager.isDraft, settings.planMode, settings.setPlanMode]);
+
   // Panel visibility flags
   const hasRightPanel = ((hasTodos && settings.activeTools.has("tasks")) || (hasAgents && settings.activeTools.has("agents"))) && !!manager.activeSessionId;
   const hasToolsColumn = (settings.activeTools.has("terminal") || settings.activeTools.has("browser") || settings.activeTools.has("git") || settings.activeTools.has("files") || settings.activeTools.has("mcp") || settings.activeTools.has("changes")) && !!manager.activeSessionId;
@@ -582,10 +590,12 @@ export function useAppOrchestrator() {
   const margins = isIsland ? 16 : 0;
   const handleW = isIsland ? 8 : 1;
   const pickerW = isIsland ? 64 : 56;
+  // Windows native frame borders consume extra pixels from the content area
+  const winFrameBuffer = isWindows ? 16 : 0;
 
   useEffect(() => {
     const sidebarW = sidebar.isOpen ? 260 : 0;
-    let minW = sidebarW + margins + 768;
+    let minW = sidebarW + margins + 768 + winFrameBuffer;
 
     if (manager.activeSessionId) {
       minW += pickerW;

@@ -27,12 +27,26 @@
               "appearance" : "dark",
               "value" : 0
             }
-          ]
+          ],
+          "position" : {
+            "scale" : 0.8,
+            "translation-in-points" : [
+              0,
+              0
+            ]
+          }
         },
         {
           "glass" : true,
           "image-name" : "harnss-light 2.png",
-          "name" : "harnss-light 2"
+          "name" : "harnss-light 2",
+          "position" : {
+            "scale" : 0.8,
+            "translation-in-points" : [
+              0,
+              0
+            ]
+          }
         }
       ],
       "shadow" : {

@@ -107,6 +107,17 @@ interface UseNotificationsOptions {
   isProcessing: boolean;
 }
 
+interface BackgroundSessionCompleteDetail {
+  sessionId: string;
+  sessionTitle: string;
+}
+
+interface BackgroundPermissionDetail {
+  sessionId: string;
+  sessionTitle: string;
+  permission: PermissionRequest;
+}
+
 export function useNotifications({
   pendingPermission,
   notificationSettings,
@@ -153,4 +164,37 @@ export function useNotifications({
       );
     }
   }, [isProcessing, settings]);
+
+  // ── Background session notifications ──
+  useEffect(() => {
+    const onBackgroundComplete = (evt: Event) => {
+      const detail = (evt as CustomEvent<BackgroundSessionCompleteDetail>).detail;
+      if (!detail) return;
+      const title = detail.sessionTitle || "Background session";
+      fireNotification(
+        settings.sessionComplete,
+        "Task complete",
+        `${title} has finished processing.`,
+      );
+    };
+
+    const onBackgroundPermission = (evt: Event) => {
+      const detail = (evt as CustomEvent<BackgroundPermissionDetail>).detail;
+      if (!detail?.permission) return;
+      const eventType = classifyEvent(detail.permission.toolName);
+      const eventSettings = settings[eventType];
+      const { title, body } = getNotificationContent(eventType, detail.permission);
+      const sessionPrefix = detail.sessionTitle
+        ? `${detail.sessionTitle}: `
+        : "";
+      fireNotification(eventSettings, title, `${sessionPrefix}${body}`);
+    };
+
+    window.addEventListener("harnss:background-session-complete", onBackgroundComplete as EventListener);
+    window.addEventListener("harnss:background-permission-request", onBackgroundPermission as EventListener);
+    return () => {
+      window.removeEventListener("harnss:background-session-complete", onBackgroundComplete as EventListener);
+      window.removeEventListener("harnss:background-permission-request", onBackgroundPermission as EventListener);
+    };
+  }, [settings]);
 }

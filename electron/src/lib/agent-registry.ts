@@ -115,19 +115,33 @@ export function getRegistryPlatformKey(): string | null {
 
 /** Resolve a command name to its absolute path via `which` (or `where` on Windows). */
 async function resolveWhich(cmd: string): Promise<string | null> {
+  if (!cmd.trim()) return null;
   try {
     const whichCmd = process.platform === "win32" ? "where" : "which";
     const { stdout } = await execFileAsync(whichCmd, [cmd]);
-    // `where` on Windows may return multiple lines; take the first
-    return stdout.trim().split("\n")[0] || null;
+    // `where` on Windows may return multiple CRLF lines; take the first non-empty.
+    return stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => line.length > 0) ?? null;
   } catch {
     return null; // command not found
   }
 }
 
-/** Strip leading "./" and trailing ".exe" from a registry cmd to get the bare binary name. */
+/**
+ * Convert registry cmd (which may include relative paths/quotes/extensions) to
+ * a bare executable name for PATH lookup.
+ */
 function extractBinaryName(cmd: string): string {
-  return cmd.replace(/^\.\//, "").replace(/\.exe$/i, "");
+  const trimmed = cmd.trim();
+  if (!trimmed) return "";
+
+  const match = trimmed.match(/^"([^"]+)"|^'([^']+)'|^(\S+)/);
+  const executable = (match?.[1] ?? match?.[2] ?? match?.[3] ?? "").trim();
+  const normalized = executable.replace(/\\/g, "/");
+  const base = path.posix.basename(normalized);
+  return base.replace(/\.(exe|cmd|bat|ps1)$/i, "");
 }
 
 export interface BinaryCheckResult {

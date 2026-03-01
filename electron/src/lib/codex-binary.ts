@@ -95,6 +95,7 @@ function resolveCodexPathSync(): string {
 
 // Reset on each app launch so binary resolution picks up newly installed/updated binaries
 let cachedPath: string | null = null;
+let downloadInFlight: Promise<string> | null = null;
 
 /**
  * Resolve the codex binary path, downloading if necessary.
@@ -111,10 +112,30 @@ export async function getCodexBinaryPath(): Promise<string> {
     // Not found — attempt auto-download
   }
 
+  if (downloadInFlight) return downloadInFlight;
+
   log("codex-binary", "Codex not found locally, downloading via npm...");
-  cachedPath = await downloadCodexBinary();
+  downloadInFlight = downloadCodexBinary()
+    .then((binaryPath) => {
+      cachedPath = binaryPath;
+      return binaryPath;
+    })
+    .finally(() => {
+      downloadInFlight = null;
+    });
+  cachedPath = await downloadInFlight;
   log("codex-binary", `Downloaded codex to: ${cachedPath}`);
   return cachedPath;
+}
+
+export function getCodexBinaryStatus(): {
+  installed: boolean;
+  downloading: boolean;
+} {
+  return {
+    installed: isCodexInstalled(),
+    downloading: downloadInFlight != null,
+  };
 }
 
 /** Get the codex version string, or null if not available. */
@@ -142,6 +163,30 @@ function getPlatformTag(): string {
   return `${platform}-${arch}`;
 }
 
+function getNpmCommand(): string {
+  // On Windows npm is exposed as npm.cmd for non-shell child process execution.
+  return process.platform === "win32" ? "npm.cmd" : "npm";
+}
+
+function listFilesRecursive(root: string, maxCount = 20): string {
+  const out: string[] = [];
+  const queue = [root];
+  while (queue.length > 0 && out.length < maxCount) {
+    const current = queue.shift()!;
+    const entries = fs.readdirSync(current, { withFileTypes: true });
+    for (const entry of entries) {
+      if (out.length >= maxCount) break;
+      const fullPath = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        queue.push(fullPath);
+      } else if (entry.isFile()) {
+        out.push(fullPath);
+      }
+    }
+  }
+  return out.join("\n");
+}
+
 /**
  * Download the codex binary via `npm pack @openai/codex@<platform-tag>`.
  * Extracts the binary and moves it to our managed bin directory.
@@ -156,7 +201,7 @@ async function downloadCodexBinary(): Promise<string> {
     log("codex-binary", `npm pack ${packageSpec} in ${tmpDir}`);
 
     // npm pack downloads the tarball
-    execFileSync("npm", ["pack", packageSpec, "--pack-destination", "."], {
+    execFileSync(getNpmCommand(), ["pack", packageSpec, "--pack-destination", "."], {
       cwd: tmpDir,
       encoding: "utf-8",
       timeout: 120000, // 2 min timeout for download
@@ -186,10 +231,7 @@ async function downloadCodexBinary(): Promise<string> {
       const found = altPaths.find((p) => fs.existsSync(p));
       if (!found) {
         // List what's in the package for debugging
-        const contents = execFileSync("find", [path.join(tmpDir, "package"), "-type", "f"], {
-          encoding: "utf-8",
-          timeout: 5000,
-        }).split("\n").slice(0, 20).join("\n");
+        const contents = listFilesRecursive(path.join(tmpDir, "package"), 20);
         throw new Error(`Codex binary not found in package. Contents:\n${contents}`);
       }
       fs.copyFileSync(found, getManagedBinaryPath());

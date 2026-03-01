@@ -118,6 +118,7 @@ export function useSessionLifecycle({
         createdAt: s.createdAt,
         lastMessageAt: s.lastMessageAt || s.createdAt,
         model: s.model,
+        planMode: s.planMode,
         totalCost: s.totalCost,
         isActive: false,
         engine: s.engine,
@@ -235,6 +236,10 @@ export function useSessionLifecycle({
 
       const session = sessionsRef.current.find((s) => s.id === id);
       if (!session) return;
+      setStartOptions((prev) => ({
+        ...prev,
+        planMode: !!session.planMode,
+      }));
 
       // Switch to the correct space for this session's project — ensures that
       // clicking a permission toast (or any cross-space navigation) lands in the right space
@@ -274,6 +279,10 @@ export function useSessionLifecycle({
       // Fall back to loading from disk (non-live session)
       const data = await window.claude.sessions.load(session.projectId, id);
       if (data) {
+        setStartOptions((prev) => ({
+          ...prev,
+          planMode: !!data.planMode,
+        }));
         setInitialMessages(data.messages);
         setInitialMeta(null);
         // No live process = no pending permission
@@ -292,6 +301,7 @@ export function useSessionLifecycle({
               ...(data.agentId ? { agentId: data.agentId } : {}),
               ...(data.agentSessionId ? { agentSessionId: data.agentSessionId } : {}),
               ...(data.codexThreadId ? { codexThreadId: data.codexThreadId } : {}),
+              planMode: !!data.planMode,
             } : {}),
           })),
         );
@@ -577,6 +587,9 @@ export function useSessionLifecycle({
     };
     const effectiveClaudeMode = getEffectiveClaudePermissionMode(nextOptions);
     setStartOptions((prev) => ({ ...prev, planMode }));
+    setSessions((prev) => prev.map((s) => (
+      s.id === id ? { ...s, planMode } : s
+    )));
 
     if (id === DRAFT_ID) {
       if (preStartedSessionIdRef.current) {
@@ -586,6 +599,14 @@ export function useSessionLifecycle({
     }
 
     const sessionEngine = sessionsRef.current.find((s) => s.id === id)?.engine ?? "claude";
+    const session = sessionsRef.current.find((s) => s.id === id);
+    if (session) {
+      window.claude.sessions.load(session.projectId, id).then((data) => {
+        if (data) {
+          window.claude.sessions.save({ ...data, planMode });
+        }
+      }).catch(() => { /* session may have been deleted */ });
+    }
     if (sessionEngine === "claude") {
       engine.setPermissionMode(effectiveClaudeMode);
     }

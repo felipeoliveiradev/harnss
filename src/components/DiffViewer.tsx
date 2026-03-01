@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useCallback, memo, type CSSProperties } from "react";
+import { useMemo, useState, useEffect, useCallback, memo, type CSSProperties, type ReactNode } from "react";
 import { diffLines, diffWords } from "diff";
 import { Copy, Check, ChevronDown } from "lucide-react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
@@ -7,6 +7,7 @@ import { oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { OpenInEditorButton } from "./OpenInEditorButton";
 import { getLanguageFromPath, INLINE_HIGHLIGHT_STYLE, INLINE_CODE_TAG_STYLE } from "@/lib/languages";
 import { useResolvedThemeClass } from "@/hooks/useResolvedThemeClass";
+import { highlightToLines } from "@/lib/syntax-highlight";
 
 // ── Types ──
 
@@ -121,6 +122,53 @@ export function DiffViewer({ oldString, newString, filePath, unifiedDiff, fillHe
     return computeDiffLines(oldString, newString);
   }, [oldString, newString, fullFileContent, parsedUnifiedDiff]);
 
+  // Pre-highlight old-side and new-side content with full-file context.
+  // Tokenizes each contiguous run independently so multi-line constructs
+  // (block comments, template literals) are correctly recognized by Prism.
+  const { highlightedOld, highlightedNew } = useMemo(() => {
+    const oldResult = new Map<number, ReactNode>();
+    const newResult = new Map<number, ReactNode>();
+
+    type LineEntry = { lineNum: number; content: string };
+    const oldRuns: LineEntry[][] = [[]];
+    const newRuns: LineEntry[][] = [[]];
+
+    for (const line of allLines) {
+      if (line.isGap) {
+        // Start new contiguous runs at gap boundaries (unified diff chunks)
+        if (oldRuns[oldRuns.length - 1].length > 0) oldRuns.push([]);
+        if (newRuns[newRuns.length - 1].length > 0) newRuns.push([]);
+        continue;
+      }
+      if ((line.type === "removed" || line.type === "context") && line.oldLineNum != null) {
+        oldRuns[oldRuns.length - 1].push({ lineNum: line.oldLineNum, content: line.content });
+      }
+      if ((line.type === "added" || line.type === "context") && line.newLineNum != null) {
+        newRuns[newRuns.length - 1].push({ lineNum: line.newLineNum, content: line.content });
+      }
+    }
+
+    // Tokenize each contiguous run independently for correct multi-line context
+    for (const run of oldRuns) {
+      if (run.length === 0) continue;
+      const code = run.map((e) => e.content).join("\n");
+      const highlighted = highlightToLines(code, language, syntaxStyle);
+      for (let i = 0; i < run.length; i++) {
+        oldResult.set(run[i].lineNum, highlighted[i] ?? run[i].content);
+      }
+    }
+    for (const run of newRuns) {
+      if (run.length === 0) continue;
+      const code = run.map((e) => e.content).join("\n");
+      const highlighted = highlightToLines(code, language, syntaxStyle);
+      for (let i = 0; i < run.length; i++) {
+        newResult.set(run[i].lineNum, highlighted[i] ?? run[i].content);
+      }
+    }
+
+    return { highlightedOld: oldResult, highlightedNew: newResult };
+  }, [allLines, language, syntaxStyle]);
+
   // Collapse context runs (respecting expanded sections)
   const displayLines = useMemo(
     () => collapseContext(allLines, CONTEXT_LINES, expandedSections),
@@ -178,7 +226,14 @@ export function DiffViewer({ oldString, newString, filePath, unifiedDiff, fillHe
               onExpand={() => expandSection(i)}
             />
           ) : (
-            <DiffLineRow key={i} line={line} language={language} syntaxStyle={syntaxStyle} />
+            <DiffLineRow
+              key={i}
+              line={line}
+              language={language}
+              syntaxStyle={syntaxStyle}
+              highlightedOld={highlightedOld}
+              highlightedNew={highlightedNew}
+            />
           ),
         )}
       </div>
@@ -192,10 +247,14 @@ function DiffLineRow({
   line,
   language,
   syntaxStyle,
+  highlightedOld,
+  highlightedNew,
 }: {
   line: DiffLine;
   language: string;
   syntaxStyle: PrismThemeStyle;
+  highlightedOld: Map<number, ReactNode>;
+  highlightedNew: Map<number, ReactNode>;
 }) {
   if (line.isGap) {
     return (
@@ -258,6 +317,9 @@ function DiffLineRow({
       {/* Content — syntax highlighted with diff background colors */}
       <span className={`flex-1 px-3 py-px whitespace-pre-wrap wrap-break-word ${contentClass}`}>
         {line.highlights ? (
+          // Word-level diff: keep per-fragment highlighting (intersecting syntax
+          // tokens with word diff boundaries is complex, low-impact since diff
+          // coloring dominates visually on these changed lines)
           line.highlights.map((part, j) => (
             <span
               key={j}
@@ -273,7 +335,14 @@ function DiffLineRow({
             </span>
           ))
         ) : (
-          <HighlightedCode code={line.content} language={language} syntaxStyle={syntaxStyle} />
+          // Full-line: use pre-highlighted content with file-level context
+          // so multi-line constructs (comments, strings) are properly recognized
+          (line.type === "removed"
+            ? highlightedOld.get(line.oldLineNum!)
+            : line.type === "added"
+              ? highlightedNew.get(line.newLineNum!)
+              : highlightedNew.get(line.newLineNum!) ?? highlightedOld.get(line.oldLineNum!)
+          ) ?? line.content
         )}
       </span>
     </div>

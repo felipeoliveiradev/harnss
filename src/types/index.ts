@@ -42,6 +42,7 @@ export type {
   BackgroundAgentActivity,
   BackgroundAgentUsage,
   ImageAttachment,
+  GrabbedElement,
   ContextUsage,
   AppSettings,
   InstalledAgent,

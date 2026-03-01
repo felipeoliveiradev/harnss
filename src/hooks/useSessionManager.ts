@@ -38,6 +38,7 @@ export function useSessionManager(projects: Project[], acpPermissionBehavior: Ac
   const [draftMcpStatuses, setDraftMcpStatuses] = useState<McpServerStatus[]>([]);
   const [cachedModels, setCachedModels] = useState<ModelInfo[]>([]);
   const [codexRawModels, setCodexRawModels] = useState<CodexModelSummary[]>([]);
+  const [codexModelsLoadingMessage, setCodexModelsLoadingMessage] = useState<string | null>(null);
   const [queuedCount, setQueuedCount] = useState(0);
 
   // ── Determine active engine ──
@@ -185,6 +186,7 @@ export function useSessionManager(projects: Project[], acpPermissionBehavior: Ac
     setQueuedCount,
     setCachedModels,
     setCodexRawModels,
+    setCodexModelsLoadingMessage,
   };
 
   const engines: EngineHooks = {
@@ -401,6 +403,7 @@ export function useSessionManager(projects: Project[], acpPermissionBehavior: Ac
     codexEffort: codex.codexEffort,
     setCodexEffort: setCodexEffortFromUser,
     codexRawModels,
+    codexModelsLoadingMessage,
     // Codex plan steps (from turn/plan/updated events — separate from Claude's TodoWrite tool)
     codexTodoItems: codex.todoItems,
   };

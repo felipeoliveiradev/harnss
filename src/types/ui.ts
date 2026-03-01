@@ -78,6 +78,26 @@ export interface ImageAttachment {
   fileName?: string;
 }
 
+/** Element data captured by the browser inspector (Element Grab feature). */
+export interface GrabbedElement {
+  id: string;
+  /** Page URL where the element was captured */
+  url: string;
+  tag: string;
+  /** Best-effort unique CSS selector path */
+  selector: string;
+  classes: string[];
+  /** Whitelisted attributes (id, href, src, alt, role, aria-label, data-testid, etc.) */
+  attributes: Record<string, string>;
+  /** innerText truncated to 500 chars */
+  textContent: string;
+  /** outerHTML truncated to 2000 chars */
+  outerHTML: string;
+  /** Key computed styles (display, position, color, font-size, etc.) */
+  computedStyles: Record<string, string>;
+  boundingRect: { x: number; y: number; width: number; height: number };
+}
+
 export interface TodoItem {
   content: string;
   status: "pending" | "in_progress" | "completed";
@@ -147,6 +167,7 @@ export interface SessionBase {
   title: string;
   createdAt: number;
   model?: string;
+  planMode?: boolean;
   totalCost: number;
   engine?: EngineId;
   agentSessionId?: string;

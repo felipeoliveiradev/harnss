@@ -12,7 +12,7 @@ import crypto from "crypto";
 import { log } from "../lib/logger";
 import { safeSend } from "../lib/safe-send";
 import { CodexRpcClient } from "../lib/codex-rpc";
-import { getCodexBinaryPath, getCodexVersion } from "../lib/codex-binary";
+import { getCodexBinaryPath, getCodexBinaryStatus, getCodexVersion } from "../lib/codex-binary";
 import { getAppSetting } from "../lib/app-settings";
 import { extractErrorMessage } from "../lib/error-utils";
 
@@ -693,6 +693,11 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     } catch (err) {
       return { error: extractErrorMessage(err) };
     }
+  });
+
+  // ─── codex:binary-status ───
+  ipcMain.handle("codex:binary-status", async () => {
+    return getCodexBinaryStatus();
   });
 }
 

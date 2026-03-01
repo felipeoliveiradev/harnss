@@ -1,5 +1,5 @@
-import { memo, useMemo, createContext, useContext, type ReactNode } from "react";
-import { AlertCircle, Clock, File, Folder, Info, RotateCcw, Undo2 } from "lucide-react";
+import { memo, useState, useMemo, createContext, useContext, type ReactNode } from "react";
+import { AlertCircle, Clock, Crosshair, File, Folder, Info, RotateCcw, Undo2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
@@ -14,9 +14,10 @@ import {
 import { cn } from "@/lib/utils";
 import { guessLanguage } from "@/lib/languages";
 import { useStreamingTextReveal } from "@/hooks/useStreamingTextReveal";
-import type { UIMessage } from "@/types";
+import type { UIMessage, ImageAttachment } from "@/types";
 import { ThinkingBlock } from "./ThinkingBlock";
 import { CopyButton } from "./CopyButton";
+import { ImageLightbox } from "./ImageLightbox";
 
 // Stable references to avoid re-creating on every render
 const REMARK_PLUGINS = [remarkGfm];
@@ -109,14 +110,27 @@ const CODE_TAG_PROPS = { style: { background: "transparent", textShadow: "none" 
 function stripFileContext(text: string): string {
   let result = text.replace(/<file path="[^"]*">[\s\S]*?<\/file>\s*/g, "");
   result = result.replace(/<folder path="[^"]*">[\s\S]*?<\/folder>\s*/g, "");
+  result = result.replace(/<element [^>]*>[\s\S]*?<\/element>\s*/g, "");
   return result.trim();
 }
 
-/** Render @path references as styled inline badges */
+/** Render @path references and grabbed-element markers as styled inline badges */
 function renderWithMentions(text: string): ReactNode[] {
-  // Match @path/to/file or @path/to/dir/
-  const parts = text.split(/(@[\w./_-]+\/?)/g);
+  // Match @path/to/file, @path/to/dir/, or [[element:...]]
+  const parts = text.split(/(@[\w./_-]+\/?|\[\[element:[^\]]+\]\])/g);
   return parts.map((part, i) => {
+    const browserMatch = /^\[\[element:(.+)\]\]$/.exec(part);
+    if (browserMatch) {
+      return (
+        <span
+          key={i}
+          className="inline-flex items-baseline gap-0.5 rounded bg-blue-500/15 px-1 py-px font-mono text-xs text-blue-300"
+        >
+          <Crosshair className="inline h-3 w-3 shrink-0 self-center" />
+          {browserMatch[1]}
+        </span>
+      );
+    }
     if (part.startsWith("@") && part.length > 1) {
       const filePath = part.slice(1);
       const isDir = filePath.endsWith("/");
@@ -151,6 +165,7 @@ interface MessageBubbleProps {
 export const MessageBubble = memo(function MessageBubble({ message, showThinking = true, isContinuation, onRevert, onFullRevert }: MessageBubbleProps) {
   // All hooks must be called before any early returns (Rules of Hooks)
   const isUser = message.role === "user";
+  const [viewingImage, setViewingImage] = useState<ImageAttachment | null>(null);
   const time = useMemo(() => new Date(message.timestamp).toLocaleTimeString(), [message.timestamp]);
   const displayContent = useMemo(() => isUser ? (message.displayContent ?? stripFileContext(message.content)) : message.content, [isUser, message.content, message.displayContent]);
 
@@ -196,11 +211,17 @@ export const MessageBubble = memo(function MessageBubble({ message, showThinking
                         key={img.id}
                         src={`data:${img.mediaType};base64,${img.data}`}
                         alt={img.fileName ?? "attached image"}
-                        className="max-h-48 rounded-lg"
+                        className="max-h-48 cursor-pointer rounded-lg transition-opacity hover:opacity-90"
+                        onClick={() => setViewingImage(img)}
                       />
                     ))}
                   </div>
                 )}
+                <ImageLightbox
+                  image={viewingImage}
+                  open={!!viewingImage}
+                  onOpenChange={(isOpen) => { if (!isOpen) setViewingImage(null); }}
+                />
                 {renderWithMentions(displayContent)}
                 {message.isQueued && (
                   <div className="mt-1.5 flex items-center gap-1 text-[11px] text-muted-foreground">

@@ -12,6 +12,7 @@ interface SessionMeta {
   /** Timestamp of the most recent user message — used for sidebar sort order */
   lastMessageAt: number;
   model?: string;
+  planMode?: boolean;
   totalCost?: number;
   engine?: "claude" | "acp" | "codex";
   codexThreadId?: string;
@@ -99,6 +100,7 @@ export function register(): void {
             createdAt: data.createdAt || 0,
             lastMessageAt,
             model: data.model,
+            planMode: data.planMode,
             totalCost: data.totalCost || 0,
             engine: data.engine,
             codexThreadId: data.codexThreadId,

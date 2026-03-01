@@ -90,6 +90,7 @@ export interface SharedSessionSetters {
   setQueuedCount: React.Dispatch<React.SetStateAction<number>>;
   setCachedModels: React.Dispatch<React.SetStateAction<ModelInfo[]>>;
   setCodexRawModels: React.Dispatch<React.SetStateAction<CodexModelSummary[]>>;
+  setCodexModelsLoadingMessage: React.Dispatch<React.SetStateAction<string | null>>;
 }
 
 // Engine hook types — use ReturnType of the actual hooks for perfect alignment.

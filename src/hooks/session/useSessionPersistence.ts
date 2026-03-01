@@ -58,11 +58,22 @@ export function useSessionPersistence({
   // Wire up background store callbacks for sidebar indicators
   useEffect(() => {
     backgroundStoreRef.current.onProcessingChange = (sessionId, isProcessing) => {
+      const session = sessionsRef.current.find((s) => s.id === sessionId);
+      const wasProcessing = !!session?.isProcessing;
       setSessions((prev) =>
         prev.map((s) =>
           s.id === sessionId ? { ...s, isProcessing } : s,
         ),
       );
+
+      if (wasProcessing && !isProcessing && session) {
+        window.dispatchEvent(new CustomEvent("harnss:background-session-complete", {
+          detail: {
+            sessionId,
+            sessionTitle: session.title,
+          },
+        }));
+      }
     };
 
     // When a background session receives a permission request, update sidebar + show toast
@@ -88,6 +99,14 @@ export function useSessionPersistence({
           onClick: () => switchSessionRef.current?.(sessionId),
         },
       });
+
+      window.dispatchEvent(new CustomEvent("harnss:background-permission-request", {
+        detail: {
+          sessionId,
+          sessionTitle,
+          permission,
+        },
+      }));
     };
   }, []);
 
@@ -117,6 +136,7 @@ export function useSessionPersistence({
             createdAt: session.createdAt,
             messages: bgState.messages,
             model: session.model || bgState.sessionInfo?.model,
+            planMode: session.planMode,
             totalCost: bgState.totalCost,
             engine: session.engine,
             ...(session.engine === "codex" && session.codexThreadId ? { codexThreadId: session.codexThreadId } : {}),
@@ -274,6 +294,7 @@ export function useSessionPersistence({
         createdAt: session.createdAt,
         messages: msgs,
         model: session.model || sessionInfo?.model,
+        planMode: session.planMode,
         totalCost: totalCostRef.current,
         engine: session.engine,
         ...(session.agentId ? { agentId: session.agentId } : {}),
@@ -373,6 +394,7 @@ export function useSessionPersistence({
       createdAt: session.createdAt,
       messages: msgs,
       model: session.model,
+      planMode: session.planMode,
       totalCost: totalCostRef.current,
       engine: session.engine,
       ...(session.agentId ? { agentId: session.agentId } : {}),

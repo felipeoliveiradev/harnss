@@ -10,6 +10,7 @@ import {
   ArrowUp,
   Brain,
   ChevronDown,
+  Crosshair,
   File,
   Folder,
   Loader2,
@@ -17,6 +18,7 @@ import {
   Mic,
   MicOff,
   Paperclip,
+  Pencil,
   Shield,
   Square,
   X,
@@ -34,11 +36,24 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import type { ImageAttachment, ContextUsage, InstalledAgent, ACPConfigOption, ModelInfo, AcpPermissionBehavior, EngineId } from "@/types";
+import type { ImageAttachment, GrabbedElement, ContextUsage, InstalledAgent, ACPConfigOption, ModelInfo, AcpPermissionBehavior, EngineId } from "@/types";
 import { flattenConfigOptions } from "@/lib/acp-utils";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 import { resolveModelValue } from "@/lib/model-utils";
 import { isMac } from "@/lib/utils";
+import { AgentIcon } from "@/components/AgentIcon";
+import { ImageAnnotationEditor } from "@/components/ImageAnnotationEditor";
+
+/** CDN icons for built-in engines; ACP agents use their own `icon` field */
+const ENGINE_ICONS: Record<string, string> = {
+  claude: "https://cdn.agentclientprotocol.com/registry/v1/latest/claude-acp.svg",
+  codex: "https://cdn.agentclientprotocol.com/registry/v1/latest/codex-acp.svg",
+};
+
+/** Resolve the icon source for an agent — special engine CDN icons override agent-level icons */
+function getAgentIcon(agent: InstalledAgent): string | undefined {
+  return ENGINE_ICONS[agent.engine] ?? agent.icon;
+}
 
 const ACP_PERMISSION_BEHAVIORS = [
   { id: "ask" as const, label: "Ask", description: "Show permission prompt" },
@@ -98,6 +113,7 @@ function ModelDropdown({
   isProcessing,
   onModelChange,
   modelsLoading,
+  modelsLoadingText,
 }: {
   modelList: Array<{ id: string; label: string; description?: string }>;
   selectedModel: { id: string; label: string; description?: string } | undefined;
@@ -105,12 +121,13 @@ function ModelDropdown({
   isProcessing: boolean;
   onModelChange: (id: string) => void;
   modelsLoading: boolean;
+  modelsLoadingText: string;
 }) {
   if (modelsLoading) {
     return (
       <div className="flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-xs text-muted-foreground">
         <Loader2 className="h-3 w-3 animate-spin" />
-        Loading models…
+        {modelsLoadingText}
       </div>
     );
   }
@@ -241,6 +258,7 @@ function EngineControls({
   selectedModelId,
   onModelChange,
   modelsLoading,
+  modelsLoadingText,
   // Permission
   permissionMode,
   onPermissionModeChange,
@@ -268,6 +286,7 @@ function EngineControls({
   selectedModelId: string;
   onModelChange: (id: string) => void;
   modelsLoading: boolean;
+  modelsLoadingText: string;
   permissionMode: string;
   onPermissionModeChange: (mode: string) => void;
   planMode: boolean;
@@ -292,6 +311,7 @@ function EngineControls({
           isProcessing={isProcessing}
           onModelChange={onModelChange}
           modelsLoading={modelsLoading}
+          modelsLoadingText={modelsLoadingText}
         />
         {/* Codex reasoning effort dropdown */}
         {codexEffortOptions.length > 0 && onCodexEffortChange && (
@@ -480,6 +500,7 @@ interface InputBarProps {
   acpPermissionBehavior?: AcpPermissionBehavior;
   onAcpPermissionBehaviorChange?: (behavior: AcpPermissionBehavior) => void;
   supportedModels?: ModelInfo[];
+  codexModelsLoadingMessage?: string | null;
   /** Codex reasoning effort — per-model configurable effort level */
   codexEffort?: string;
   onCodexEffortChange?: (effort: string) => void;
@@ -491,6 +512,10 @@ interface InputBarProps {
   lockedAgentId?: string | null;
   /** Number of messages currently queued for sending */
   queuedCount?: number;
+  /** Grabbed elements from browser inspector, displayed as context cards */
+  grabbedElements?: GrabbedElement[];
+  /** Remove a grabbed element by ID */
+  onRemoveGrabbedElement?: (id: string) => void;
 }
 
 // Simple fuzzy match: all query chars must appear in order
@@ -604,12 +629,15 @@ export const InputBar = memo(function InputBar({
   acpPermissionBehavior,
   onAcpPermissionBehaviorChange,
   supportedModels,
+  codexModelsLoadingMessage,
   codexEffort,
   onCodexEffortChange,
   codexModelData,
   lockedEngine,
   lockedAgentId,
   queuedCount = 0,
+  grabbedElements,
+  onRemoveGrabbedElement,
 }: InputBarProps) {
   const [hasContent, setHasContent] = useState(false);
   const [showMentions, setShowMentions] = useState(false);
@@ -619,6 +647,7 @@ export const InputBar = memo(function InputBar({
   const [isSending, setIsSending] = useState(false);
   const [attachments, setAttachments] = useState<ImageAttachment[]>([]);
   const [isDragging, setIsDragging] = useState(false);
+  const [editingAttachment, setEditingAttachment] = useState<ImageAttachment | null>(null);
 
   // ── Voice dictation ──
   const speech = useSpeechRecognition({
@@ -635,13 +664,16 @@ export const InputBar = memo(function InputBar({
   const modelList = supportedModels?.length
     ? supportedModels.map((m) => ({ id: m.value, label: m.displayName, description: m.description }))
     : [];
+  const isACPAgent = selectedAgent != null && selectedAgent.engine === "acp";
+  const isCodexAgent = selectedAgent != null && selectedAgent.engine === "codex";
   const modelsLoading = modelList.length === 0;
+  const modelsLoadingText = isCodexAgent
+    ? (codexModelsLoadingMessage?.trim() || "Loading Codex models...")
+    : "Loading models…";
   const resolvedModelId = resolveModelValue(model, supportedModels ?? []);
   const preferredModelId = resolvedModelId ?? model;
   const selectedModel = modelList.find((m) => m.id === preferredModelId) ?? modelList[0];
   const selectedModelId = selectedModel?.id ?? preferredModelId;
-  const isACPAgent = selectedAgent != null && selectedAgent.engine === "acp";
-  const isCodexAgent = selectedAgent != null && selectedAgent.engine === "codex";
 
   // Codex: find the effort options for the currently selected model
   const codexCurrentModel = codexModelData?.find((m) => m.id === selectedModelId)
@@ -799,16 +831,20 @@ export const InputBar = memo(function InputBar({
 
     const { text: fullText, mentionPaths } = extractEditableContent(el);
     const trimmed = fullText.trim();
-    if ((!trimmed && attachments.length === 0) || isSending) return;
+    const hasGrabs = grabbedElements && grabbedElements.length > 0;
+    if ((!trimmed && attachments.length === 0 && !hasGrabs) || isSending) return;
 
     const currentImages = attachments.length > 0 ? [...attachments] : undefined;
+    const contextParts: string[] = [];
+    const grabbedElementDisplayTokens: string[] = [];
+    let hasContext = false;
 
+    // File mentions → <file>/<folder> context blocks
     if (mentionPaths.length > 0 && projectPath) {
       setIsSending(true);
       try {
         const fileResults = await window.claude.files.readMultiple(projectPath, mentionPaths);
 
-        const contextParts: string[] = [];
         for (const result of fileResults) {
           if (result.error) {
             contextParts.push(`<file path="${result.path}">\n[Error: ${result.error}]\n</file>`);
@@ -818,14 +854,56 @@ export const InputBar = memo(function InputBar({
             contextParts.push(`<file path="${result.path}">\n${result.content}\n</file>`);
           }
         }
-
-        const contextBlock = contextParts.join("\n\n");
-        const fullMessage = contextBlock ? `${contextBlock}\n\n${trimmed}` : trimmed;
-        // Pass trimmed (@path text) as displayText so MessageBubble doesn't need regex stripping
-        onSend(fullMessage, currentImages, trimmed);
+        hasContext = true;
       } finally {
         setIsSending(false);
       }
+    }
+
+    // Grabbed elements → <element> context blocks
+    if (hasGrabs) {
+      // Escape special chars for XML attribute values (webpage content can contain anything)
+      const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      const compact = (s: string) => s.trim().replace(/\s+/g, " ");
+
+      for (const ge of grabbedElements) {
+        const browserRef = [
+          `<${ge.tag}>`,
+          ge.attributes?.id ? `#${ge.attributes.id}` : "",
+          ge.classes?.length ? `.${ge.classes.slice(0, 2).join(".")}` : "",
+          ge.textContent ? ` ${compact(ge.textContent).slice(0, 40)}` : "",
+        ].join("").replace(/\]/g, "");
+        grabbedElementDisplayTokens.push(`[[element:${browserRef}]]`);
+
+        const attrs = Object.entries(ge.attributes)
+          .map(([k, v]) => `  ${k}="${esc(v)}"`)
+          .join("\n");
+        const styles = Object.entries(ge.computedStyles)
+          .map(([k, v]) => `  ${k}: ${v}`)
+          .join("\n");
+
+        contextParts.push(
+          `<element tag="${esc(ge.tag)}" selector="${esc(ge.selector)}" url="${esc(ge.url)}">` +
+          `\nClasses: ${ge.classes.join(" ") || "(none)"}` +
+          (attrs ? `\nAttributes:\n${attrs}` : "") +
+          (ge.textContent ? `\nText content: ${ge.textContent}` : "") +
+          (styles ? `\nComputed styles:\n${styles}` : "") +
+          `\nHTML:\n${ge.outerHTML}` +
+          `\n</element>`,
+        );
+      }
+      hasContext = true;
+    }
+
+    if (hasContext) {
+      const contextBlock = contextParts.join("\n\n");
+      const fullMessage = contextBlock ? `${contextBlock}\n\n${trimmed}` : trimmed;
+      const displayText =
+        grabbedElementDisplayTokens.length > 0
+          ? `${trimmed}${trimmed ? "\n\n" : ""}${grabbedElementDisplayTokens.join(" ")}`
+          : trimmed;
+      // Pass display text (including browser element chips) so MessageBubble doesn't need regex stripping
+      onSend(fullMessage, currentImages, displayText);
     } else {
       onSend(trimmed, currentImages);
     }
@@ -835,7 +913,7 @@ export const InputBar = memo(function InputBar({
     setHasContent(false);
     setAttachments([]);
     closeMentions();
-  }, [attachments, isSending, projectPath, onSend, closeMentions]);
+  }, [attachments, isSending, projectPath, onSend, closeMentions, grabbedElements]);
 
   const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (showMentions && results.length > 0) {
@@ -1059,21 +1137,27 @@ export const InputBar = memo(function InputBar({
           />
         </div>
 
-        {/* Attachment previews */}
+        {/* Attachment previews — click to open annotation editor */}
         {attachments.length > 0 && (
           <div className="flex flex-wrap gap-2 px-4 pb-2">
             {attachments.map((att) => (
               <div
                 key={att.id}
-                className="group/att relative h-16 w-16 shrink-0 overflow-hidden rounded-lg border border-border/40"
+                className="group/att relative h-16 w-16 shrink-0 cursor-pointer overflow-hidden rounded-lg border border-border/40"
+                onClick={() => setEditingAttachment(att)}
               >
                 <img
                   src={`data:${att.mediaType};base64,${att.data}`}
                   alt={att.fileName ?? "attachment"}
                   className="h-full w-full object-cover"
                 />
+                {/* Edit overlay icon — bottom-right, visible on hover */}
+                <div className="absolute bottom-0.5 end-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-background/90 text-muted-foreground opacity-0 shadow-sm transition-opacity group-hover/att:opacity-100">
+                  <Pencil className="h-2.5 w-2.5" />
+                </div>
+                {/* Remove button — top-right, stops propagation to prevent opening editor */}
                 <button
-                  onClick={() => removeAttachment(att.id)}
+                  onClick={(e) => { e.stopPropagation(); removeAttachment(att.id); }}
                   className="absolute -end-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-background/90 text-muted-foreground opacity-0 shadow-sm transition-opacity hover:text-foreground group-hover/att:opacity-100"
                 >
                   <X className="h-3 w-3" />
@@ -1081,6 +1165,54 @@ export const InputBar = memo(function InputBar({
               </div>
             ))}
           </div>
+        )}
+
+        {/* Grabbed element previews (from browser inspector) */}
+        {grabbedElements && grabbedElements.length > 0 && (
+          <div className="flex flex-wrap gap-2 px-4 pb-2">
+            {grabbedElements.map((ge) => (
+              <div
+                key={ge.id}
+                className="group/grab relative flex items-center gap-2 rounded-lg border border-blue-500/20 bg-blue-500/5 px-2.5 py-1.5"
+              >
+                <Crosshair className="h-3.5 w-3.5 shrink-0 text-blue-400" />
+                <div className="flex flex-col">
+                  <span className="text-[11px] font-mono font-medium text-foreground/80">
+                    {"<"}{ge.tag}{">"}
+                    {ge.attributes?.id && (
+                      <span className="text-blue-400">#{ge.attributes.id}</span>
+                    )}
+                    {ge.classes?.length > 0 && (
+                      <span className="text-foreground/40">.{ge.classes.slice(0, 2).join(".")}</span>
+                    )}
+                  </span>
+                  {ge.textContent && (
+                    <span className="max-w-48 truncate text-[10px] text-muted-foreground">
+                      {ge.textContent.slice(0, 60)}
+                    </span>
+                  )}
+                </div>
+                <button
+                  onClick={() => onRemoveGrabbedElement?.(ge.id)}
+                  className="absolute -end-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-background/90 text-muted-foreground opacity-0 shadow-sm transition-opacity hover:text-foreground group-hover/grab:opacity-100"
+                >
+                  <X className="h-2.5 w-2.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {editingAttachment && (
+          <ImageAnnotationEditor
+            image={editingAttachment}
+            open={!!editingAttachment}
+            onOpenChange={(isOpen) => { if (!isOpen) setEditingAttachment(null); }}
+            onSave={(updated) => {
+              setAttachments((prev) => prev.map((a) => a.id === updated.id ? updated : a));
+              setEditingAttachment(null);
+            }}
+          />
         )}
 
         <div className="flex items-center gap-1 px-3 pb-2.5">
@@ -1149,9 +1281,14 @@ export const InputBar = memo(function InputBar({
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <button
-                    className="flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+                    className="flex shrink-0 items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
                     disabled={isProcessing}
                   >
+                    <AgentIcon
+                      icon={selectedAgent ? getAgentIcon(selectedAgent) : ENGINE_ICONS.claude}
+                      size={14}
+                      className="shrink-0"
+                    />
                     {selectedAgent?.name ?? "Claude Code"}
                     <ChevronDown className="h-3 w-3" />
                   </button>
@@ -1176,11 +1313,16 @@ export const InputBar = memo(function InputBar({
                           (selectedAgent?.id ?? "claude-code") === agent.id ? "bg-accent" : ""
                         }
                       >
+                        <AgentIcon
+                          icon={getAgentIcon(agent)}
+                          size={16}
+                          className="shrink-0"
+                        />
                         <div>
                           <div className="flex items-center gap-1.5">
                             {agent.name}
-                            {agent.engine === "acp" && (
-                              <span className="text-[10px] text-muted-foreground">ACP</span>
+                            {agent.engine !== "claude" && (
+                              <span className="rounded bg-amber-500/15 px-1 py-px text-[10px] font-medium text-amber-400">Beta</span>
                             )}
                           </div>
                           {crossEngine && (
@@ -1215,6 +1357,7 @@ export const InputBar = memo(function InputBar({
               selectedModelId={selectedModelId}
               onModelChange={onModelChange}
               modelsLoading={modelsLoading}
+              modelsLoadingText={modelsLoadingText}
               permissionMode={permissionMode}
               onPermissionModeChange={onPermissionModeChange}
               planMode={planMode}
@@ -1312,7 +1455,7 @@ export const InputBar = memo(function InputBar({
               <Button
                 size="icon"
                 onClick={handleSend}
-                disabled={(!hasContent && attachments.length === 0) || isSending}
+                disabled={(!hasContent && attachments.length === 0 && (!grabbedElements || grabbedElements.length === 0)) || isSending}
                 className="h-8 w-8 rounded-full"
               >
                 <ArrowUp className="h-4 w-4" />

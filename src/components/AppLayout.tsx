@@ -1,10 +1,11 @@
-import { useCallback, useRef, useEffect } from "react";
+import { useCallback, useRef, useEffect, useState } from "react";
 import { PanelLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { normalizeRatios } from "@/hooks/useSettings";
 import { useAppOrchestrator } from "@/hooks/useAppOrchestrator";
 import { useSpaceTheme } from "@/hooks/useSpaceTheme";
 import { usePanelResize } from "@/hooks/usePanelResize";
+import type { GrabbedElement } from "@/types/ui";
 import { AppSidebar } from "./AppSidebar";
 import { ChatHeader } from "./ChatHeader";
 import { ChatView } from "./ChatView";
@@ -49,6 +50,27 @@ export function AppLayout() {
 
   const glassOverlayStyle = useSpaceTheme(spaceManager.activeSpace, resolvedTheme);
 
+  // ── Element Grab state (browser inspector → chat context) ──
+
+  const [grabbedElements, setGrabbedElements] = useState<GrabbedElement[]>([]);
+
+  const handleElementGrab = useCallback((element: GrabbedElement) => {
+    setGrabbedElements((prev) => [...prev, element]);
+  }, []);
+
+  const handleRemoveGrabbedElement = useCallback((id: string) => {
+    setGrabbedElements((prev) => prev.filter((e) => e.id !== id));
+  }, []);
+
+  // Wrap handleSend to clear grabbed elements after sending
+  const wrappedHandleSend = useCallback(
+    (...args: Parameters<typeof handleSend>) => {
+      handleSend(...args);
+      setGrabbedElements([]);
+    },
+    [handleSend],
+  );
+
   const isIsland = settings.islandLayout;
   const splitGap = isIsland ? 4 : 0.5;
 
@@ -74,6 +96,8 @@ export function AppLayout() {
   useEffect(() => {
     lastTopScrollProgressRef.current = 0;
     chatIslandRef.current?.style.setProperty("--chat-top-progress", "0");
+    // Grabbed elements are session-specific context — discard on switch
+    setGrabbedElements([]);
   }, [manager.activeSessionId]);
 
   const handleTopScrollProgress = useCallback((progress: number) => {
@@ -87,16 +111,11 @@ export function AppLayout() {
   const spaceOpacity = spaceManager.activeSpace?.color.opacity ?? 1;
   const chatFadeStrength = Math.max(0.2, Math.min(1, spaceOpacity));
 
-  const chatSurfaceColor = isIsland
-    ? "var(--background)"
-    : "var(--island-fill, var(--background))";
-  // Island mode: transparent gradient fade — no solid bg, just a soft veil for title legibility.
-  // Transparent spaces get a lighter veil so the glass effect shows through.
-  // Flat mode: fades in a bg tint as the user scrolls down.
-  const titlebarOpacity = isIsland ? Math.round(30 + 50 * spaceOpacity) : 0; // 30–80%
-  const titlebarSurfaceColor = isIsland
-    ? `linear-gradient(to bottom, color-mix(in oklab, var(--background) ${titlebarOpacity}%, transparent) 0%, transparent 100%)`
-    : "color-mix(in oklab, var(--background) calc(var(--chat-top-progress, 0) * 80%), transparent)";
+  const chatSurfaceColor = "var(--background)";
+  // Keep titlebar veil/shadow behavior consistent across island and non-island layouts.
+  const titlebarOpacity = Math.round(30 + 50 * spaceOpacity); // 30–80%
+  const titlebarSurfaceColor =
+    `linear-gradient(to bottom, color-mix(in oklab, var(--background) ${titlebarOpacity}%, transparent) 0%, transparent 100%)`;
   const topFadeBackground = `linear-gradient(to bottom, ${chatSurfaceColor}, transparent)`;
   const bottomFadeBackground = `linear-gradient(to top, ${chatSurfaceColor}, transparent)`;
 
@@ -174,7 +193,7 @@ export function AppLayout() {
               {/* Top fade: only visible when chat is scrolled down. Island mode uses dark shadow; flat mode fades content into bg */}
               {/* Island: gradient starts at top-0 (behind header, subtle bleed). Flat: starts at top-10 (right below header) so full gradient is visible and strong. */}
               <div
-                className={`pointer-events-none absolute inset-x-0 z-[5] ${isIsland ? "top-0 h-16" : "top-10 h-10"}`}
+                className="pointer-events-none absolute inset-x-0 top-0 z-[5] h-16"
                 style={{
                   opacity: "calc(var(--chat-fade-strength, 1) * var(--chat-top-progress, 0))",
                   background: topFadeBackground,
@@ -226,7 +245,7 @@ export function AppLayout() {
                   />
                 ) : (
                   <InputBar
-                    onSend={handleSend}
+                    onSend={wrappedHandleSend}
                     onStop={handleStop}
                     isProcessing={manager.isProcessing}
                     queuedCount={manager.queuedCount}
@@ -250,9 +269,12 @@ export function AppLayout() {
                     acpPermissionBehavior={settings.acpPermissionBehavior}
                     onAcpPermissionBehaviorChange={settings.setAcpPermissionBehavior}
                     supportedModels={manager.supportedModels}
+                    codexModelsLoadingMessage={manager.codexModelsLoadingMessage}
                     codexEffort={manager.codexEffort}
                     onCodexEffortChange={manager.setCodexEffort}
                     codexModelData={manager.codexRawModels}
+                    grabbedElements={grabbedElements}
+                    onRemoveGrabbedElement={handleRemoveGrabbedElement}
                     lockedEngine={lockedEngine}
                     lockedAgentId={lockedAgentId}
                   />
@@ -409,7 +431,7 @@ export function AppLayout() {
                       activeSessionId={manager.activeSessionId}
                     />
                   ),
-                  browser: <BrowserPanel />,
+                  browser: <BrowserPanel onElementGrab={handleElementGrab} />,
                   files: (
                     <FilesPanel
                       messages={manager.messages}

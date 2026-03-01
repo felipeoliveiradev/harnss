@@ -23,20 +23,22 @@ let installingUpdate = false;
 let updateCheckInFlight = false;
 let lastUpdateCheckAt = 0;
 
-const STARTUP_UPDATE_CHECK_DELAY_MS = 5_000;
-const PERIODIC_UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1_000;
-const ACTIVE_UPDATE_CHECK_MIN_INTERVAL_MS = 30 * 60 * 1_000;
+export const STARTUP_UPDATE_CHECK_DELAY_MS = 5_000;
+export const PERIODIC_UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1_000;
+export const ACTIVE_UPDATE_CHECK_MIN_INTERVAL_MS = 30 * 60 * 1_000;
 
 export function getIsInstallingUpdate(): boolean {
   return installingUpdate;
 }
 
-function getErrorMessage(err: unknown): string {
+/** @internal Exported for testing. */
+export function getErrorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
   return String(err);
 }
 
-async function checkForUpdates(reason: string): Promise<void> {
+/** @internal Exported for testing. */
+export async function checkForUpdates(reason: string): Promise<void> {
   if (updateCheckInFlight) {
     log("UPDATER_DEBUG", `Skipping "${reason}" check; update check already in progress`);
     return;
@@ -55,7 +57,8 @@ async function checkForUpdates(reason: string): Promise<void> {
   }
 }
 
-function maybeCheckForUpdates(reason: string, minIntervalMs: number): void {
+/** @internal Exported for testing. */
+export function maybeCheckForUpdates(reason: string, minIntervalMs: number): void {
   const elapsedMs = Date.now() - lastUpdateCheckAt;
   if (elapsedMs < minIntervalMs) return;
   void checkForUpdates(reason);
@@ -123,46 +126,54 @@ export function initAutoUpdater(
   // IPC handlers for renderer
   ipcMain.handle("updater:download", () => autoUpdater.downloadUpdate());
   ipcMain.handle("updater:install", async () => {
-    const squirrelReady = (autoUpdater as unknown as MacUpdaterInternal).squirrelDownloadedUpdate;
-    log("UPDATER", `Install requested (squirrelReady=${squirrelReady})`);
+    if (process.platform === "darwin") {
+      // squirrelDownloadedUpdate is a macOS-only property on MacUpdater — doesn't exist on
+      // NsisUpdater (Windows) or AppImageUpdater (Linux), so only check it on macOS.
+      const squirrelReady = (autoUpdater as unknown as MacUpdaterInternal).squirrelDownloadedUpdate;
+      log("UPDATER", `Install requested (macOS, squirrelReady=${squirrelReady})`);
 
-    if (!squirrelReady && process.platform === "darwin") {
-      // Squirrel.Mac requires code-signed apps — unsigned builds always fail verification.
-      // Bypass Squirrel entirely: extract the downloaded ZIP and swap the .app bundle manually.
-      log("UPDATER", "Squirrel.Mac unavailable (unsigned app), attempting manual install");
-      try {
-        await manualMacInstall();
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        log("UPDATER_ERR", `Manual install failed: ${msg}`);
-        // Last resort: open the GitHub release page for manual download
-        const releaseUrl = lastDownloadedVersion
-          ? `https://github.com/OpenSource03/harnss/releases/tag/v${lastDownloadedVersion}`
-          : "https://github.com/OpenSource03/harnss/releases/latest";
-        shell.openExternal(releaseUrl);
+      if (!squirrelReady) {
+        // Squirrel.Mac requires code-signed apps — unsigned builds always fail verification.
+        // Bypass Squirrel entirely: extract the downloaded ZIP and swap the .app bundle manually.
+        log("UPDATER", "Squirrel.Mac unavailable (unsigned app), attempting manual install");
+        try {
+          await manualMacInstall();
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          log("UPDATER_ERR", `Manual install failed: ${msg}`);
+          // Last resort: open the GitHub release page for manual download
+          const releaseUrl = lastDownloadedVersion
+            ? `https://github.com/OpenSource03/harnss/releases/tag/v${lastDownloadedVersion}`
+            : "https://github.com/OpenSource03/harnss/releases/latest";
+          shell.openExternal(releaseUrl);
+          const win = getMainWindow();
+          win?.webContents.send("updater:install-error", {
+            message: "Automatic install failed. The download page has been opened — please install manually.",
+          });
+        }
+        return;
+      }
+    } else {
+      log("UPDATER", `Install requested (${process.platform})`);
+
+      // On Windows/Linux, there's no squirrelDownloadedUpdate flag — just verify the
+      // update-downloaded event has fired (tracked by lastDownloadedVersion).
+      if (!lastDownloadedVersion) {
+        log("UPDATER_ERR", "Cannot install: no update has been downloaded yet");
         const win = getMainWindow();
         win?.webContents.send("updater:install-error", {
-          message: "Automatic install failed. The download page has been opened — please install manually.",
+          message: "Update failed to download. Try downloading the latest version manually.",
         });
+        return;
       }
-      return;
-    }
-
-    if (!squirrelReady) {
-      log("UPDATER_ERR", "Cannot install: Squirrel has not finished downloading the update");
-      const win = getMainWindow();
-      win?.webContents.send("updater:install-error", {
-        message: "Update failed to verify. Try downloading the latest version manually.",
-      });
-      return;
     }
 
     installingUpdate = true;
-    // Force-close all windows so Squirrel.Mac has clean control of the quit lifecycle.
+    // Force-close all windows so the updater has clean control of the quit lifecycle.
     for (const win of BrowserWindow.getAllWindows()) {
       win.destroy(); // destroy() skips beforeunload/close events — immediate teardown
     }
-    // Defer to next tick so window destruction propagates before Squirrel takes over
+    // Defer to next tick so window destruction propagates before the installer takes over
     setImmediate(() => {
       log("UPDATER", "Calling quitAndInstall()");
       autoUpdater.quitAndInstall();
@@ -206,7 +217,8 @@ export function initAutoUpdater(
  * Find the downloaded update ZIP in electron-updater's cache directory.
  * Falls back to glob-matching if the exact version-based name isn't found.
  */
-function findUpdateZip(): string | null {
+/** @internal Exported for testing. */
+export function findUpdateZip(): string | null {
   // electron-updater stores downloads in ~/Library/Caches/harnss-updater/pending/
   // app.getPath("appData") = ~/Library/Application Support, so go up one to ~/Library/
   const cacheDir = path.join(path.dirname(app.getPath("appData")), "Caches", "harnss-updater", "pending");
@@ -228,6 +240,17 @@ function findUpdateZip(): string | null {
     .sort((a, b) => b.mtime - a.mtime);
 
   return entries.length > 0 ? path.join(cacheDir, entries[0].name) : null;
+}
+
+/**
+ * @internal Exported for testing — resets module-level state between test runs.
+ * Not needed in production since the module is loaded once per process.
+ */
+export function __resetForTesting(): void {
+  lastDownloadedVersion = null;
+  installingUpdate = false;
+  updateCheckInFlight = false;
+  lastUpdateCheckAt = 0;
 }
 
 async function manualMacInstall(): Promise<void> {

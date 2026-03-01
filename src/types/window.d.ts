@@ -20,6 +20,7 @@ interface SessionListItem {
   /** Timestamp of the most recent message — used for sidebar sort order */
   lastMessageAt: number;
   model?: string;
+  planMode?: boolean;
   totalCost: number;
   engine?: EngineId;
   codexThreadId?: string;
@@ -241,6 +242,7 @@ declare global {
           Promise<{ sessionId?: string; threadId?: string; error?: string }>;
         setModel: (sessionId: string, model: string) => Promise<{ error?: string }>;
         version: () => Promise<{ version?: string; error?: string }>;
+        binaryStatus: () => Promise<{ installed: boolean; downloading: boolean }>;
         onEvent: (callback: (data: CodexSessionEvent) => void) => () => void;
         onApprovalRequest: (callback: (data: CodexServerRequest) => void) => () => void;
         onExit: (callback: (data: CodexExitEvent) => void) => () => void;

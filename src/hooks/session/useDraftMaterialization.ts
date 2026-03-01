@@ -38,12 +38,14 @@ export function useDraftMaterialization({
     setInitialConfigOptions,
     setInitialPermission,
     setInitialRawAcpPermission,
+    setStartOptions,
     setDraftProjectId,
     setPreStartedSessionId,
     setDraftMcpStatuses,
     setAcpMcpStatuses,
     setCachedModels,
     setCodexRawModels,
+    setCodexModelsLoadingMessage,
   } = setters;
   const {
     activeSessionIdRef,
@@ -111,10 +113,23 @@ export function useDraftMaterialization({
 
   // Load Codex models ahead of first message so the model picker is usable in draft mode.
   const prefetchCodexModels = useCallback(async (preferredModel?: string) => {
+    setCodexModelsLoadingMessage("Checking Codex CLI...");
     try {
+      const status = await window.claude.codex.binaryStatus();
+      if (!status.installed) {
+        setCodexModelsLoadingMessage("Codex CLI not found. Downloading it now...");
+      }
+
       const result = await window.claude.codex.listModels();
+      if (result.error) {
+        setCodexModelsLoadingMessage(`Codex model load failed: ${result.error}`);
+        return;
+      }
       const models = normalizeCodexModels(result.models ?? []);
-      if (models.length === 0) return;
+      if (models.length === 0) {
+        setCodexModelsLoadingMessage("No Codex models available yet.");
+        return;
+      }
 
       setCodexRawModels(models);
       codex.setCodexModels(models.map((m) => ({
@@ -129,15 +144,18 @@ export function useDraftMaterialization({
         : undefined;
       applyCodexModelDefaultEffort(selectedModel?.defaultReasoningEffort);
 
-      setters.setStartOptions((prev) => {
+      setStartOptions((prev) => {
         if ((prev.engine ?? "claude") !== "codex") return prev;
         if (!selected || prev.model === selected) return prev;
         return { ...prev, model: selected };
       });
-    } catch {
+      setCodexModelsLoadingMessage(null);
+    } catch (err) {
       // Model prefetch is optional — draft session can still start on first send.
+      const message = err instanceof Error ? err.message : String(err);
+      setCodexModelsLoadingMessage(`Failed to initialize Codex CLI: ${message}`);
     }
-  }, [applyCodexModelDefaultEffort, codex.setCodexModels]);
+  }, [applyCodexModelDefaultEffort, codex.setCodexModels, setCodexModelsLoadingMessage, setCodexRawModels, setStartOptions]);
 
   // Probe MCP servers ourselves (for engines that don't report status, e.g. ACP)
   const probeMcpServers = useCallback(async (projectId: string, overrideServers?: McpServerConfig[]) => {
@@ -209,6 +227,7 @@ export function useDraftMaterialization({
           createdAt: Date.now(),
           lastMessageAt: Date.now(),
           totalCost: 0,
+          planMode: !!options.planMode,
           isActive: true,
           engine: "acp" as const,
           agentId: options.agentId,
@@ -269,6 +288,7 @@ export function useDraftMaterialization({
             title: "New Chat",
             createdAt: Date.now(),
             messages: errorMessages,
+            planMode: !!options.planMode,
             totalCost: 0,
             engine: "acp",
             agentId: options.agentId,
@@ -299,6 +319,7 @@ export function useDraftMaterialization({
           createdAt: Date.now(),
           lastMessageAt: Date.now(),
           totalCost: 0,
+          planMode: !!options.planMode,
           isActive: true,
           engine: "codex" as const,
           agentId: options.agentId ?? "codex",
@@ -325,7 +346,7 @@ export function useDraftMaterialization({
           setInitialMeta({ isProcessing: false, isConnected: false, sessionInfo: null, totalCost: 0 });
           setActiveSessionId(failedId);
           setDraftProjectId(null);
-          window.claude.sessions.save({ id: failedId, projectId: project.id, title: "New Chat", createdAt: Date.now(), messages: errorMessages, totalCost: 0, engine: "codex" });
+          window.claude.sessions.save({ id: failedId, projectId: project.id, title: "New Chat", createdAt: Date.now(), messages: errorMessages, planMode: !!options.planMode, totalCost: 0, engine: "codex" });
           materializingRef.current = false;
           return "";
         }
@@ -416,6 +437,7 @@ export function useDraftMaterialization({
         createdAt: now,
         lastMessageAt: now,
         model: sessionModel,
+        planMode: !!options.planMode,
         totalCost: 0,
         isActive: true,
         titleGenerating: true,
