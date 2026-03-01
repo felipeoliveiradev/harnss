@@ -135,6 +135,39 @@ async function resolveWhich(cmd: string): Promise<string | null> {
   }
 }
 
+function quotePosixArg(value: string): string {
+  return `'${value.replace(/'/g, `'\"'\"'`)}'`;
+}
+
+/**
+ * Windows fallback for binaries installed in a bash-managed PATH (e.g. Git Bash).
+ * Returns a runnable command via `bash -lc <cmd ...>` when detection succeeds.
+ */
+async function resolveViaBash(
+  cmd: string,
+  targetArgs?: string[],
+): Promise<BinaryCheckResult | null> {
+  if (process.platform !== "win32" || !cmd.trim()) return null;
+
+  const loginCommand = [cmd, ...(targetArgs ?? [])].map(quotePosixArg).join(" ");
+  for (const shell of ["bash", "sh"]) {
+    try {
+      const { stdout } = await execFileAsync(shell, ["-lc", `command -v ${quotePosixArg(cmd)}`]);
+      const found = stdout
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .find((line) => line.length > 0);
+      if (found) {
+        return { path: shell, args: ["-lc", loginCommand] };
+      }
+    } catch {
+      // Try next shell candidate.
+    }
+  }
+
+  return null;
+}
+
 /**
  * Convert registry cmd (which may include relative paths/quotes/extensions) to
  * a bare executable name for PATH lookup.
@@ -176,7 +209,11 @@ export async function checkBinaries(
       }
       const cmdName = extractBinaryName(target.cmd);
       const resolved = await resolveWhich(cmdName);
-      results[id] = resolved ? { path: resolved, args: target.args } : null;
+      if (resolved) {
+        results[id] = { path: resolved, args: target.args };
+        return;
+      }
+      results[id] = await resolveViaBash(cmdName, target.args);
     }),
   );
   return results;
