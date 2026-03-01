@@ -103,14 +103,20 @@ function persistUserAgents(): void {
 
 // ── Binary detection helpers ──
 
-/** Map process.platform + process.arch to the registry's platform key format. */
-export function getRegistryPlatformKey(): string | null {
+/** Map process.platform + process.arch to preferred registry platform keys (in order). */
+export function getRegistryPlatformKeys(): string[] {
   const archMap: Record<string, string> = { arm64: "aarch64", x64: "x86_64" };
   const platformMap: Record<string, string> = { darwin: "darwin", linux: "linux", win32: "windows" };
   const platform = platformMap[process.platform];
   const arch = archMap[process.arch];
-  if (!platform || !arch) return null;
-  return `${platform}-${arch}`;
+  if (!platform || !arch) return [];
+
+  const primary = `${platform}-${arch}`;
+  // Windows on ARM commonly runs x86_64 binaries under emulation.
+  if (process.platform === "win32" && process.arch === "arm64") {
+    return [primary, "windows-x86_64"];
+  }
+  return [primary];
 }
 
 /** Resolve a command name to its absolute path via `which` (or `where` on Windows). */
@@ -157,13 +163,13 @@ export interface BinaryCheckResult {
 export async function checkBinaries(
   agents: Array<{ id: string; binary: Record<string, { cmd: string; args?: string[] }> }>,
 ): Promise<Record<string, BinaryCheckResult | null>> {
-  const key = getRegistryPlatformKey();
-  if (!key) return {};
+  const keys = getRegistryPlatformKeys();
+  if (keys.length === 0) return {};
 
   const results: Record<string, BinaryCheckResult | null> = {};
   await Promise.all(
     agents.map(async ({ id, binary }) => {
-      const target = binary[key];
+      const target = keys.map((k) => binary[k]).find((candidate) => candidate != null);
       if (!target) {
         results[id] = null;
         return;

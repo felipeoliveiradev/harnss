@@ -168,6 +168,31 @@ function getNpmCommand(): string {
   return process.platform === "win32" ? "npm.cmd" : "npm";
 }
 
+function runNpmPack(packageSpec: string, cwd: string): void {
+  const args = ["pack", packageSpec, "--pack-destination", "."];
+  const options = {
+    cwd,
+    encoding: "utf-8" as const,
+    timeout: 120000,
+    stdio: ["ignore", "pipe", "pipe"] as const,
+  };
+
+  try {
+    execFileSync(getNpmCommand(), args, options);
+    return;
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (process.platform === "win32" && err.code === "EINVAL") {
+      const comSpec = process.env.ComSpec || "cmd.exe";
+      const command = `npm pack "${packageSpec}" --pack-destination .`;
+      log("codex-binary", `npm.cmd failed with EINVAL, retrying via ${comSpec}`);
+      execFileSync(comSpec, ["/d", "/s", "/c", command], options);
+      return;
+    }
+    throw error;
+  }
+}
+
 function listFilesRecursive(root: string, maxCount = 20): string {
   const out: string[] = [];
   const queue = [root];
@@ -201,12 +226,7 @@ async function downloadCodexBinary(): Promise<string> {
     log("codex-binary", `npm pack ${packageSpec} in ${tmpDir}`);
 
     // npm pack downloads the tarball
-    execFileSync(getNpmCommand(), ["pack", packageSpec, "--pack-destination", "."], {
-      cwd: tmpDir,
-      encoding: "utf-8",
-      timeout: 120000, // 2 min timeout for download
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    runNpmPack(packageSpec, tmpDir);
 
     // Find the downloaded .tgz
     const tgzFiles = fs.readdirSync(tmpDir).filter((f) => f.endsWith(".tgz"));
