@@ -45,6 +45,13 @@ https://github.com/user-attachments/assets/41f5bcbc-c141-4a16-b430-79f8e01d107e
 </p>
 
 <p align="center">
+  <img width="1334" height="953" alt="CleanShot 2026-03-02 at 03 43 15" src="https://github.com/user-attachments/assets/3700658d-82c4-466f-8c26-cd3868f8ac23" />
+
+  <br />
+  <em>Terminal, browser, git, and MCP integrations — all in one window.</em>
+</p>
+
+<p align="center">
   <img width="825" height="721" alt="CleanShot 2026-03-02 at 02 43 43" src="https://github.com/user-attachments/assets/842c29f8-c11a-4a26-9940-380c4f4cb6a2" />
 
   <br />
