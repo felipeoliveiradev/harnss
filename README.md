@@ -80,7 +80,7 @@ Stage, unstage, commit, and push without leaving the app. Browse branches, view 
 
 ### Built-in terminal & browser
 
-Multi-tab PTY terminal backed by native shell processes. An embedded browser for opening URLs inline. Both panels stay mounted while you work.
+Multi-tab PTY terminal backed by native shell processes. An embedded browser for opening URLs inline and providing additional context to the agent. Both panels stay mounted while you work.
 
 ### Project workspaces & spaces
 
@@ -89,10 +89,6 @@ Projects map to folders on disk. Spaces let you organize projects into named gro
 ### Agent Store
 
 Browse and install agents from the ACP community registry directly in the app. Add custom agents by specifying a command, arguments, environment variables, and an icon. All configuration is managed through Settings — no config files.
-
-### Thinking mode
-
-Watch Claude reason through problems in collapsible thinking blocks before it acts. Toggle extended reasoning per session.
 
 ### Voice input & notifications
 
