@@ -45,10 +45,10 @@ https://github.com/user-attachments/assets/41f5bcbc-c141-4a16-b430-79f8e01d107e
 </p>
 
 <p align="center">
-  <img width="1334" height="953" alt="CleanShot 2026-03-02 at 03 43 15" src="https://github.com/user-attachments/assets/3700658d-82c4-466f-8c26-cd3868f8ac23" />
+  <img width="1224" height="843" alt="CleanShot 2026-03-02 at 03 44 31" src="https://github.com/user-attachments/assets/9c0767d1-7f06-412f-ae78-f22b0d5d4337" />
 
   <br />
-  <em>Terminal, browser, git, and MCP integrations — all in one window.</em>
+  <em>One UI - all agents. Browse entire ACP registry.</em>
 </p>
 
 <p align="center">
