@@ -259,6 +259,7 @@ export function useSessionLifecycle({
           isConnected: bgState.isConnected,
           sessionInfo: bgState.sessionInfo,
           totalCost: bgState.totalCost,
+          isCompacting: bgState.isCompacting,
         });
         // Restore pending permission so the hook picks it up on reset
         setInitialPermission(bgState.pendingPermission);

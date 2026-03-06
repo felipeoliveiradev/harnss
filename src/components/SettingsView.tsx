@@ -60,6 +60,8 @@ interface SettingsViewProps {
   onThemeChange: (t: ThemeOption) => void;
   islandLayout: boolean;
   onIslandLayoutChange: (enabled: boolean) => void;
+  autoGroupTools: boolean;
+  onAutoGroupToolsChange: (enabled: boolean) => void;
   transparency: boolean;
   onTransparencyChange: (enabled: boolean) => void;
   glassSupported: boolean;
@@ -77,6 +79,8 @@ export const SettingsView = memo(function SettingsView({
   onThemeChange,
   islandLayout,
   onIslandLayoutChange,
+  autoGroupTools,
+  onAutoGroupToolsChange,
   transparency,
   onTransparencyChange,
   glassSupported,
@@ -124,6 +128,8 @@ export const SettingsView = memo(function SettingsView({
             onThemeChange={onThemeChange}
             islandLayout={islandLayout}
             onIslandLayoutChange={onIslandLayoutChange}
+            autoGroupTools={autoGroupTools}
+            onAutoGroupToolsChange={onAutoGroupToolsChange}
             transparency={transparency}
             onTransparencyChange={onTransparencyChange}
             glassSupported={glassSupported}
@@ -185,7 +191,7 @@ export const SettingsView = memo(function SettingsView({
       default:
         return null;
     }
-  }, [activeSection, appSettings, updateAppSettings, agents, onSaveAgent, onDeleteAgent, theme, onThemeChange, islandLayout, onIslandLayoutChange, transparency, onTransparencyChange, glassSupported]);
+  }, [activeSection, appSettings, updateAppSettings, agents, onSaveAgent, onDeleteAgent, theme, onThemeChange, islandLayout, onIslandLayoutChange, autoGroupTools, onAutoGroupToolsChange, transparency, onTransparencyChange, glassSupported]);
 
   return (
     <div className="island flex flex-1 flex-col overflow-hidden rounded-lg bg-background">

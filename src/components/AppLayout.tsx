@@ -199,6 +199,8 @@ export function AppLayout() {
             onThemeChange={settings.setTheme}
             islandLayout={settings.islandLayout}
             onIslandLayoutChange={settings.setIslandLayout}
+            autoGroupTools={settings.autoGroupTools}
+            onAutoGroupToolsChange={settings.setAutoGroupTools}
             transparency={settings.transparency}
             onTransparencyChange={settings.setTransparency}
             glassSupported={glassSupported}
@@ -256,6 +258,7 @@ export function AppLayout() {
                 messages={manager.messages}
                 isProcessing={manager.isProcessing}
                 showThinking={showThinking}
+                autoGroupTools={settings.autoGroupTools}
                 extraBottomPadding={!!manager.pendingPermission}
                 scrollToMessageId={scrollToMessageId}
                 onScrolledToMessage={() => setScrollToMessageId(undefined)}

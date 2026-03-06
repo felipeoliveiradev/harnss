@@ -9,7 +9,7 @@ import { ToolGroupBlock } from "./ToolGroupBlock";
 import { TurnChangesSummary } from "./TurnChangesSummary";
 import { extractTurnSummaries } from "@/lib/turn-changes";
 import type { TurnSummary } from "@/lib/turn-changes";
-import { computeToolGroups } from "@/lib/tool-groups";
+import { computeToolGroups, type ToolGroupInfo } from "@/lib/tool-groups";
 import { TextShimmer } from "@/components/ui/text-shimmer";
 import {
   BOTTOM_LOCK_THRESHOLD_PX,
@@ -22,11 +22,16 @@ const LARGE_CHAT_THRESHOLD = 300;
 const INITIAL_RENDER_TAIL_COUNT = 180;
 const PREPEND_CHUNK_SIZE = 200;
 const PREPEND_TRIGGER_PX = 160;
+const EMPTY_TOOL_GROUP_INFO: ToolGroupInfo = {
+  groups: new Map(),
+  groupedIndices: new Set(),
+};
 
 interface ChatViewProps {
   messages: UIMessage[];
   isProcessing: boolean;
   showThinking: boolean;
+  autoGroupTools: boolean;
   extraBottomPadding?: boolean;
   scrollToMessageId?: string;
   onScrolledToMessage?: () => void;
@@ -48,7 +53,7 @@ interface ChatViewProps {
   sendNextId?: string | null;
 }
 
-export const ChatView = memo(function ChatView({ messages, isProcessing, showThinking, extraBottomPadding, scrollToMessageId, onScrolledToMessage, sessionId, onRevert, onFullRevert, onViewTurnChanges, onScrolledFromTop, onTopScrollProgress, onSendQueuedNow, sendNextId }: ChatViewProps) {
+export const ChatView = memo(function ChatView({ messages, isProcessing, showThinking, autoGroupTools, extraBottomPadding, scrollToMessageId, onScrolledToMessage, sessionId, onRevert, onFullRevert, onViewTurnChanges, onScrolledFromTop, onTopScrollProgress, onSendQueuedNow, sendNextId }: ChatViewProps) {
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const bottomLockedRef = useRef(true);
@@ -398,11 +403,13 @@ export const ChatView = memo(function ChatView({ messages, isProcessing, showThi
     return map;
   }, [nonQueuedMessages, isProcessing]);
 
-  // Pre-compute tool groups: contiguous tool_call sequences between assistant text messages.
-  // Finalized groups (with 2+ tools) render as a single ToolGroupBlock instead of individual ToolCalls.
+  // Pre-compute tool groups when enabled: contiguous tool_call sequences between
+  // assistant text messages, also absorbing any in-between thinking-only rows.
   const { groups: toolGroups, groupedIndices } = useMemo(
-    () => computeToolGroups(nonQueuedMessages, isProcessing),
-    [nonQueuedMessages, isProcessing],
+    () => autoGroupTools
+      ? computeToolGroups(nonQueuedMessages, isProcessing)
+      : EMPTY_TOOL_GROUP_INFO,
+    [autoGroupTools, nonQueuedMessages, isProcessing],
   );
 
   // Finalized group keys (first tool message ID), used to detect newly formed groups.
@@ -520,7 +527,12 @@ export const ChatView = memo(function ChatView({ messages, isProcessing, showThi
 
               return (
                 <Fragment key={`group-${groupKey}`}>
-                  <ToolGroupBlock tools={group.tools} animate={isNewGroup} />
+                  <ToolGroupBlock
+                    tools={group.tools}
+                    messages={group.messages}
+                    showThinking={showThinking}
+                    animate={isNewGroup}
+                  />
                   {groupTurnSummary && (
                     <TurnChangesSummary summary={groupTurnSummary} onViewInPanel={onViewTurnChanges} />
                   )}
@@ -541,6 +553,7 @@ export const ChatView = memo(function ChatView({ messages, isProcessing, showThi
               </Fragment>
             );
           }
+          if (groupedIndices.has(index)) return null;
           if (msg.role === "tool_result") return null;
           if (msg.role === "summary") {
             return (

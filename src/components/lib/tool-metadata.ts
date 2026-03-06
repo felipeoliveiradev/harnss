@@ -74,6 +74,8 @@ export const MCP_TOOL_LABELS: Array<{ pattern: RegExp; labels: ToolLabels }> = [
   { pattern: /getConfluencePage$/, labels: { past: "Fetched page", active: "Fetching page", failure: "fetch page" } },
   { pattern: /searchConfluenceUsingCql$/, labels: { past: "Searched Confluence", active: "Searching Confluence", failure: "search Confluence" } },
   { pattern: /getConfluenceSpaces$/, labels: { past: "Listed spaces", active: "Listing spaces", failure: "list spaces" } },
+  { pattern: /getConfluencePageDescendants$/, labels: { past: "Listed descendants", active: "Listing descendants", failure: "list descendants" } },
+  { pattern: /getPagesInConfluenceSpace$/, labels: { past: "Listed pages", active: "Listing pages", failure: "list pages" } },
   { pattern: /createConfluencePage$/, labels: { past: "Created page", active: "Creating page", failure: "create page" } },
   { pattern: /updateConfluencePage$/, labels: { past: "Updated page", active: "Updating page", failure: "update page" } },
   { pattern: /getAccessibleAtlassianResources$/, labels: { past: "Got resources", active: "Getting resources", failure: "get resources" } },

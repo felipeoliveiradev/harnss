@@ -168,6 +168,8 @@ export interface SystemStatusEvent {
   type: "system";
   subtype: "status";
   session_id?: string;
+  status?: string;
+  permissionMode?: string;
 }
 
 export interface SystemCompactBoundaryEvent {

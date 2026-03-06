@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import type {
   ClaudeEvent,
   SystemInitEvent,
+  SystemStatusEvent,
   SystemCompactBoundaryEvent,
   TaskProgressEvent,
   TaskNotificationEvent,
@@ -236,6 +237,11 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
             break;
           }
           if ("subtype" in event && event.subtype === "status") {
+            const statusEvent = event as SystemStatusEvent;
+            if (statusEvent.status === "compacting") {
+              setIsCompacting(true);
+              setIsProcessing(true);
+            }
             break;
           }
           const init = event as SystemInitEvent;

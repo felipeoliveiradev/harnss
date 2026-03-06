@@ -406,6 +406,7 @@ export function useDraftMaterialization({
               isConnected: bgState.isConnected,
               sessionInfo: bgState.sessionInfo,
               totalCost: bgState.totalCost,
+              isCompacting: bgState.isCompacting,
             });
           }
         } else {

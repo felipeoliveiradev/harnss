@@ -84,6 +84,8 @@ export function useSessionManager(projects: Project[], acpPermissionBehavior: Ac
   startOptionsRef.current = startOptions;
   const isProcessingRef = useRef(engine.isProcessing);
   isProcessingRef.current = engine.isProcessing;
+  const isCompactingRef = useRef("isCompacting" in engine ? !!engine.isCompacting : false);
+  isCompactingRef.current = "isCompacting" in engine ? !!engine.isCompacting : false;
   const isConnectedRef = useRef(engine.isConnected);
   isConnectedRef.current = engine.isConnected;
   const sessionInfoRef = useRef(engine.sessionInfo);
@@ -151,6 +153,7 @@ export function useSessionManager(projects: Project[], acpPermissionBehavior: Ac
     messagesRef,
     totalCostRef,
     isProcessingRef,
+    isCompactingRef,
     isConnectedRef,
     sessionInfoRef,
     pendingPermissionRef,

@@ -5,6 +5,8 @@ import type {
   ToolResultEvent,
   ResultEvent,
   SystemInitEvent,
+  SystemStatusEvent,
+  SystemCompactBoundaryEvent,
   TaskProgressEvent,
   TaskNotificationEvent,
   SubagentToolStep,
@@ -176,8 +178,24 @@ export function handleClaudeEvent(
 
   switch (event.type) {
     case "system": {
-      // Skip status and compact_boundary subtypes — only process init
-      if ("subtype" in event && (event.subtype === "status" || event.subtype === "compact_boundary")) {
+      if ("subtype" in event && event.subtype === "compact_boundary") {
+        state.isCompacting = false;
+        const compactMeta = (event as SystemCompactBoundaryEvent).compact_metadata;
+        state.messages.push({
+          id: nextId("compact"),
+          role: "summary",
+          content: "",
+          timestamp: Date.now(),
+          compactTrigger: compactMeta?.trigger === "manual" ? "manual" : "auto",
+          compactPreTokens: compactMeta?.pre_tokens,
+        });
+        break;
+      }
+      if ("subtype" in event && event.subtype === "status") {
+        const statusEvent = event as SystemStatusEvent;
+        if (statusEvent.status === "compacting") {
+          state.isCompacting = true;
+        }
         break;
       }
       const init = event as SystemInitEvent;
