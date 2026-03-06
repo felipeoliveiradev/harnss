@@ -1,6 +1,11 @@
 import { useEffect, useRef } from "react";
 import type { PermissionRequest } from "@/types";
 import type { NotificationSettings, NotificationTrigger } from "@/types/ui";
+import {
+  advanceSessionCompletionTracker,
+  consumeSuppressedSessionCompletion,
+  shouldNotifyPermissionRequest,
+} from "@/lib/notification-utils";
 
 // ── Defaults (used when AppSettings hasn't loaded yet) ──
 
@@ -103,6 +108,7 @@ function getNotificationContent(
 interface UseNotificationsOptions {
   pendingPermission: PermissionRequest | null;
   notificationSettings: NotificationSettings | null;
+  activeSessionId: string | null;
   /** Whether the agent is currently processing (used to detect session completion) */
   isProcessing: boolean;
 }
@@ -121,55 +127,63 @@ interface BackgroundPermissionDetail {
 export function useNotifications({
   pendingPermission,
   notificationSettings,
+  activeSessionId,
   isProcessing,
 }: UseNotificationsOptions): void {
   const settings = notificationSettings ?? FALLBACK;
 
   // ── Permission-based notifications ──
 
-  // Track the last permission requestId we fired for — prevents re-firing on re-renders
-  const lastFiredId = useRef<string | null>(null);
+  // Track every request we've already surfaced so foreground/background
+  // re-presentation of the same open permission doesn't replay the sound.
+  const seenPermissionKeys = useRef(new Set<string>());
 
   useEffect(() => {
-    if (!pendingPermission) {
-      lastFiredId.current = null;
+    if (!pendingPermission) return;
+
+    if (!shouldNotifyPermissionRequest(seenPermissionKeys.current, {
+      sessionId: activeSessionId,
+      requestId: pendingPermission.requestId,
+    })) {
       return;
     }
-
-    // Don't fire again for the same permission request
-    if (lastFiredId.current === pendingPermission.requestId) return;
-    lastFiredId.current = pendingPermission.requestId;
 
     const eventType = classifyEvent(pendingPermission.toolName);
     const eventSettings = settings[eventType];
     const { title, body } = getNotificationContent(eventType, pendingPermission);
     fireNotification(eventSettings, title, body);
-  }, [pendingPermission, settings]);
+  }, [activeSessionId, pendingPermission, settings]);
 
   // ── Session completion notification ──
 
-  // Track previous isProcessing to detect true → false transitions
-  const prevProcessing = useRef(isProcessing);
+  // Track the active session alongside processing so chat switches do not look
+  // like a completed turn for the newly selected session.
+  const prevSessionState = useRef({ sessionId: activeSessionId, isProcessing });
 
   useEffect(() => {
-    const wasBusy = prevProcessing.current;
-    prevProcessing.current = isProcessing;
+    const current = { sessionId: activeSessionId, isProcessing };
+    const { completed, tracked } = advanceSessionCompletionTracker(
+      prevSessionState.current,
+      current,
+    );
+    prevSessionState.current = tracked;
 
-    // Only fire when transitioning from processing → done
-    if (wasBusy && !isProcessing) {
+    if (completed) {
+      if (consumeSuppressedSessionCompletion(current.sessionId)) return;
       fireNotification(
         settings.sessionComplete,
         "Task complete",
         "Claude has finished processing.",
       );
     }
-  }, [isProcessing, settings]);
+  }, [activeSessionId, isProcessing, settings]);
 
   // ── Background session notifications ──
   useEffect(() => {
     const onBackgroundComplete = (evt: Event) => {
       const detail = (evt as CustomEvent<BackgroundSessionCompleteDetail>).detail;
       if (!detail) return;
+      if (consumeSuppressedSessionCompletion(detail.sessionId)) return;
       const title = detail.sessionTitle || "Background session";
       fireNotification(
         settings.sessionComplete,
@@ -181,6 +195,12 @@ export function useNotifications({
     const onBackgroundPermission = (evt: Event) => {
       const detail = (evt as CustomEvent<BackgroundPermissionDetail>).detail;
       if (!detail?.permission) return;
+      if (!shouldNotifyPermissionRequest(seenPermissionKeys.current, {
+        sessionId: detail.sessionId,
+        requestId: detail.permission.requestId,
+      })) {
+        return;
+      }
       const eventType = classifyEvent(detail.permission.toolName);
       const eventSettings = settings[eventType];
       const { title, body } = getNotificationContent(eventType, detail.permission);

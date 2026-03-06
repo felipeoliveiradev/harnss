@@ -21,6 +21,7 @@ import { useSessionPersistence } from "./session/useSessionPersistence";
 import { useDraftMaterialization } from "./session/useDraftMaterialization";
 import { useSessionRevival } from "./session/useSessionRevival";
 import { useSessionLifecycle } from "./session/useSessionLifecycle";
+import { suppressNextSessionCompletion } from "@/lib/notification-utils";
 
 export function useSessionManager(projects: Project[], acpPermissionBehavior: AcpPermissionBehavior = "ask", onSpaceChange?: (spaceId: string) => void) {
   // ── Core state ──
@@ -344,6 +345,7 @@ export function useSessionManager(projects: Project[], acpPermissionBehavior: Ac
       if (activeSessionIdRef.current === DRAFT_ID
           && startOptionsRef.current.engine === "acp"
           && isProcessingRef.current) {
+        suppressNextSessionCompletion(activeSessionIdRef.current);
         await window.claude.acp.abortPendingStart();
         acp.setIsProcessing(false);
         return;

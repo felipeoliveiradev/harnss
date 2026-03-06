@@ -136,6 +136,7 @@ export function useAppOrchestrator() {
   useNotifications({
     pendingPermission: manager.pendingPermission,
     notificationSettings,
+    activeSessionId: manager.activeSessionId,
     isProcessing: manager.isProcessing,
   });
 

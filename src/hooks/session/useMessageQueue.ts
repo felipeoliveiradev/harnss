@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ImageAttachment, UIMessage } from "../../types";
 import type { CollaborationMode } from "../../types/codex-protocol/CollaborationMode";
 import { imageAttachmentsToCodexInputs } from "../../lib/codex-adapter";
+import { suppressNextSessionCompletion } from "../../lib/notification-utils";
 import { buildSdkContent } from "../../lib/protocol";
 import { buildCodexCollabMode, DRAFT_ID } from "./types";
 import type { SharedSessionRefs, SharedSessionSetters, EngineHooks, QueuedMessage } from "./types";
@@ -327,6 +328,7 @@ export function useMessageQueue({ refs, setters, engines, activeSessionId }: Use
 
     boundaryWaitRef.current.delete(activeId);
     const sessionEngine = sessionsRef.current.find((s) => s.id === activeId)?.engine ?? "claude";
+    suppressNextSessionCompletion(activeId);
     if (sessionEngine === "acp") {
       void window.claude.acp.cancel(activeId);
     } else if (sessionEngine === "codex") {

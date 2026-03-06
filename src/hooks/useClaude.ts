@@ -29,6 +29,7 @@ import {
 } from "../lib/protocol";
 import { formatResultError } from "../lib/message-factory";
 import { bgAgentStore } from "../lib/background-agent-store";
+import { suppressNextSessionCompletion } from "../lib/notification-utils";
 import { useEngineBase } from "./useEngineBase";
 
 function uiLog(label: string, data: unknown) {
@@ -747,6 +748,7 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
 
   const stop = useCallback(async () => {
     if (!sessionIdRef.current) return;
+    suppressNextSessionCompletion(sessionIdRef.current);
     await window.claude.stop(sessionIdRef.current, "user");
     setIsConnected(false);
     setIsProcessing(false);
@@ -756,6 +758,7 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
 
   const interrupt = useCallback(async () => {
     if (!sessionIdRef.current) return;
+    suppressNextSessionCompletion(sessionIdRef.current);
 
     // Flush any rAF-buffered streaming content to React state
     flushNow();

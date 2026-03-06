@@ -122,6 +122,8 @@ contextBridge.exposeInMainWorld("claude", {
   },
   terminal: {
     create: (options: { cwd?: string; cols?: number; rows?: number; spaceId?: string }) => ipcRenderer.invoke("terminal:create", options),
+    list: () => ipcRenderer.invoke("terminal:list"),
+    snapshot: (terminalId: string) => ipcRenderer.invoke("terminal:snapshot", terminalId),
     write: (terminalId: string, data: string) => ipcRenderer.invoke("terminal:write", { terminalId, data }),
     resize: (terminalId: string, cols: number, rows: number) => ipcRenderer.invoke("terminal:resize", { terminalId, cols, rows }),
     destroy: (terminalId: string) => ipcRenderer.invoke("terminal:destroy", terminalId),

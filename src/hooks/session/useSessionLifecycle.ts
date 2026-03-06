@@ -4,6 +4,7 @@ import type { UIMessage, ChatSession, ImageAttachment, McpServerConfig, Project 
 import type { ACPConfigOption } from "../../types/acp";
 import type { CollaborationMode } from "../../types/codex-protocol/CollaborationMode";
 import { imageAttachmentsToCodexInputs } from "../../lib/codex-adapter";
+import { suppressNextSessionCompletion } from "../../lib/notification-utils";
 import { buildSdkContent } from "../../lib/protocol";
 import { toMcpStatusState } from "../../lib/mcp-utils";
 import { bgAgentStore } from "../../lib/background-agent-store";
@@ -322,10 +323,13 @@ export function useSessionLifecycle({
       if (!session) return;
       if (liveSessionIdsRef.current.has(id)) {
         if (session.engine === "codex") {
+          suppressNextSessionCompletion(id);
           await window.claude.codex.stop(id);
         } else if (session.engine === "acp") {
+          suppressNextSessionCompletion(id);
           await window.claude.acp.stop(id);
         } else {
+          suppressNextSessionCompletion(id);
           await window.claude.stop(id, "session_delete");
         }
         liveSessionIdsRef.current.delete(id);
@@ -466,6 +470,7 @@ export function useSessionLifecycle({
       // Model change requires eager Claude session restart only when the draft engine is Claude.
       if (preStartedSessionIdRef.current && draftEngine === "claude") {
         const oldId = preStartedSessionIdRef.current;
+        suppressNextSessionCompletion(oldId);
         window.claude.stop(oldId, "draft_model_change");
         liveSessionIdsRef.current.delete(oldId);
         backgroundStoreRef.current.delete(oldId);
@@ -674,6 +679,7 @@ export function useSessionLifecycle({
     const currentMessages = messagesRef.current;
     const currentCost = totalCostRef.current;
 
+    suppressNextSessionCompletion(currentId);
     await window.claude.acp.stop(currentId);
     liveSessionIdsRef.current.delete(currentId);
     backgroundStoreRef.current.delete(currentId);
@@ -747,6 +753,7 @@ export function useSessionLifecycle({
     }
 
     // 4. Stop old session — cleanup runs async in the event loop's finally block
+    suppressNextSessionCompletion(currentId);
     await window.claude.stop(currentId, "revert_restart");
     liveSessionIdsRef.current.delete(currentId);
     backgroundStoreRef.current.delete(currentId);

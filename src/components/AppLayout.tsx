@@ -453,8 +453,10 @@ export function AppLayout() {
                       spaceId={spaceManager.activeSpaceId}
                       tabs={activeSpaceTerminals.tabs}
                       activeTabId={activeSpaceTerminals.activeTabId}
+                      terminalsReady={spaceTerminals.isReady}
                       onSetActiveTab={(tabId) => spaceTerminals.setActiveTab(spaceManager.activeSpaceId, tabId)}
                       onCreateTerminal={() => spaceTerminals.createTerminal(spaceManager.activeSpaceId, activeProjectPath)}
+                      onEnsureTerminal={() => spaceTerminals.ensureTerminal(spaceManager.activeSpaceId, activeProjectPath)}
                       onCloseTerminal={(tabId) => spaceTerminals.closeTerminal(spaceManager.activeSpaceId, tabId)}
                       resolvedTheme={resolvedTheme}
                     />

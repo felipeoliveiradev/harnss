@@ -179,11 +179,28 @@ declare global {
       };
       terminal: {
         create: (options: { cwd?: string; cols?: number; rows?: number; spaceId?: string }) => Promise<{ terminalId?: string; error?: string }>;
+        list: () => Promise<{
+          terminals?: Array<{
+            terminalId: string;
+            spaceId: string;
+            createdAt: number;
+            exited: boolean;
+            exitCode: number | null;
+          }>;
+          error?: string;
+        }>;
+        snapshot: (terminalId: string) => Promise<{
+          output?: string;
+          seq?: number;
+          exited?: boolean;
+          exitCode?: number | null;
+          error?: string;
+        }>;
         write: (terminalId: string, data: string) => Promise<{ ok?: boolean; error?: string }>;
         resize: (terminalId: string, cols: number, rows: number) => Promise<{ ok?: boolean; error?: string }>;
         destroy: (terminalId: string) => Promise<{ ok?: boolean }>;
         destroySpace: (spaceId: string) => Promise<{ ok?: boolean }>;
-        onData: (callback: (data: { terminalId: string; data: string }) => void) => () => void;
+        onData: (callback: (data: { terminalId: string; data: string; seq: number }) => void) => () => void;
         onExit: (callback: (data: { terminalId: string; exitCode: number }) => void) => () => void;
       };
       acp: {

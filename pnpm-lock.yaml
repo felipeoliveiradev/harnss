@@ -12,8 +12,8 @@ importers:
         specifier: ^0.14.1
         version: 0.14.1(zod@3.25.76)
       '@anthropic-ai/claude-agent-sdk':
-        specifier: ^0.2.68
-        version: 0.2.68(zod@3.25.76)
+        specifier: ^0.2.70
+        version: 0.2.70(zod@3.25.76)
       '@huggingface/transformers':
         specifier: ^3.8.1
         version: 3.8.1
@@ -165,8 +165,8 @@ packages:
     resolution: {integrity: sha512-9q/yCljni37pkMr4sPrI3G4jqdIk074+iukc5aFJl7kmDCCsiJrbZ6zKxnES1Gwg+i9RcDZwvktl23puGslmvA==}
     hasBin: true
 
-  '@anthropic-ai/claude-agent-sdk@0.2.68':
-    resolution: {integrity: sha512-y4n6hTTgAqmiV/pqy1G4OgIdg6gDiAKPJaEgO1NOh7/rdsrXyc/HQoUmUy0ty4HkBq1hasm7hB92wtX3W1UMEw==}
+  '@anthropic-ai/claude-agent-sdk@0.2.70':
+    resolution: {integrity: sha512-ABaB37jWt7dZXfIDHebHv99jX9GIyqc0aSjcz9nxq79eauOpa+64Cah5hx/yzhsWz7m5GEtjbMIZCClTfnRRhg==}
     engines: {node: '>=18.0.0'}
     peerDependencies:
       zod: ^4.0.0
@@ -4897,7 +4897,7 @@ snapshots:
       package-manager-detector: 1.6.0
       tinyexec: 1.0.2
 
-  '@anthropic-ai/claude-agent-sdk@0.2.68(zod@3.25.76)':
+  '@anthropic-ai/claude-agent-sdk@0.2.70(zod@3.25.76)':
     dependencies:
       zod: 3.25.76
     optionalDependencies:
