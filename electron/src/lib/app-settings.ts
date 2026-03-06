@@ -18,6 +18,7 @@ export type PreferredEditor = "auto" | "cursor" | "code" | "zed";
 export type VoiceDictationMode = "native" | "whisper";
 export type NotificationTrigger = "always" | "unfocused" | "never";
 export type CodexBinarySource = "auto" | "managed" | "custom";
+export type ClaudeBinarySource = "auto" | "managed" | "custom";
 
 export interface NotificationEventSettings {
   osNotification: NotificationTrigger;
@@ -48,6 +49,10 @@ export interface AppSettings {
   codexBinarySource: CodexBinarySource;
   /** Absolute path used when codexBinarySource is "custom" */
   codexCustomBinaryPath: string;
+  /** Which Claude binary source to use: auto-detect, managed native install, or custom path */
+  claudeBinarySource: ClaudeBinarySource;
+  /** Absolute path used when claudeBinarySource is "custom" */
+  claudeCustomBinaryPath: string;
   /** Show developer-only "Dev Fill" button in chat title bar (local dev builds only) */
   showDevFillInChatTitleBar: boolean;
 }
@@ -68,6 +73,8 @@ const DEFAULTS: AppSettings = {
   codexClientName: "Harnss",
   codexBinarySource: "auto",
   codexCustomBinaryPath: "",
+  claudeBinarySource: "auto",
+  claudeCustomBinaryPath: "",
   showDevFillInChatTitleBar: false,
 };
 

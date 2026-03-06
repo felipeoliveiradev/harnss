@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useMemo, useCallback, memo } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, useMemo, useCallback, memo } from "react";
 import { Minus } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { UIMessage } from "@/types";
@@ -17,6 +17,11 @@ import {
   isWithinBottomLockThreshold,
   shouldUnlockBottomLock,
 } from "@/lib/chat-scroll";
+
+const LARGE_CHAT_THRESHOLD = 300;
+const INITIAL_RENDER_TAIL_COUNT = 180;
+const PREPEND_CHUNK_SIZE = 200;
+const PREPEND_TRIGGER_PX = 160;
 
 interface ChatViewProps {
   messages: UIMessage[];
@@ -60,10 +65,71 @@ export const ChatView = memo(function ChatView({ messages, isProcessing, showThi
   const topProgressRafRef = useRef<number | null>(null);
   const pendingTopProgressRef = useRef(0);
   const lastTopProgressRef = useRef(-1);
+  const prependAnchorRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
+  const lastSessionIdRef = useRef<string | undefined | null>(sessionId);
+  const [visibleStartIndex, setVisibleStartIndex] = useState(() =>
+    messages.length > LARGE_CHAT_THRESHOLD
+      ? Math.max(0, messages.length - INITIAL_RENDER_TAIL_COUNT)
+      : 0,
+  );
 
   const getViewport = useCallback(() => (
     scrollAreaRef.current?.querySelector<HTMLElement>("[data-radix-scroll-area-viewport]")
   ), []);
+
+  const expandRenderedHistory = useCallback((nextStart?: number) => {
+    if (visibleStartIndex === 0) return;
+    const viewport = getViewport();
+    if (viewport) {
+      prependAnchorRef.current = {
+        scrollHeight: viewport.scrollHeight,
+        scrollTop: viewport.scrollTop,
+      };
+    }
+    setVisibleStartIndex((prev) => {
+      if (prev === 0) return 0;
+      return nextStart !== undefined
+        ? Math.max(0, Math.min(prev, nextStart))
+        : Math.max(0, prev - PREPEND_CHUNK_SIZE);
+    });
+  }, [getViewport, visibleStartIndex]);
+
+  useEffect(() => {
+    const didSessionChange = lastSessionIdRef.current !== sessionId;
+    lastSessionIdRef.current = sessionId;
+
+    if (didSessionChange) {
+      setVisibleStartIndex(
+        messages.length > LARGE_CHAT_THRESHOLD
+          ? Math.max(0, messages.length - INITIAL_RENDER_TAIL_COUNT)
+          : 0,
+      );
+      prependAnchorRef.current = null;
+      return;
+    }
+
+    setVisibleStartIndex((prev) => {
+      if (messages.length <= LARGE_CHAT_THRESHOLD) return 0;
+      return Math.min(prev, Math.max(0, messages.length - INITIAL_RENDER_TAIL_COUNT));
+    });
+  }, [messages.length, sessionId]);
+
+  useLayoutEffect(() => {
+    const anchor = prependAnchorRef.current;
+    if (!anchor) return;
+
+    const viewport = getViewport();
+    if (!viewport) return;
+
+    const delta = viewport.scrollHeight - anchor.scrollHeight;
+    viewport.scrollTop = anchor.scrollTop + delta;
+    prependAnchorRef.current = null;
+  }, [getViewport, visibleStartIndex]);
+
+  const visibleMessages = useMemo(
+    () => messages.slice(visibleStartIndex),
+    [messages, visibleStartIndex],
+  );
 
   const jumpToBottom = useCallback((opts?: { force?: boolean }) => {
     const shouldForce = opts?.force === true;
@@ -159,6 +225,10 @@ export const ChatView = memo(function ChatView({ messages, isProcessing, showThi
         return;
       }
 
+      if (scrollTop <= PREPEND_TRIGGER_PX && visibleStartIndex > 0) {
+        expandRenderedHistory();
+      }
+
       const hasRecentUserIntent = Date.now() <= userScrollIntentUntilRef.current;
       if (shouldUnlockBottomLock({
         scrollTop,
@@ -208,7 +278,7 @@ export const ChatView = memo(function ChatView({ messages, isProcessing, showThi
         topProgressRafRef.current = null;
       }
     };
-  }, [messages.length, clearSettleTimers]);
+  }, [messages.length, clearSettleTimers, expandRenderedHistory, visibleStartIndex]);
 
   // Force-scroll to bottom on session switch, bypassing the proximity guard
   useEffect(() => {
@@ -245,6 +315,11 @@ export const ChatView = memo(function ChatView({ messages, isProcessing, showThi
   // Scroll to specific message (from search navigation)
   useEffect(() => {
     if (!scrollToMessageId) return;
+    const targetIndex = messages.findIndex((msg) => msg.id === scrollToMessageId);
+    if (targetIndex >= 0 && targetIndex < visibleStartIndex) {
+      expandRenderedHistory(Math.max(0, targetIndex - 24));
+      return;
+    }
     bottomLockedRef.current = false;
     clearSettleTimers();
     const el = scrollAreaRef.current?.querySelector(`[data-message-id="${scrollToMessageId}"]`);
@@ -273,16 +348,16 @@ export const ChatView = memo(function ChatView({ messages, isProcessing, showThi
       }
     }, 500);
     return () => clearTimeout(retry);
-  }, [scrollToMessageId, onScrolledToMessage, clearSettleTimers]);
+  }, [clearSettleTimers, expandRenderedHistory, messages, onScrolledToMessage, scrollToMessageId, visibleStartIndex]);
 
   const nonQueuedMessages = useMemo(
-    () => messages.filter((message) => !message.isQueued),
-    [messages],
+    () => visibleMessages.filter((message) => !message.isQueued),
+    [visibleMessages],
   );
 
   const queuedMessages = useMemo(
-    () => messages.filter((message) => message.isQueued),
-    [messages],
+    () => visibleMessages.filter((message) => message.isQueued),
+    [visibleMessages],
   );
 
   const renderMessages = useMemo(
@@ -413,6 +488,17 @@ export const ChatView = memo(function ChatView({ messages, isProcessing, showThi
   return (
     <ScrollArea ref={scrollAreaRef} className="min-h-0 flex-1">
       <div ref={contentRef} className={`pt-14 ${extraBottomPadding ? "pb-56" : "pb-36"}`}>
+        {visibleStartIndex > 0 && (
+          <div className="sticky top-14 z-[6] flex justify-center px-4 pb-2">
+            <button
+              type="button"
+              className="rounded-full border border-border/50 bg-background/90 px-3 py-1 text-[11px] text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:text-foreground"
+              onClick={() => expandRenderedHistory()}
+            >
+              Load {Math.min(PREPEND_CHUNK_SIZE, visibleStartIndex)} earlier messages
+            </button>
+          </div>
+        )}
         {nonQueuedMessages.map((msg, index) => {
           // Determine the turn summary to render after this message (if any)
           const turnSummary = turnSummaryByEndIndex.get(index);

@@ -106,6 +106,8 @@ declare global {
         sessionId: string,
         thinkingEnabled: boolean,
       ) => Promise<{ ok?: boolean; error?: string }>;
+      version: () => Promise<{ version?: string | null; error?: string }>;
+      binaryStatus: () => Promise<{ installed: boolean; installing: boolean }>;
       projects: {
         list: () => Promise<Project[]>;
         create: (spaceId?: string) => Promise<Project | null>;

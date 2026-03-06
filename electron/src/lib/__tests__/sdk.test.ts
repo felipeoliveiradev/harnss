@@ -76,7 +76,7 @@ describe("sdk path resolution", () => {
   it("prefers embed resolution when the candidate exists", async () => {
     const embedEntry = require.resolve("@anthropic-ai/claude-agent-sdk/embed");
     const embedCliPath = path.join(path.dirname(embedEntry), "cli.js");
-    mockExistsSync.mockImplementation((candidate) => candidate === embedCliPath);
+    mockExistsSync.mockImplementation((candidate: unknown) => candidate === embedCliPath);
 
     const mod = await loadSdkModule();
 

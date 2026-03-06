@@ -4,11 +4,12 @@ import os from "os";
 import { log } from "../lib/logger";
 import { safeSend } from "../lib/safe-send";
 import { AsyncChannel } from "../lib/async-channel";
-import { getSDK, getCliPath, clientAppEnv } from "../lib/sdk";
+import { getSDK, clientAppEnv } from "../lib/sdk";
 import type { QueryHandle } from "../lib/sdk";
 import { getMcpAuthHeaders } from "../lib/mcp-oauth-flow";
 import { getClaudeModelsCache, setClaudeModelsCache } from "../lib/claude-model-cache";
 import { extractErrorMessage } from "../lib/error-utils";
+import { getClaudeBinaryPath, getClaudeBinaryStatus, getClaudeVersion } from "../lib/claude-binary";
 
 /** SDK options for file checkpointing — enables Write/Edit/NotebookEdit revert support */
 function fileCheckpointOptions(): Record<string, unknown> {
@@ -234,7 +235,7 @@ async function revalidateClaudeModelsCache(cwd?: string): Promise<{ models: Arra
 
     try {
       const query = await getSDK();
-      const cliPath = getCliPath();
+      const cliPath = await getClaudeBinaryPath({ installIfMissing: false, allowSdkFallback: true }).catch(() => undefined);
       logSdkCliPath("models-revalidate", cliPath);
       const queryOptions: Record<string, unknown> = {
         cwd: cwd?.trim() || os.homedir(),
@@ -329,7 +330,7 @@ async function restartSession(
   const mcpServers = mcpServersOverride ?? opts.mcpServers;
   const query = await getSDK();
   const newChannel = new AsyncChannel<unknown>();
-  const cliPath = getCliPath();
+  const cliPath = await getClaudeBinaryPath();
   logSdkCliPath(`restart session=${sessionId.slice(0, 8)}`, cliPath);
 
   const newSession: SessionEntry = {
@@ -451,7 +452,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
         });
       };
 
-      const cliPath = getCliPath();
+      const cliPath = await getClaudeBinaryPath();
       logSdkCliPath(`start session=${sessionId.slice(0, 8)}`, cliPath);
       const queryOptions: Record<string, unknown> = {
         cwd: options.cwd || process.cwd(),
@@ -752,6 +753,18 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
 
   ipcMain.handle("claude:models-cache:revalidate", async (_event, options?: { cwd?: string }) => {
     return revalidateClaudeModelsCache(options?.cwd);
+  });
+
+  ipcMain.handle("claude:version", async () => {
+    try {
+      return { version: await getClaudeVersion() };
+    } catch (err) {
+      return { error: extractErrorMessage(err) };
+    }
+  });
+
+  ipcMain.handle("claude:binary-status", async () => {
+    return getClaudeBinaryStatus();
   });
 
   ipcMain.handle("claude:mcp-reconnect", async (_event, { sessionId, serverName }: { sessionId: string; serverName: string }) => {

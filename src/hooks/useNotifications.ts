@@ -20,9 +20,13 @@ const FALLBACK: NotificationSettings = {
 
 let cachedAudio: HTMLAudioElement | null = null;
 
+function getNotificationSoundUrl(): string {
+  return new URL("./sounds/notification.wav", window.location.href).toString();
+}
+
 function getAudio(): HTMLAudioElement {
   if (!cachedAudio) {
-    cachedAudio = new Audio("/sounds/notification.wav");
+    cachedAudio = new Audio(getNotificationSoundUrl());
     cachedAudio.volume = 0.6;
   }
   return cachedAudio;
@@ -34,8 +38,8 @@ function getAudio(): HTMLAudioElement {
 function shouldFire(trigger: NotificationTrigger): boolean {
   if (trigger === "never") return false;
   if (trigger === "always") return true;
-  // "unfocused" — only fire when the document is hidden (window not focused)
-  return document.hidden;
+  // "unfocused" — fire whenever the renderer window itself is not focused.
+  return !document.hasFocus();
 }
 
 /** Fire OS notification + sound based on event settings. */

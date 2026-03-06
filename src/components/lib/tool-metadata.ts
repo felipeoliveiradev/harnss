@@ -11,6 +11,7 @@ import {
   Lightbulb,
   Map,
   MessageCircleQuestion,
+  PackageSearch,
 } from "lucide-react";
 
 // ── Tool icons ──
@@ -30,6 +31,7 @@ export const TOOL_ICONS: Record<string, typeof Terminal> = {
   EnterPlanMode: Lightbulb,
   ExitPlanMode: Map,
   AskUserQuestion: MessageCircleQuestion,
+  ToolSearch: PackageSearch,
 };
 
 export function getToolIcon(toolName: string) {
@@ -55,6 +57,7 @@ export const TOOL_LABELS: Record<string, ToolLabels> = {
   EnterPlanMode: { past: "Entered plan mode", active: "Entering plan mode", failure: "enter plan mode" },
   ExitPlanMode: { past: "Presented plan", active: "Preparing plan", failure: "prepare plan" },
   AskUserQuestion: { past: "Asked", active: "Asking", failure: "ask" },
+  ToolSearch: { past: "Loaded tools", active: "Loading tools", failure: "load tools" },
 };
 
 // MCP tool friendly names — pattern-matched for different server name prefixes

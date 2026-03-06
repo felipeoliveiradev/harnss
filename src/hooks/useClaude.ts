@@ -30,6 +30,7 @@ import {
 import { formatResultError } from "../lib/message-factory";
 import { bgAgentStore } from "../lib/background-agent-store";
 import { suppressNextSessionCompletion } from "../lib/notification-utils";
+import { normalizeTodoToolInput } from "../lib/todo-utils";
 import { useEngineBase } from "./useEngineBase";
 
 function uiLog(label: string, data: unknown) {
@@ -148,7 +149,7 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
         if (block.type === "tool_use") {
           const step: SubagentToolStep = {
             toolName: block.name,
-            toolInput: block.input,
+            toolInput: normalizeTodoToolInput(block.name, block.input),
             toolUseId: block.id,
           };
           setMessages((prev) =>
@@ -482,7 +483,7 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
                     role: "tool_call",
                     content: "",
                     toolName: block.name,
-                    toolInput: block.input,
+                    toolInput: normalizeTodoToolInput(block.name, block.input),
                     timestamp: Date.now(),
                     ...(isTask ? { subagentSteps: [], subagentStatus: "running" as const } : {}),
                   },

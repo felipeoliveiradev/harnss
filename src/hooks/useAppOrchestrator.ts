@@ -17,9 +17,10 @@ import {
   MIN_TOOLS_PANEL_WIDTH,
 } from "@/lib/layout-constants";
 import { resolveModelValue } from "@/lib/model-utils";
+import { getTodoItems } from "@/lib/todo-utils";
 import { isWindows } from "@/lib/utils";
 import { COLUMN_TOOL_IDS, type ToolId } from "@/components/ToolPicker";
-import type { TodoItem, ImageAttachment, Space, SpaceColor, InstalledAgent, AcpPermissionBehavior, EngineId } from "@/types";
+import type { ImageAttachment, Space, SpaceColor, InstalledAgent, AcpPermissionBehavior, EngineId } from "@/types";
 import type { NotificationSettings } from "@/types/ui";
 
 export function useAppOrchestrator() {
@@ -518,9 +519,10 @@ export function useAppOrchestrator() {
       if (
         msg.role === "tool_call" &&
         msg.toolName === "TodoWrite" &&
-        msg.toolInput?.todos
+        msg.toolInput &&
+        "todos" in msg.toolInput
       ) {
-        return msg.toolInput.todos as TodoItem[];
+        return getTodoItems(msg.toolInput.todos);
       }
     }
     return [];

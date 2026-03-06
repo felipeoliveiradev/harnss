@@ -475,10 +475,12 @@ export function AppLayout() {
                   browser: <BrowserPanel onElementGrab={handleElementGrab} />,
                   files: (
                     <FilesPanel
+                      sessionId={manager.activeSessionId}
                       messages={manager.messages}
                       cwd={activeProjectPath}
                       activeEngine={manager.activeSession?.engine}
                       onScrollToToolCall={setScrollToMessageId}
+                      enabled={activeTools.has("files")}
                     />
                   ),
                   "project-files": (
@@ -500,10 +502,12 @@ export function AppLayout() {
                   ),
                   changes: (
                     <ChangesPanel
+                      sessionId={manager.activeSessionId}
                       messages={manager.messages}
                       isProcessing={manager.isProcessing}
                       focusTurnIndex={changesPanelFocusTurn}
                       onFocusTurnHandled={() => setChangesPanelFocusTurn(undefined)}
+                      enabled={activeTools.has("changes")}
                     />
                   ),
                 };

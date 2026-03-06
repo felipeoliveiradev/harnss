@@ -17,6 +17,7 @@ import {
 } from "./protocol";
 import { formatResultError } from "./message-factory";
 import { bgAgentStore } from "./background-agent-store";
+import { normalizeTodoToolInput } from "./todo-utils";
 import type { InternalState } from "./background-session-store";
 
 // ── Helpers ──
@@ -105,7 +106,7 @@ function handleSubagentEvent(
       if (block.type === "tool_use") {
         const step: SubagentToolStep = {
           toolName: block.name,
-          toolInput: block.input,
+          toolInput: normalizeTodoToolInput(block.name, block.input),
           toolUseId: block.id,
         };
         state.messages = state.messages.map((m) => {
@@ -240,7 +241,7 @@ export function handleClaudeEvent(
               role: "tool_call",
               content: "",
               toolName: block.name,
-              toolInput: block.input,
+              toolInput: normalizeTodoToolInput(block.name, block.input),
               timestamp: Date.now(),
               ...(isTask
                 ? {

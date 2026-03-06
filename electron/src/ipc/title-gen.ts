@@ -1,8 +1,9 @@
 import { ipcMain } from "electron";
 import { log } from "../lib/logger";
-import { getSDK, getCliPath, clientAppEnv } from "../lib/sdk";
+import { getSDK, clientAppEnv } from "../lib/sdk";
 import { extractErrorMessage } from "../lib/error-utils";
 import { gitExec } from "../lib/git-exec";
+import { getClaudeBinaryPath } from "../lib/claude-binary";
 
 function firstNonEmptyLine(text: string): string | undefined {
   for (const line of text.split(/\r?\n/g)) {
@@ -32,7 +33,7 @@ async function oneShotSdkQuery(
 
   try {
     const query = await getSDK();
-    const cliPath = getCliPath();
+    const cliPath = await getClaudeBinaryPath();
     if (cliPath) {
       log("SDK_CLI_PATH", `${logLabel} path=${cliPath}`);
     } else {

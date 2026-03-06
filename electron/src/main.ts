@@ -60,6 +60,10 @@ function getMainWindow(): BrowserWindow | null {
   return mainWindow;
 }
 
+function isMainRendererPermissionRequest(webContents: Electron.WebContents | null): boolean {
+  return !!webContents && webContents.id === mainWindow?.webContents.id;
+}
+
 function createWindow(): void {
   const windowOptions: Electron.BrowserWindowConstructorOptions = {
     width: 1200,
@@ -267,8 +271,8 @@ app.whenReady().then(() => {
   // Allow microphone access for Whisper voice dictation (getUserMedia in renderer)
   session.defaultSession.setPermissionRequestHandler(
     (webContents, permission, callback) => {
-      // Only grant media permission to the main window's renderer, not webviews
-      if (permission === "media" && webContents.id === mainWindow?.webContents.id) {
+      // Only grant privileged permissions to the app's main renderer, not webviews.
+      if (isMainRendererPermissionRequest(webContents) && (permission === "media" || permission === "notifications")) {
         callback(true);
         return;
       }
@@ -277,7 +281,9 @@ app.whenReady().then(() => {
   );
   session.defaultSession.setPermissionCheckHandler(
     (webContents, permission) => {
-      if (permission === "media" && webContents?.id === mainWindow?.webContents.id) return true;
+      if (isMainRendererPermissionRequest(webContents) && (permission === "media" || permission === "notifications")) {
+        return true;
+      }
       return false;
     },
   );
