@@ -33,6 +33,10 @@ export function useMessageQueue({ refs, setters, engines, activeSessionId }: Use
   } = refs;
   const isDrainingRef = useRef(false);
   const boundaryWaitRef = useRef<Map<string, BoundaryWaitState>>(new Map());
+  // Guards against draining with stale isProcessing from the previous session.
+  // When activeSessionId changes, engine.isProcessing still reflects the OLD session's
+  // value until useEngineBase's reset effect runs — which happens AFTER the drain effect.
+  const sessionSwitchGuardRef = useRef(false);
   const [sendNextId, setSendNextId] = useState<string | null>(null);
 
   const getPendingToolMessageIds = useCallback((messages: UIMessage[]) => {
@@ -358,7 +362,19 @@ export function useMessageQueue({ refs, setters, engines, activeSessionId }: Use
     setQueuedCount(messageQueueRef.current.get(activeSessionId)?.length ?? 0);
   }, [activeSessionId, messageQueueRef, setQueuedCount]);
 
+  // Mark session switches so the drain effect below skips one cycle.
+  // Declared BEFORE the drain effect so it runs first (React fires effects in declaration order).
   useEffect(() => {
+    sessionSwitchGuardRef.current = true;
+  }, [activeSessionId]);
+
+  useEffect(() => {
+    // Skip drain on the render where activeSessionId just changed — engine.isProcessing
+    // is still stale from the previous session and would incorrectly trigger the drain.
+    if (sessionSwitchGuardRef.current) {
+      sessionSwitchGuardRef.current = false;
+      return;
+    }
     if (engine.isProcessing) return;
     void drainNextQueuedMessage();
   }, [activeSessionId, drainNextQueuedMessage, engine.isProcessing]);
