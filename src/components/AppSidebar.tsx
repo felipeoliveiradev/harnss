@@ -4,6 +4,7 @@ import { isMac } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { ChatSession, Project, Space } from "@/types";
+import { APP_SIDEBAR_WIDTH } from "@/lib/layout-constants";
 import { SidebarSearch } from "./SidebarSearch";
 import { SpaceBar } from "./SpaceBar";
 import { UpdateBanner } from "./UpdateBanner";
@@ -162,8 +163,9 @@ export const AppSidebar = memo(function AppSidebar({
   return (
     <div
       className={`flex shrink-0 flex-col overflow-hidden bg-sidebar transition-[width] duration-200 ${
-        isOpen ? "w-[280px] ps-2" : "w-0"
+        isOpen ? "ps-2" : ""
       }`}
+      style={{ width: isOpen ? APP_SIDEBAR_WIDTH : 0 }}
     >
       <div
         className={`drag-region flex h-[52px] items-center gap-2 pe-3 ${isMac ? "ps-[84px]" : "ps-2"}`}

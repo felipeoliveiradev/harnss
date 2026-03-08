@@ -24,10 +24,10 @@ describe("layout constants", () => {
   });
 
   it("computes the bootstrap window minimum width for each platform", () => {
-    expect(APP_SIDEBAR_WIDTH).toBe(260);
+    expect(APP_SIDEBAR_WIDTH).toBe(280);
     expect(ISLAND_LAYOUT_MARGIN).toBe(16);
     expect(WINDOWS_FRAME_BUFFER_WIDTH).toBe(16);
-    expect(getBootstrapMinWindowWidth("darwin")).toBe(1664);
-    expect(getBootstrapMinWindowWidth("win32")).toBe(1680);
+    expect(getBootstrapMinWindowWidth("darwin")).toBe(1684);
+    expect(getBootstrapMinWindowWidth("win32")).toBe(1700);
   });
 });

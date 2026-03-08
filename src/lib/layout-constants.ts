@@ -2,7 +2,7 @@ export const MIN_CHAT_WIDTH_ISLAND = 828;
 export const MIN_CHAT_WIDTH_FLAT = 828;
 export const BOTTOM_CHAT_MAX_WIDTH_CLASS = "max-w-[61.5rem]";
 export const CHAT_INPUT_MAX_WIDTH_CLASS = BOTTOM_CHAT_MAX_WIDTH_CLASS;
-export const APP_SIDEBAR_WIDTH = 260;
+export const APP_SIDEBAR_WIDTH = 280;
 export const ISLAND_LAYOUT_MARGIN = 16;
 export const WINDOWS_FRAME_BUFFER_WIDTH = 16;
 
