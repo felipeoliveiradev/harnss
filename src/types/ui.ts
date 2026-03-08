@@ -48,6 +48,8 @@ export interface AppSettings {
   claudeCustomBinaryPath: string;
   /** Show developer-only "Dev Fill" button in chat title bar (local dev builds only) */
   showDevFillInChatTitleBar: boolean;
+  /** Show the Jira board UI in the sidebar and main panel (developer preview) */
+  showJiraBoard: boolean;
   /** Enable anonymous analytics to help improve the app (default: true) */
   analyticsEnabled: boolean;
   /** Anonymous user ID for analytics (auto-generated) */

@@ -154,19 +154,24 @@ html.glass-enabled #root {
   --sidebar-accent: oklch(0.965 0.001 286.029 / 0.45);
   /* White text on glass sidebar — native glass shows through dark, so sidebar
      text should be light (like dark mode) regardless of the app theme.
-     Exceptions: search input and selected chat keep dark text (see below). */
+     Exception: search input keeps dark text (see below). */
   --sidebar-foreground: oklch(0.985 0 0);
   --sidebar-primary: oklch(0.488 0.243 264.376);
   --sidebar-primary-foreground: oklch(0.985 0 0);
   --sidebar-ring: oklch(0.64 0 0);
-  /* Keep --sidebar-accent-foreground at light-mode default (dark text on
-     selected/active chat items) */
+  /* Keep --sidebar-accent-foreground at light-mode default for other accent
+     surfaces; selected chats are overridden below. */
 }
 
-/* Elements on light backgrounds (search box, active chat) — reset to dark text/icons */
+/* Elements on light backgrounds (search box) — reset to dark text/icons */
 .glass-enabled:not(.dark) .glass-outline,
 .glass-enabled:not(.dark) .bg-sidebar-accent {
   --sidebar-foreground: oklch(0.145 0 0);
+}
+
+/* In light mode with glass enabled, selected chats should stay white. */
+.glass-enabled:not(.dark) .session-item-active {
+  color: oklch(0.985 0 0);
 }
 
 /* In glass mode, only the outermost bg-sidebar (AppLayout root) provides

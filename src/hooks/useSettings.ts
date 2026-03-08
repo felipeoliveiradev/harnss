@@ -68,6 +68,17 @@ const DEFAULT_ENGINE_MODELS: Record<EngineId, string> = {
 };
 
 const DEFAULT_TOOL_ORDER: ToolId[] = ["terminal", "git", "browser", "files", "project-files", "mcp", "changes"];
+const VALID_TOOL_IDS = new Set<ToolId>([
+  "terminal",
+  "browser",
+  "git",
+  "files",
+  "project-files",
+  "tasks",
+  "agents",
+  "mcp",
+  "changes",
+]);
 
 // ── Hook ──
 
@@ -147,7 +158,7 @@ function readToolsSplitRatios(pid: string): number[] {
 
 /** Ensure toolOrder contains all known panel tools (filling in any missing ones) */
 function readToolOrder(pid: string): ToolId[] {
-  const stored = readJson<ToolId[]>(`harnss-${pid}-tool-order`, []);
+  const stored = readJson<ToolId[]>(`harnss-${pid}-tool-order`, []).filter((id) => VALID_TOOL_IDS.has(id));
   if (stored.length === 0) return [...DEFAULT_TOOL_ORDER];
   // Ensure all default tools appear (append any missing ones)
   const set = new Set(stored);
@@ -331,7 +342,7 @@ export function useSettings(projectId: string | null, engine: EngineId = "claude
   );
 
   const [activeTools, setActiveToolsRaw] = useState<Set<ToolId>>(() => {
-    const arr = readJson<ToolId[]>(`harnss-${pid}-active-tools`, []);
+    const arr = readJson<ToolId[]>(`harnss-${pid}-active-tools`, []).filter((id) => VALID_TOOL_IDS.has(id));
     return new Set(arr);
   });
   const setActiveTools = useCallback(

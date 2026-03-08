@@ -27,6 +27,7 @@ export const AdvancedSettings = memo(function AdvancedSettings({
   const [claudeBinarySource, setClaudeBinarySource] = useState<"auto" | "managed" | "custom">("auto");
   const [claudeCustomBinaryPath, setClaudeCustomBinaryPath] = useState("");
   const [showDevFillInChatTitleBar, setShowDevFillInChatTitleBar] = useState(false);
+  const [showJiraBoard, setShowJiraBoard] = useState(false);
 
   useEffect(() => {
     if (appSettings) {
@@ -36,6 +37,7 @@ export const AdvancedSettings = memo(function AdvancedSettings({
       setClaudeBinarySource(appSettings.claudeBinarySource || "auto");
       setClaudeCustomBinaryPath(appSettings.claudeCustomBinaryPath || "");
       setShowDevFillInChatTitleBar(!!appSettings.showDevFillInChatTitleBar);
+      setShowJiraBoard(!!appSettings.showJiraBoard);
     }
   }, [appSettings]);
 
@@ -88,6 +90,14 @@ export const AdvancedSettings = memo(function AdvancedSettings({
     async (checked: boolean) => {
       setShowDevFillInChatTitleBar(checked);
       await onUpdateAppSettings({ showDevFillInChatTitleBar: checked });
+    },
+    [onUpdateAppSettings],
+  );
+
+  const handleJiraBoardToggle = useCallback(
+    async (checked: boolean) => {
+      setShowJiraBoard(checked);
+      await onUpdateAppSettings({ showJiraBoard: checked });
     },
     [onUpdateAppSettings],
   );
@@ -194,6 +204,18 @@ export const AdvancedSettings = memo(function AdvancedSettings({
                 <Switch
                   checked={showDevFillInChatTitleBar}
                   onCheckedChange={handleDevFillToggle}
+                />
+              </SettingRow>
+            )}
+
+            {section === "advanced" && (
+              <SettingRow
+                label="Enable Jira board"
+                description="Show the Jira board UI in project sidebars and chats. This is a developer preview."
+              >
+                <Switch
+                  checked={showJiraBoard}
+                  onCheckedChange={handleJiraBoardToggle}
                 />
               </SettingRow>
             )}

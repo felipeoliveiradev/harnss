@@ -173,7 +173,7 @@ export function usePanelResize({
 
   // Count of active panel tools (used to sync stored ratios when tools are toggled)
   const activeToolCount = useMemo(
-    () => settings.toolOrder.filter((id) => settings.activeTools.has(id) && ["terminal", "git", "browser", "files", "mcp", "changes"].includes(id)).length,
+    () => settings.toolOrder.filter((id) => settings.activeTools.has(id) && ["terminal", "git", "browser", "files", "project-files", "mcp", "changes"].includes(id)).length,
     [settings.toolOrder, settings.activeTools],
   );
 

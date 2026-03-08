@@ -13,6 +13,7 @@ import {
   Circle,
   AlertTriangle,
 } from "lucide-react";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 
 const REMARK_PLUGINS = [remarkGfm];
@@ -33,6 +34,15 @@ const STATUS_COLORS: Record<string, string> = {
 function getStatusColor(status: string): string {
   const lower = status.toLowerCase();
   return STATUS_COLORS[lower] ?? "bg-muted text-muted-foreground";
+}
+
+function getInitials(name: string): string {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("");
 }
 
 const PRIORITY_ICONS: Record<string, { icon: typeof ArrowUpCircle; color: string }> = {
@@ -132,6 +142,7 @@ function JiraIssueRow({ issue }: { issue: JiraIssue }) {
   const issueType = fields.issuetype?.name ?? "";
   const priority = fields.priority?.name ?? "";
   const assignee = fields.assignee?.displayName;
+  const assigneeAvatar = fields.assignee?.avatarUrls?.["48x48"] ?? fields.assignee?.avatarUrls?.["24x24"];
 
   const typeInfo = ISSUETYPE_ICONS[issueType.toLowerCase()];
   const TypeIcon = typeInfo?.icon ?? Circle;
@@ -162,9 +173,12 @@ function JiraIssueRow({ issue }: { issue: JiraIssue }) {
         </Badge>
       )}
       {assignee && (
-        <span className="shrink-0 text-[10px] text-foreground/30 max-w-[80px] truncate">
-          {assignee}
-        </span>
+        <Avatar size="sm" className="h-5 w-5 shrink-0 ring-1 ring-border/60">
+          {assigneeAvatar && <AvatarImage src={assigneeAvatar} alt={assignee} />}
+          <AvatarFallback className="text-[9px] font-semibold">
+            {getInitials(assignee)}
+          </AvatarFallback>
+        </Avatar>
       )}
     </div>
   );
@@ -183,6 +197,7 @@ function JiraIssueDetailView({ data }: { data: JiraIssueSearchData }) {
   const issueType = fields.issuetype?.name ?? "";
   const priority = fields.priority?.name ?? "";
   const assignee = fields.assignee?.displayName;
+  const assigneeAvatar = fields.assignee?.avatarUrls?.["48x48"] ?? fields.assignee?.avatarUrls?.["24x24"];
   const created = fields.created ? new Date(fields.created).toLocaleDateString() : "";
 
   const typeInfo = ISSUETYPE_ICONS[issueType.toLowerCase()];
@@ -235,7 +250,15 @@ function JiraIssueDetailView({ data }: { data: JiraIssueSearchData }) {
         )}
         {assignee && (
           <Field label="Assignee">
-            <span className="text-foreground/70">{assignee}</span>
+            <span className="inline-flex items-center gap-1.5 text-foreground/70">
+              <Avatar size="sm" className="h-5 w-5 ring-1 ring-border/60">
+                {assigneeAvatar && <AvatarImage src={assigneeAvatar} alt={assignee} />}
+                <AvatarFallback className="text-[9px] font-semibold">
+                  {getInitials(assignee)}
+                </AvatarFallback>
+              </Avatar>
+              {assignee}
+            </span>
           </Field>
         )}
         {created && (

@@ -140,12 +140,14 @@ export function useAppOrchestrator() {
   // ── Notification settings (loaded from main-process AppSettings) ──
   const [notificationSettings, setNotificationSettings] = useState<NotificationSettings | null>(null);
   const [devFillEnabled, setDevFillEnabled] = useState(false);
+  const [jiraBoardEnabled, setJiraBoardEnabled] = useState(false);
 
   // Load on mount + re-fetch when settings panel closes (so changes take effect immediately)
   useEffect(() => {
     window.claude.settings.get().then((s) => {
       if (s?.notifications) setNotificationSettings(s.notifications as NotificationSettings);
       setDevFillEnabled(import.meta.env.DEV && !!s?.showDevFillInChatTitleBar);
+      setJiraBoardEnabled(!!s?.showJiraBoard);
     });
   }, [showSettings]);
 
@@ -712,6 +714,7 @@ export function useAppOrchestrator() {
     availableContextual,
     glassSupported,
     devFillEnabled,
+    jiraBoardEnabled,
 
     // Settings view
     showSettings,
