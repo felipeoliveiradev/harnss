@@ -46,6 +46,19 @@ export function useAppOrchestrator() {
   const activeProjectPath = settings.gitCwd ?? activeProject?.path;
   const { agents, refresh: refreshAgents, saveAgent, deleteAgent } = useAgentRegistry();
 
+  const handleAgentWorktreeChange = useCallback(async (nextPath: string | null) => {
+    const previousPath = settings.gitCwd;
+    settings.setGitCwd(nextPath);
+    if (!manager.activeSessionId || manager.isDraft) return { ok: true };
+
+    const result = await manager.restartActiveSessionInCurrentWorktree();
+    if (result?.error) {
+      settings.setGitCwd(previousPath);
+      return result;
+    }
+    return { ok: true };
+  }, [manager.activeSessionId, manager.isDraft, manager.restartActiveSessionInCurrentWorktree, settings]);
+
   const handleAgentChange = useCallback((agent: InstalledAgent | null) => {
     setSelectedAgent(agent);
 
@@ -731,6 +744,7 @@ export function useAppOrchestrator() {
     handlePermissionModeChange,
     handlePlanModeChange,
     handleThinkingChange,
+    handleAgentWorktreeChange,
     handleStop,
     handleSendQueuedNow,
     handleSelectSession,
