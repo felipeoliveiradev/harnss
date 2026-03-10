@@ -14,7 +14,10 @@ interface UseProjectFilesReturn {
  * Fetches the project file list via IPC and builds a nested tree.
  * Re-fetches when `cwd` changes. Returns loading/error states.
  */
-export function useProjectFiles(cwd: string | undefined): UseProjectFilesReturn {
+export function useProjectFiles(
+  cwd: string | undefined,
+  enabled: boolean,
+): UseProjectFilesReturn {
   const [tree, setTree] = useState<FileTreeNode[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -46,7 +49,8 @@ export function useProjectFiles(cwd: string | undefined): UseProjectFilesReturn 
   }, []);
 
   useEffect(() => {
-    if (!cwd) {
+    if (!cwd || !enabled) {
+      fetchIdRef.current += 1;
       setTree(null);
       setLoading(false);
       setError(null);
@@ -54,7 +58,7 @@ export function useProjectFiles(cwd: string | undefined): UseProjectFilesReturn 
     }
 
     fetchFiles(cwd);
-  }, [cwd, fetchFiles]);
+  }, [cwd, enabled, fetchFiles]);
 
   const scheduleRefresh = useCallback((dir: string) => {
     clearTimeout(refreshTimerRef.current);
@@ -64,7 +68,7 @@ export function useProjectFiles(cwd: string | undefined): UseProjectFilesReturn 
   }, [fetchFiles]);
 
   useEffect(() => {
-    if (!cwd) return;
+    if (!cwd || !enabled) return;
 
     void window.claude.files.watch(cwd);
     const unsubscribe = window.claude.files.onChanged(({ cwd: changedCwd }) => {
@@ -89,11 +93,11 @@ export function useProjectFiles(cwd: string | undefined): UseProjectFilesReturn 
       clearTimeout(refreshTimerRef.current);
       void window.claude.files.unwatch(cwd);
     };
-  }, [cwd, scheduleRefresh]);
+  }, [cwd, enabled, scheduleRefresh]);
 
   const refresh = useCallback(() => {
-    if (cwd) fetchFiles(cwd);
-  }, [cwd, fetchFiles]);
+    if (cwd && enabled) fetchFiles(cwd);
+  }, [cwd, enabled, fetchFiles]);
 
   return { tree, loading, error, refresh };
 }

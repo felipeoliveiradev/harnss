@@ -694,6 +694,7 @@ Link: ${issue.url}`;
               "project-files": (
                 <ProjectFilesPanel
                   cwd={activeProjectPath}
+                  enabled={activeTools.has("project-files")}
                   onPreviewFile={handlePreviewFile}
                 />
               ),
@@ -843,6 +844,7 @@ Link: ${issue.url}`;
             "project-files": (
               <ProjectFilesPanel
                 cwd={activeProjectPath}
+                enabled={activeTools.has("project-files")}
                 onPreviewFile={handlePreviewFile}
               />
             ),

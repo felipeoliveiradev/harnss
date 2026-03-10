@@ -48,9 +48,14 @@ function isIgnoredByPatterns(name: string, patterns: string[]): boolean {
   return false;
 }
 
-function listFilesWalk(cwd: string, maxFiles = 10000): string[] {
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+async function listFilesWalk(cwd: string, maxFiles = 10000): Promise<string[]> {
   const files: string[] = [];
   const queue: string[] = [""];
+  let visitedDirs = 0;
 
   while (queue.length > 0 && files.length < maxFiles) {
     const rel = queue.shift()!;
@@ -58,7 +63,7 @@ function listFilesWalk(cwd: string, maxFiles = 10000): string[] {
 
     let entries: fs.Dirent[];
     try {
-      entries = fs.readdirSync(abs, { withFileTypes: true });
+      entries = await fs.promises.readdir(abs, { withFileTypes: true });
     } catch {
       continue;
     }
@@ -78,6 +83,11 @@ function listFilesWalk(cwd: string, maxFiles = 10000): string[] {
         files.push(entryRel);
       }
     }
+
+    visitedDirs += 1;
+    if (visitedDirs % 25 === 0) {
+      await yieldToEventLoop();
+    }
   }
 
   return files.sort();
@@ -88,118 +98,26 @@ async function listProjectFiles(cwd: string): Promise<string[]> {
     return await listFilesGit(cwd);
   } catch {
     log("FILES:LIST", "Not a git repo, falling back to filesystem walk");
-    return listFilesWalk(cwd);
+    return await listFilesWalk(cwd);
   }
 }
 
 /** Dirs to skip in the full filesystem walk (VCS internals + massive dependency dirs). */
 const EXPLORER_SKIP = new Set([".git", ".hg", ".svn", "node_modules"]);
 
+// ── Recursive file watcher ──
+// Uses a single fs.watch(cwd, { recursive: true }) per project root.
+// macOS (FSEvents) and Windows (ReadDirectoryChangesW) handle this natively
+// with one kernel-level watcher for the entire subtree — no directory walking,
+// no thousands of individual watchers, instant setup and teardown.
+
 interface ProjectWatchState {
   refCount: number;
-  watchers: Map<string, fs.FSWatcher>;
+  watcher: fs.FSWatcher;
   notifyTimer?: ReturnType<typeof setTimeout>;
-  syncTimer?: ReturnType<typeof setTimeout>;
 }
 
 const projectWatchers = new Map<string, ProjectWatchState>();
-
-function collectWatchDirs(cwd: string, maxDirs = 5000): string[] {
-  const dirs = [cwd];
-  const queue = [cwd];
-
-  while (queue.length > 0 && dirs.length < maxDirs) {
-    const dir = queue.shift()!;
-
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-
-    for (const entry of entries) {
-      if (!entry.isDirectory() || EXPLORER_SKIP.has(entry.name)) continue;
-      const childDir = path.join(dir, entry.name);
-      dirs.push(childDir);
-      queue.push(childDir);
-      if (dirs.length >= maxDirs) break;
-    }
-  }
-
-  return dirs;
-}
-
-function closeProjectWatchers(state: ProjectWatchState): void {
-  if (state.notifyTimer) clearTimeout(state.notifyTimer);
-  if (state.syncTimer) clearTimeout(state.syncTimer);
-  for (const watcher of state.watchers.values()) {
-    watcher.close();
-  }
-  state.watchers.clear();
-}
-
-function scheduleWatcherNotify(
-  cwd: string,
-  getMainWindow: () => BrowserWindow | null,
-): void {
-  const state = projectWatchers.get(cwd);
-  if (!state || state.notifyTimer) return;
-
-  state.notifyTimer = setTimeout(() => {
-    const current = projectWatchers.get(cwd);
-    if (!current) return;
-    current.notifyTimer = undefined;
-    safeSend(getMainWindow, "files:changed", { cwd });
-  }, 150);
-}
-
-function syncProjectWatchers(
-  cwd: string,
-  getMainWindow: () => BrowserWindow | null,
-): void {
-  const state = projectWatchers.get(cwd);
-  if (!state) return;
-
-  const nextDirs = new Set(collectWatchDirs(cwd));
-
-  for (const [dir, watcher] of state.watchers) {
-    if (nextDirs.has(dir)) continue;
-    watcher.close();
-    state.watchers.delete(dir);
-  }
-
-  for (const dir of nextDirs) {
-    if (state.watchers.has(dir)) continue;
-    try {
-      const watcher = fs.watch(dir, { persistent: false }, () => {
-        scheduleWatcherNotify(cwd, getMainWindow);
-        scheduleWatcherSync(cwd, getMainWindow);
-      });
-      watcher.on("error", () => {
-        scheduleWatcherSync(cwd, getMainWindow);
-      });
-      state.watchers.set(dir, watcher);
-    } catch {
-      // Ignore transient watch failures; the next sync will retry.
-    }
-  }
-}
-
-function scheduleWatcherSync(
-  cwd: string,
-  getMainWindow: () => BrowserWindow | null,
-): void {
-  const state = projectWatchers.get(cwd);
-  if (!state || state.syncTimer) return;
-
-  state.syncTimer = setTimeout(() => {
-    const current = projectWatchers.get(cwd);
-    if (!current) return;
-    current.syncTimer = undefined;
-    syncProjectWatchers(cwd, getMainWindow);
-  }, 250);
-}
 
 function startProjectWatcher(
   cwd: string,
@@ -211,12 +129,31 @@ function startProjectWatcher(
     return;
   }
 
-  const state: ProjectWatchState = {
-    refCount: 1,
-    watchers: new Map(),
-  };
-  projectWatchers.set(cwd, state);
-  syncProjectWatchers(cwd, getMainWindow);
+  const watcher = fs.watch(cwd, { recursive: true, persistent: false }, (_eventType, filename) => {
+    // Ignore changes in directories we don't care about (node_modules, .git, etc.)
+    if (filename) {
+      const firstSegment = filename.split(path.sep)[0];
+      if (ALWAYS_SKIP.has(firstSegment) || firstSegment.startsWith(".")) return;
+    }
+
+    const state = projectWatchers.get(cwd);
+    if (!state || state.notifyTimer) return;
+
+    // Debounce: coalesce rapid changes into a single notification
+    state.notifyTimer = setTimeout(() => {
+      const current = projectWatchers.get(cwd);
+      if (!current) return;
+      current.notifyTimer = undefined;
+      safeSend(getMainWindow, "files:changed", { cwd });
+    }, 200);
+  });
+
+  watcher.on("error", () => {
+    // Watcher died (directory deleted, permissions, etc.) — clean up silently
+    stopProjectWatcher(cwd);
+  });
+
+  projectWatchers.set(cwd, { refCount: 1, watcher });
 }
 
 function stopProjectWatcher(cwd: string): void {
@@ -226,7 +163,8 @@ function stopProjectWatcher(cwd: string): void {
   state.refCount = Math.max(0, state.refCount - 1);
   if (state.refCount > 0) return;
 
-  closeProjectWatchers(state);
+  if (state.notifyTimer) clearTimeout(state.notifyTimer);
+  state.watcher.close();
   projectWatchers.delete(cwd);
 }
 
@@ -235,9 +173,10 @@ function stopProjectWatcher(cwd: string): void {
  * Only skips VCS internals and node_modules (too massive).
  * Used by the "Project Files" explorer panel.
  */
-function listAllFiles(cwd: string, maxFiles = 10000): string[] {
+async function listAllFiles(cwd: string, maxFiles = 10000): Promise<string[]> {
   const files: string[] = [];
   const queue: string[] = [""];
+  let visitedDirs = 0;
 
   while (queue.length > 0 && files.length < maxFiles) {
     const rel = queue.shift()!;
@@ -245,7 +184,7 @@ function listAllFiles(cwd: string, maxFiles = 10000): string[] {
 
     let entries: fs.Dirent[];
     try {
-      entries = fs.readdirSync(abs, { withFileTypes: true });
+      entries = await fs.promises.readdir(abs, { withFileTypes: true });
     } catch {
       continue;
     }
@@ -259,6 +198,11 @@ function listAllFiles(cwd: string, maxFiles = 10000): string[] {
       } else if (entry.isFile()) {
         files.push(entryRel);
       }
+    }
+
+    visitedDirs += 1;
+    if (visitedDirs % 25 === 0) {
+      await yieldToEventLoop();
     }
   }
 
@@ -348,7 +292,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
 
   ipcMain.handle("files:list-all", async (_event, cwd: string) => {
     try {
-      const files = listAllFiles(cwd);
+      const files = await listAllFiles(cwd);
       const dirSet = new Set<string>();
       for (const file of files) {
         const parts = file.split("/");

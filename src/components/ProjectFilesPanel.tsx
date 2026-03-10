@@ -53,6 +53,7 @@ function getFileIconColor(extension?: string): string {
 
 interface ProjectFilesPanelProps {
   cwd?: string;
+  enabled: boolean;
   onPreviewFile?: (filePath: string, sourceRect: DOMRect) => void;
 }
 
@@ -60,9 +61,10 @@ interface ProjectFilesPanelProps {
 
 export const ProjectFilesPanel = memo(function ProjectFilesPanel({
   cwd,
+  enabled,
   onPreviewFile,
 }: ProjectFilesPanelProps) {
-  const { tree, loading, error, refresh } = useProjectFiles(cwd);
+  const { tree, loading, error, refresh } = useProjectFiles(cwd, enabled);
 
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(() => new Set());
   const [searchQuery, setSearchQuery] = useState("");
