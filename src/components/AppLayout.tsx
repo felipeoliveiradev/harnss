@@ -19,8 +19,7 @@ import { AppSidebar } from "./AppSidebar";
 import { ChatHeader } from "./ChatHeader";
 import { ChatSearchBar } from "./ChatSearchBar";
 import { ChatView } from "./ChatView";
-import { InputBar } from "./InputBar";
-import { PermissionPrompt } from "./PermissionPrompt";
+import { BottomComposer } from "./BottomComposer";
 import { TodoPanel } from "./TodoPanel";
 import { BackgroundAgentsPanel } from "./BackgroundAgentsPanel";
 import { ToolPicker } from "./ToolPicker";
@@ -529,51 +528,45 @@ Link: ${issue.url}`;
                 }}
               />
               <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10">
-                {manager.pendingPermission ? (
-                  <PermissionPrompt
-                    key={manager.pendingPermission.requestId}
-                    request={manager.pendingPermission}
-                    onRespond={manager.respondPermission}
-                  />
-                ) : (
-                  <InputBar
-                    onSend={wrappedHandleSend}
-                    onStop={handleStop}
-                    isProcessing={manager.isProcessing}
-                    queuedCount={manager.queuedCount}
-                    model={settings.model}
-                    claudeEffort={settings.claudeEffort}
-                    planMode={settings.planMode}
-                    permissionMode={settings.permissionMode}
-                    onModelChange={handleModelChange}
-                    onClaudeModelEffortChange={handleClaudeModelEffortChange}
-                    onPlanModeChange={handlePlanModeChange}
-                    onPermissionModeChange={handlePermissionModeChange}
-                    projectPath={activeProjectPath}
-                    contextUsage={manager.contextUsage}
-                    isCompacting={manager.isCompacting}
-                    onCompact={manager.compact}
-                    agents={agents}
-                    selectedAgent={selectedAgent}
-                    onAgentChange={handleAgentChange}
-                    slashCommands={manager.slashCommands}
-                    acpConfigOptions={manager.acpConfigOptions}
-                    acpConfigOptionsLoading={manager.acpConfigOptionsLoading}
-                    onACPConfigChange={manager.setACPConfig}
-                    acpPermissionBehavior={settings.acpPermissionBehavior}
-                    onAcpPermissionBehaviorChange={settings.setAcpPermissionBehavior}
-                    supportedModels={manager.supportedModels}
-                    codexModelsLoadingMessage={manager.codexModelsLoadingMessage}
-                    codexEffort={manager.codexEffort}
-                    onCodexEffortChange={manager.setCodexEffort}
-                    codexModelData={manager.codexRawModels}
-                    grabbedElements={grabbedElements}
-                    onRemoveGrabbedElement={handleRemoveGrabbedElement}
-                    lockedEngine={lockedEngine}
-                    lockedAgentId={lockedAgentId}
-                    isIslandLayout={isIsland}
-                  />
-                )}
+                <BottomComposer
+                  pendingPermission={manager.pendingPermission}
+                  onRespondPermission={manager.respondPermission}
+                  onSend={wrappedHandleSend}
+                  onStop={handleStop}
+                  isProcessing={manager.isProcessing}
+                  queuedCount={manager.queuedCount}
+                  model={settings.model}
+                  claudeEffort={settings.claudeEffort}
+                  planMode={settings.planMode}
+                  permissionMode={settings.permissionMode}
+                  onModelChange={handleModelChange}
+                  onClaudeModelEffortChange={handleClaudeModelEffortChange}
+                  onPlanModeChange={handlePlanModeChange}
+                  onPermissionModeChange={handlePermissionModeChange}
+                  projectPath={activeProjectPath}
+                  contextUsage={manager.contextUsage}
+                  isCompacting={manager.isCompacting}
+                  onCompact={manager.compact}
+                  agents={agents}
+                  selectedAgent={selectedAgent}
+                  onAgentChange={handleAgentChange}
+                  slashCommands={manager.slashCommands}
+                  acpConfigOptions={manager.acpConfigOptions}
+                  acpConfigOptionsLoading={manager.acpConfigOptionsLoading}
+                  onACPConfigChange={manager.setACPConfig}
+                  acpPermissionBehavior={settings.acpPermissionBehavior}
+                  onAcpPermissionBehaviorChange={settings.setAcpPermissionBehavior}
+                  supportedModels={manager.supportedModels}
+                  codexModelsLoadingMessage={manager.codexModelsLoadingMessage}
+                  codexEffort={manager.codexEffort}
+                  onCodexEffortChange={manager.setCodexEffort}
+                  codexModelData={manager.codexRawModels}
+                  grabbedElements={grabbedElements}
+                  onRemoveGrabbedElement={handleRemoveGrabbedElement}
+                  lockedEngine={lockedEngine}
+                  lockedAgentId={lockedAgentId}
+                  isIslandLayout={isIsland}
+                />
               </div>
               </>
             ) : (
