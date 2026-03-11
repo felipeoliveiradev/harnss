@@ -74,6 +74,7 @@ export const ChatView = memo(function ChatView({ messages, isProcessing, showThi
   const userScrollIntentUntilRef = useRef(0);
   const suppressScrollTrackingRef = useRef(0);
   const observedContentHeightRef = useRef(0);
+  const observedViewportHeightRef = useRef(0);
   const settleRafRef = useRef<number | null>(null);
   const scrollRafPending = useRef(false);
   // Ref avoids stale closure in the scroll handler
@@ -336,24 +337,33 @@ export const ChatView = memo(function ChatView({ messages, isProcessing, showThi
     scheduleSettleToBottom({ force: true });
   }, [sessionId, scheduleSettleToBottom]);
 
-  // ResizeObserver on scroll content: catches height changes from collapsible
-  // expansion (ThinkingBlock, tool details, etc.) that don't trigger a messages update
+  // ResizeObserver on the scroll viewport + content: catches both content growth
+  // and late layout changes that alter the visible viewport height on open.
   useEffect(() => {
     const viewport = getViewport();
     const content = contentRef.current;
     if (!viewport || !content) return;
 
     observedContentHeightRef.current = content.getBoundingClientRect().height;
+    observedViewportHeightRef.current = viewport.clientHeight;
 
     const observer = new ResizeObserver((entries) => {
       const contentEntry = entries.find((entry) => entry.target === content);
+      const viewportEntry = entries.find((entry) => entry.target === viewport);
       const nextHeight = contentEntry?.contentRect.height ?? content.getBoundingClientRect().height;
       const previousHeight = observedContentHeightRef.current;
-      observedContentHeightRef.current = nextHeight;
+      const nextViewportHeight = viewportEntry?.contentRect.height ?? viewport.clientHeight;
+      const previousViewportHeight = observedViewportHeightRef.current;
 
-      if (Math.abs(nextHeight - previousHeight) < 1) return;
+      observedContentHeightRef.current = nextHeight;
+      observedViewportHeightRef.current = nextViewportHeight;
+
+      const contentHeightChanged = Math.abs(nextHeight - previousHeight) >= 1;
+      const viewportHeightChanged = Math.abs(nextViewportHeight - previousViewportHeight) >= 1;
+      if (!contentHeightChanged && !viewportHeightChanged) return;
       jumpToBottom();
     });
+    observer.observe(viewport);
     observer.observe(content);
     return () => observer.disconnect();
   }, [getViewport, jumpToBottom]);

@@ -341,11 +341,14 @@ Link: ${issue.url}`;
   const titlebarOpacity = isLightGlass
     ? Math.round(74 + 18 * spaceOpacity)
     : Math.round(30 + 50 * spaceOpacity); // 30–80% or brighter in light glass
+  const topFadeShadowOpacity = isLightGlass
+    ? Math.round(18 + 16 * spaceOpacity)
+    : Math.round(28 + 28 * spaceOpacity);
   const titlebarSurfaceColor =
-    `linear-gradient(to bottom, color-mix(in oklab, ${chatSurfaceColor} ${titlebarOpacity}%, transparent) 0%, transparent 100%)`;
+    `linear-gradient(to bottom, color-mix(in oklab, ${chatSurfaceColor} ${titlebarOpacity}%, transparent) 0%, color-mix(in oklab, ${chatSurfaceColor} ${Math.max(titlebarOpacity - 8, 24)}%, transparent) 52%, color-mix(in oklab, ${chatSurfaceColor} ${Math.max(titlebarOpacity - 22, 12)}%, transparent) 76%, transparent 100%)`;
   const topFadeBackground = isIsland
-    ? `linear-gradient(to bottom, ${chatSurfaceColor}, transparent)`
-    : `linear-gradient(to bottom, ${chatSurfaceColor} 0%, ${chatSurfaceColor} 22%, transparent 100%)`;
+    ? `linear-gradient(to bottom, color-mix(in oklab, ${chatSurfaceColor} 100%, black 9%) 0%, color-mix(in oklab, ${chatSurfaceColor} 97%, black 4%) 20%, color-mix(in oklab, ${chatSurfaceColor} 92%, transparent) 54%, transparent 100%), radial-gradient(140% 92% at 50% 0%, color-mix(in srgb, black ${topFadeShadowOpacity}%, transparent) 0%, transparent 74%)`
+    : `linear-gradient(to bottom, ${chatSurfaceColor} 0%, ${chatSurfaceColor} 42%, color-mix(in oklab, ${chatSurfaceColor} 90%, transparent) 68%, transparent 100%), radial-gradient(145% 96% at 50% 0%, color-mix(in srgb, black ${topFadeShadowOpacity}%, transparent) 0%, transparent 76%)`;
   const bottomFadeBackground = `linear-gradient(to top, ${chatSurfaceColor}, transparent)`;
 
   const { activeTools } = settings;
@@ -459,7 +462,7 @@ Link: ${issue.url}`;
               {/* Island: gradient starts at top-0 (behind header, subtle bleed). Flat: starts at top-10 (right below header) so full gradient is visible and strong. */}
               <div
                 className={`pointer-events-none absolute inset-x-0 top-0 z-[5] ${
-                  isIsland ? "h-16" : "h-20"
+                  isIsland ? "h-24" : "h-28"
                 }`}
                 style={{
                   opacity: "calc(var(--chat-fade-strength, 1) * var(--chat-top-progress, 0))",
