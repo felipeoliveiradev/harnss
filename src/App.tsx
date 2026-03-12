@@ -1,8 +1,14 @@
+import { useEffect } from "react";
 import { Toaster } from "sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppLayout } from "@/components/AppLayout";
+import { syncAnalyticsSettings } from "@/lib/posthog";
 
 export function App() {
+  // Sync analytics opt-in state after mount — avoids blocking first paint with IPC calls
+  useEffect(() => {
+    syncAnalyticsSettings();
+  }, []);
   // Guard: if the preload script failed, window.claude won't exist.
   // Throwing here lets the ErrorBoundary show a visible message instead of a blank window.
   if (!window.claude) {

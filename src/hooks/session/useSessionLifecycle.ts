@@ -222,19 +222,25 @@ export function useSessionLifecycle({
       }
     }).catch(() => { /* cache read is optional */ });
 
-    window.claude.modelsCacheRevalidate(preferredCwd ? { cwd: preferredCwd } : undefined).then((result) => {
-      if (cancelled) return;
-      if (result.models?.length) {
-        setCachedModels(result.models);
-        return;
-      }
-      if (result.error) {
-        toast.error("Failed to load Claude models", { description: result.error });
-      }
-    }).catch(() => { /* keep stale cache if revalidation fails */ });
+    // Defer revalidation (spawns a Claude SDK subprocess) to avoid competing with
+    // the startup IPC burst. The cached models from modelsCacheGet() above are
+    // sufficient for the initial render.
+    const revalidateTimer = setTimeout(() => {
+      window.claude.modelsCacheRevalidate(preferredCwd ? { cwd: preferredCwd } : undefined).then((result) => {
+        if (cancelled) return;
+        if (result.models?.length) {
+          setCachedModels(result.models);
+          return;
+        }
+        if (result.error) {
+          toast.error("Failed to load Claude models", { description: result.error });
+        }
+      }).catch(() => { /* keep stale cache if revalidation fails */ });
+    }, 3000);
 
     return () => {
       cancelled = true;
+      clearTimeout(revalidateTimer);
     };
   }, [getProjectCwd]);
 
@@ -284,17 +290,19 @@ export function useSessionLifecycle({
         } finally {
           inFlightPrefetchRef.current.delete(session.id);
         }
+        // Yield between sequential loads to let the main process event loop breathe
+        await new Promise((r) => setTimeout(r, 50));
       }
     };
 
     if (typeof window.requestIdleCallback === "function") {
       idleId = window.requestIdleCallback(() => {
         void run();
-      }, { timeout: 1500 });
+      }, { timeout: 5000 });
     } else {
       timerId = setTimeout(() => {
         void run();
-      }, 250);
+      }, 3000);
     }
 
     return () => {

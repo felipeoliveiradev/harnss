@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import { PostHogProvider } from "@posthog/react";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { migrateLocalStorage } from "./lib/local-storage-migration";
-import { initPostHog, syncAnalyticsSettings, posthog } from "./lib/posthog";
+import { initPostHog, posthog } from "./lib/posthog";
 import { App } from "./App";
 import "./index.css";
 
@@ -13,8 +13,8 @@ migrateLocalStorage();
 // Initialize posthog-js (starts opted-out until settings confirm opt-in)
 initPostHog();
 
-// Sync analytics opt-in state from main process settings once available
-syncAnalyticsSettings();
+// Analytics opt-in sync is deferred to after React mount (in App.tsx useEffect)
+// to avoid firing IPC calls before first paint.
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

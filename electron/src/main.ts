@@ -71,6 +71,7 @@ function isMainRendererPermissionRequest(webContents: Electron.WebContents | nul
 
 function createWindow(): void {
   const windowOptions: Electron.BrowserWindowConstructorOptions = {
+    show: false,
     width: 1200,
     height: 800,
     // Matches the renderer's stricter island-layout minimum before first IPC sync,
@@ -108,6 +109,10 @@ function createWindow(): void {
   }
 
   mainWindow = new BrowserWindow(windowOptions);
+
+  mainWindow.once("ready-to-show", () => {
+    mainWindow?.show();
+  });
 
   contextMenu({
     window: mainWindow,
@@ -294,15 +299,17 @@ ipcMain.handle("speech:request-mic-permission", async () => {
   return { granted: true };
 });
 
-app.whenReady().then(async () => {
+app.whenReady().then(() => {
   // Migrate data from old "OpenACP UI" app directory before anything reads it
   migrateFromOpenAcpUi();
 
   createWindow();
   initAutoUpdater(getMainWindow);
 
-  // Initialize PostHog analytics (if enabled in settings)
-  await initPostHog();
+  // Initialize PostHog analytics (if enabled in settings) — fire-and-forget to avoid blocking startup
+  initPostHog().catch((err) => {
+    reportError("POSTHOG", err, { context: "startup-init" });
+  });
 
   // Allow microphone access for Whisper voice dictation (getUserMedia in renderer)
   session.defaultSession.setPermissionRequestHandler(
