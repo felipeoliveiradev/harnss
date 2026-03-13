@@ -5,10 +5,12 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { ChatSession, InstalledAgent, Project, Space } from "@/types";
 import { APP_SIDEBAR_WIDTH } from "@/lib/layout-constants";
+import type { WorkspaceMode } from "@/hooks/useSettings";
 import { SidebarSearch } from "./SidebarSearch";
 import { SpaceBar } from "./SpaceBar";
 import { UpdateBanner } from "./UpdateBanner";
 import { ProjectSection } from "./sidebar/ProjectSection";
+import { WorkspaceModeToggle } from "./sidebar/WorkspaceModeToggle";
 
 interface AppSidebarProps {
   isOpen: boolean;
@@ -39,6 +41,8 @@ interface AppSidebarProps {
   onEditSpace: (space: Space) => void;
   onDeleteSpace: (id: string) => void;
   onOpenSettings: () => void;
+  workspaceMode: WorkspaceMode;
+  onWorkspaceModeChange: (mode: WorkspaceMode) => void;
   agents?: InstalledAgent[];
   /** Session ID open in pane 0 (primary) — for split chat badges */
   pane0SessionId?: string | null;
@@ -75,6 +79,8 @@ export const AppSidebar = memo(function AppSidebar({
   onEditSpace,
   onDeleteSpace,
   onOpenSettings,
+  workspaceMode,
+  onWorkspaceModeChange,
   agents,
   pane0SessionId,
   pane1SessionId,
@@ -213,6 +219,10 @@ export const AppSidebar = memo(function AppSidebar({
         projectIds={projectIds}
         onNavigateToMessage={onNavigateToMessage}
         onSelectSession={onSelectSession}
+      />
+      <WorkspaceModeToggle
+        mode={workspaceMode}
+        onChange={onWorkspaceModeChange}
       />
 
       <div

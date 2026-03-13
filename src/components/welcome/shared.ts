@@ -124,8 +124,7 @@ export const SHOWCASE_TOOLS: ToolShowcase[] = [
   { id: "terminal", label: "Terminal", icon: "Terminal", description: "Run commands and scripts" },
   { id: "git", label: "Source Control", icon: "GitBranch", description: "Commits, branches, diffs" },
   { id: "browser", label: "Browser", icon: "Globe", description: "Preview and inspect" },
-  { id: "files", label: "Open Files", icon: "FileText", description: "Track accessed files" },
-  { id: "project-files", label: "Project", icon: "FolderTree", description: "Browse file tree" },
+  { id: "project-files", label: "Files", icon: "FolderTree", description: "Browse and edit project files" },
 ];
 
 /** Preview background for a space color swatch. */

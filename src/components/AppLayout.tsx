@@ -2,7 +2,7 @@ import { useCallback, useRef, useEffect, useLayoutEffect, useState } from "react
 import { PanelLeft, MessageSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { normalizeRatios } from "@/hooks/useSettings";
+import { normalizeRatios, type WorkspaceMode } from "@/hooks/useSettings";
 import { useAppOrchestrator } from "@/hooks/useAppOrchestrator";
 import { useSpaceTheme } from "@/hooks/useSpaceTheme";
 import { usePanelResize } from "@/hooks/usePanelResize";
@@ -31,7 +31,6 @@ import { SpaceCreator } from "./SpaceCreator";
 import { ToolsPanel } from "./ToolsPanel";
 import { BrowserPanel } from "./BrowserPanel";
 import { GitPanel } from "./GitPanel";
-import { FilesPanel } from "./FilesPanel";
 import { McpPanel } from "./McpPanel";
 import { ProjectFilesPanel } from "./ProjectFilesPanel";
 import { FilePreviewOverlay } from "./FilePreviewOverlay";
@@ -39,6 +38,8 @@ import { SettingsView } from "./SettingsView";
 import { CodexAuthDialog } from "./CodexAuthDialog";
 import { JiraBoardPanel } from "./JiraBoardPanel";
 import { QuickOpenDialog } from "./QuickOpenDialog";
+import { CodeWorkspace, type CodeOpenRequest } from "./CodeWorkspace";
+import type { AccessType } from "@/lib/file-access";
 import type { JiraIssue } from "@shared/types/jira";
 import { isMac } from "@/lib/utils";
 
@@ -122,6 +123,9 @@ export function AppLayout() {
 
   const [previewFile, setPreviewFile] = useState<{ path: string; sourceRect: DOMRect | null } | null>(null);
   const [quickOpenVisible, setQuickOpenVisible] = useState(false);
+  const [editorOpenRequest, setEditorOpenRequest] = useState<CodeOpenRequest | null>(null);
+  const [forceOpenFloatingToken, setForceOpenFloatingToken] = useState(0);
+  const [workspaceActiveFilePath, setWorkspaceActiveFilePath] = useState<string | null>(null);
 
   const handlePreviewFile = useCallback((filePath: string, sourceRect: DOMRect) => {
     setPreviewFile({ path: filePath, sourceRect });
@@ -131,12 +135,29 @@ export function AppLayout() {
     setPreviewFile(null);
   }, []);
 
-  const handleQuickOpenFile = useCallback((filePath: string, line?: number) => {
-    if (line) {
-      void window.claude.openInEditor(filePath, line);
-      return;
+  const openInCodeWorkspace = useCallback((filePath: string, line?: number, openInFloating = false, accessType?: AccessType) => {
+    if (settings.workspaceMode === "chat") {
+      settings.setWorkspaceMode("both");
     }
-    setPreviewFile({ path: filePath, sourceRect: null });
+    setEditorOpenRequest({
+      id: Date.now(),
+      filePath,
+      line,
+      openInFloating,
+      accessType,
+    });
+  }, [settings.setWorkspaceMode, settings.workspaceMode]);
+
+  const handleQuickOpenFile = useCallback((filePath: string, line?: number) => {
+    openInCodeWorkspace(filePath, line);
+  }, [openInCodeWorkspace]);
+
+  const handleEditorOpenRequestHandled = useCallback((requestId: number) => {
+    setEditorOpenRequest((current) => (current && current.id === requestId ? null : current));
+  }, []);
+
+  const handleWorkspaceActiveFilePathChange = useCallback((filePath: string | null) => {
+    setWorkspaceActiveFilePath(filePath);
   }, []);
 
   const [jiraBoardBySpace, setJiraBoardBySpace] = useState<Record<string, string>>(() => readJiraBoardBySpace());
@@ -290,7 +311,45 @@ Link: ${issue.url}`;
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [activeProjectPath]);
 
+  const handleWorkspaceModeChange = useCallback((mode: WorkspaceMode) => {
+    settings.setWorkspaceMode(mode);
+  }, [settings.setWorkspaceMode]);
+
+  const handleToggleDockedCodeMaximize = useCallback(() => {
+    settings.setWorkspaceMode(settings.workspaceMode === "code" ? "both" : "code");
+  }, [settings.setWorkspaceMode, settings.workspaceMode]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+      const key = e.key.toLowerCase();
+      if (!e.shiftKey && key === "1") {
+        e.preventDefault();
+        settings.setWorkspaceMode("chat");
+        return;
+      }
+      if (!e.shiftKey && key === "2") {
+        e.preventDefault();
+        settings.setWorkspaceMode("code");
+        return;
+      }
+      if (!e.shiftKey && key === "3") {
+        e.preventDefault();
+        settings.setWorkspaceMode("both");
+        return;
+      }
+      if (e.shiftKey && key === "e") {
+        e.preventDefault();
+        if (settings.workspaceMode === "chat") settings.setWorkspaceMode("both");
+        setForceOpenFloatingToken((prev) => prev + 1);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [settings.setWorkspaceMode, settings.workspaceMode]);
+
   const isIsland = settings.islandLayout;
+  const workspaceMode = settings.workspaceMode;
   const minChatWidth = getMinChatWidth(isIsland);
   const splitGap = isIsland ? RESIZE_HANDLE_WIDTH_ISLAND / 2 : 0.5;
   const islandLayoutVars = isIsland
@@ -317,10 +376,38 @@ Link: ${issue.url}`;
     handleResizeStart, handleToolsResizeStart, handleToolsSplitStart, handleRightSplitStart,
     handleBottomResizeStart, handleBottomSplitStart, handleChatSplitStart,
   } = resize;
-  const splitMode = settings.splitMode;
+  const showChatWorkspace = workspaceMode !== "code";
+  const showBothWorkspace = workspaceMode === "both";
+  const splitMode = settings.splitMode && workspaceMode === "chat";
   const sidebarActiveSessionId = splitMode
     ? (activePaneIndex === 1 ? pane1.sessionId : manager.activeSessionId)
     : manager.activeSessionId;
+  const workspaceSplitRatioRef = useRef(settings.workspaceSplitRatio);
+  workspaceSplitRatioRef.current = settings.workspaceSplitRatio;
+
+  const handleWorkspaceSplitStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const wrapper = resizeChatIslandRef.current;
+    if (!wrapper) return;
+    const startX = e.clientX;
+    const startRatio = workspaceSplitRatioRef.current;
+    const wrapperWidth = wrapper.getBoundingClientRect().width;
+    if (wrapperWidth <= 0) return;
+
+    const onMouseMove = (event: MouseEvent) => {
+      const delta = event.clientX - startX;
+      const next = Math.max(0.3, Math.min(0.7, startRatio + delta / wrapperWidth));
+      settings.setWorkspaceSplitRatio(next);
+    };
+
+    const onMouseUp = () => {
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    };
+
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  }, [resizeChatIslandRef, settings.setWorkspaceSplitRatio]);
 
   // ── Chat scroll fade & titlebar tinting ──
 
@@ -434,10 +521,25 @@ Link: ${issue.url}`;
         onEditSpace={handleEditSpace}
         onDeleteSpace={handleDeleteSpace}
         onOpenSettings={() => setShowSettings(true)}
+        workspaceMode={workspaceMode}
+        onWorkspaceModeChange={handleWorkspaceModeChange}
         agents={agents}
         pane0SessionId={splitMode ? manager.activeSessionId : null}
         pane1SessionId={splitMode ? pane1.sessionId : null}
       />
+      {!sidebar.isOpen && (
+        <div className="pointer-events-none absolute start-3 top-3 z-40">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="no-drag pointer-events-auto h-8 w-8 rounded-md border border-foreground/10 bg-background/80 text-muted-foreground/70 shadow-sm backdrop-blur hover:bg-background hover:text-foreground"
+            onClick={sidebar.toggle}
+            title="Open sidebar"
+          >
+            <PanelLeft className="h-4 w-4" />
+          </Button>
+        </div>
+      )}
 
       <div ref={contentRef} className={`flex min-w-0 flex-1 flex-col ${settings.islandLayout ? "m-[var(--island-gap)]" : sidebar.isOpen ? "flat-divider-s" : ""} ${isResizing ? "select-none" : ""}`}>
         {showSettings && (
@@ -476,8 +578,10 @@ Link: ${issue.url}`;
           {/* ── Chat island wrapper — single ref for resize measurement, flex-row in split mode ── */}
           <div
             ref={resizeChatIslandRef}
-            className={cn("flex flex-1 min-w-0", splitMode ? "flex-row" : "flex-col")}
+            className={cn("relative flex flex-1 min-w-0", splitMode || showBothWorkspace ? "flex-row" : "flex-col")}
           >
+          {showChatWorkspace && (
+          <>
           {/* ── Pane 0 ── */}
           <div
             ref={chatIslandRef}
@@ -486,8 +590,8 @@ Link: ${issue.url}`;
               splitMode && activePaneIndex === 0 && "ring-1 ring-ring/30",
             )}
             style={{
-              flex: splitMode ? settings.chatSplitRatio : 1,
-              minWidth: splitMode ? 0 : minChatWidth,
+              flex: splitMode ? settings.chatSplitRatio : showBothWorkspace ? settings.workspaceSplitRatio : 1,
+              minWidth: splitMode || showBothWorkspace ? 0 : minChatWidth,
               "--chat-fade-strength": String(chatFadeStrength),
             } as React.CSSProperties}
             onClick={splitMode ? () => handleFocusPane(0) : undefined}
@@ -649,6 +753,8 @@ Link: ${issue.url}`;
               </>
             )}
           </div>
+          </>
+          )}
 
           {/* ── Chat split divider ── */}
           {splitMode && (
@@ -791,6 +897,56 @@ Link: ${issue.url}`;
               )}
             </div>
           )}
+
+          {showBothWorkspace && (
+            <>
+              <div
+                className="resize-col group flex shrink-0 cursor-col-resize items-center justify-center"
+                style={isIsland ? { width: "var(--island-panel-gap)" } : { width: "8px" }}
+                onMouseDown={handleWorkspaceSplitStart}
+              >
+                <div
+                  className={`h-10 w-0.5 rounded-full transition-colors duration-150 ${
+                    isResizing ? "bg-foreground/40" : "bg-transparent group-hover:bg-foreground/25"
+                  }`}
+                />
+              </div>
+              <div
+                className="chat-island island relative flex min-w-0 flex-col overflow-hidden rounded-[var(--island-radius)] bg-background"
+                style={{ flex: 1 - settings.workspaceSplitRatio, minWidth: 0 }}
+              >
+                <CodeWorkspace
+                  cwd={activeProjectPath}
+                  showDocked
+                  openRequest={editorOpenRequest}
+                  forceOpenFloatingToken={forceOpenFloatingToken}
+                  isDockedMaximized={false}
+                  sidebarOpen={sidebar.isOpen}
+                  onOpenRequestHandled={handleEditorOpenRequestHandled}
+                  onRequestQuickOpen={() => setQuickOpenVisible(true)}
+                  onToggleDockedMaximize={handleToggleDockedCodeMaximize}
+                  onActiveFilePathChange={handleWorkspaceActiveFilePathChange}
+                />
+              </div>
+            </>
+          )}
+
+          {workspaceMode === "code" && (
+            <div className="chat-island island relative flex min-w-0 flex-1 flex-col overflow-hidden rounded-[var(--island-radius)] bg-background">
+              <CodeWorkspace
+                cwd={activeProjectPath}
+                showDocked
+                openRequest={editorOpenRequest}
+                forceOpenFloatingToken={forceOpenFloatingToken}
+                isDockedMaximized
+                sidebarOpen={sidebar.isOpen}
+                onOpenRequestHandled={handleEditorOpenRequestHandled}
+                onRequestQuickOpen={() => setQuickOpenVisible(true)}
+                onToggleDockedMaximize={handleToggleDockedCodeMaximize}
+                onActiveFilePathChange={handleWorkspaceActiveFilePathChange}
+              />
+            </div>
+          )}
           </div>{/* end chat island wrapper */}
 
           {hasRightPanel && (
@@ -901,21 +1057,16 @@ Link: ${issue.url}`;
                 />
               ),
               browser: <BrowserPanel onElementGrab={handleElementGrab} />,
-              files: (
-                <FilesPanel
-                  sessionId={manager.activeSessionId}
-                  messages={manager.messages}
-                  cwd={activeProjectPath}
-                  activeEngine={manager.activeSession?.engine}
-                  onScrollToToolCall={setScrollToMessageId}
-                  enabled={activeTools.has("files")}
-                />
-              ),
               "project-files": (
                 <ProjectFilesPanel
                   cwd={activeProjectPath}
                   enabled={activeTools.has("project-files")}
                   onPreviewFile={handlePreviewFile}
+                  onOpenFileInWorkspace={openInCodeWorkspace}
+                  activeFilePath={workspaceActiveFilePath}
+                  sessionId={manager.activeSessionId}
+                  messages={manager.messages}
+                  activeEngine={manager.activeSession?.engine}
                 />
               ),
               mcp: (
@@ -1054,21 +1205,16 @@ Link: ${issue.url}`;
               />
             ),
             browser: <BrowserPanel onElementGrab={handleElementGrab} />,
-            files: (
-              <FilesPanel
-                sessionId={manager.activeSessionId}
-                messages={manager.messages}
-                cwd={activeProjectPath}
-                activeEngine={manager.activeSession?.engine}
-                onScrollToToolCall={setScrollToMessageId}
-                enabled={activeTools.has("files")}
-              />
-            ),
             "project-files": (
               <ProjectFilesPanel
                 cwd={activeProjectPath}
                 enabled={activeTools.has("project-files")}
                 onPreviewFile={handlePreviewFile}
+                onOpenFileInWorkspace={openInCodeWorkspace}
+                activeFilePath={workspaceActiveFilePath}
+                sessionId={manager.activeSessionId}
+                messages={manager.messages}
+                activeEngine={manager.activeSession?.engine}
               />
             ),
             mcp: (

@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useRef, useState } from "react";
+import { memo, startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ClipboardPaste,
   Copy,
@@ -43,6 +43,13 @@ import {
 import { PanelHeader } from "@/components/PanelHeader";
 import { OpenInEditorButton } from "./OpenInEditorButton";
 import { useProjectFiles } from "@/hooks/useProjectFiles";
+import { formatRanges, type AccessType, type FileAccess } from "@/lib/file-access";
+import {
+  buildSessionCacheKey,
+  computeFilePanelData,
+  getCachedFilePanelData,
+  type FilePanelData,
+} from "@/lib/session-derived-data";
 import {
   collectDirPaths,
   countFiles,
@@ -50,7 +57,7 @@ import {
   flattenTree,
   type FileTreeNode,
 } from "@/lib/file-tree";
-import { reportError } from "@/lib/analytics";
+import type { EngineId, UIMessage } from "@/types";
 
 const EXTENSION_ICON_COLORS: Record<string, string> = {
   ts: "text-blue-400",
@@ -119,18 +126,46 @@ function collectNodeMap(nodes: FileTreeNode[]): Map<string, FileTreeNode> {
   return map;
 }
 
+function toRelativePath(cwd: string, absolutePath: string): string | null {
+  if (absolutePath === cwd) return "";
+  const prefix = `${cwd}/`;
+  if (!absolutePath.startsWith(prefix)) return null;
+  return absolutePath.slice(prefix.length);
+}
+
+function getAncestorDirs(path: string): string[] {
+  const dirs: string[] = [];
+  const segments = path.split("/").filter(Boolean);
+  if (segments.length <= 1) return dirs;
+  for (let i = 1; i < segments.length; i += 1) {
+    dirs.push(segments.slice(0, i).join("/"));
+  }
+  return dirs;
+}
+
 interface ProjectFilesPanelProps {
   cwd?: string;
   enabled: boolean;
   onPreviewFile?: (filePath: string, sourceRect: DOMRect) => void;
+  onOpenFileInWorkspace?: (filePath: string, line?: number, openInFloating?: boolean, accessType?: AccessType) => void;
+  activeFilePath?: string | null;
+  sessionId?: string | null;
+  messages?: UIMessage[];
+  activeEngine?: EngineId;
 }
 
 export const ProjectFilesPanel = memo(function ProjectFilesPanel({
   cwd,
   enabled,
   onPreviewFile,
+  onOpenFileInWorkspace,
+  activeFilePath,
+  sessionId,
+  messages = [],
+  activeEngine,
 }: ProjectFilesPanelProps) {
   const { tree, loading, error, refresh } = useProjectFiles(cwd, enabled);
+  const [filePanelData, setFilePanelData] = useState<FilePanelData | null>(null);
 
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(() => new Set());
   const [searchQuery, setSearchQuery] = useState("");
@@ -153,11 +188,6 @@ export const ProjectFilesPanel = memo(function ProjectFilesPanel({
     confirmLabel: "",
   });
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
-  const [editingFilePath, setEditingFilePath] = useState<string | null>(null);
-  const [editorOpen, setEditorOpen] = useState(false);
-  const [editorLoading, setEditorLoading] = useState(false);
-  const [editorSaving, setEditorSaving] = useState(false);
-  const [editorContent, setEditorContent] = useState("");
   const [clipboardItem, setClipboardItem] = useState<{ path: string; mode: "copy" | "cut" } | null>(null);
   const [draggingPath, setDraggingPath] = useState<string | null>(null);
   const [dragOverDir, setDragOverDir] = useState<string | null>(null);
@@ -183,6 +213,81 @@ export const ProjectFilesPanel = memo(function ProjectFilesPanel({
   const totalFiles = useMemo(() => (tree ? countFiles(tree) : 0), [tree]);
   const nodeByPath = useMemo(() => (tree ? collectNodeMap(tree) : new Map<string, FileTreeNode>()), [tree]);
   const selectedNode = selectedPath ? nodeByPath.get(selectedPath) ?? null : null;
+  const cacheSessionId = sessionId ?? "no-session";
+  const lastMessage = messages[messages.length - 1];
+  const msgLen = messages.length;
+  const lastMsgId = lastMessage?.id;
+  const lastMsgTs = lastMessage?.timestamp;
+  const fileAccessCacheKey = useMemo(
+    () => buildSessionCacheKey(cacheSessionId, messages, `project-files:${cwd ?? ""}:${activeEngine ?? ""}`),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [activeEngine, cacheSessionId, cwd, msgLen, lastMsgId, lastMsgTs],
+  );
+  const activeRelativePath = useMemo(() => {
+    if (!cwd || !activeFilePath) return null;
+    return toRelativePath(cwd, activeFilePath);
+  }, [activeFilePath, cwd]);
+
+  useEffect(() => {
+    if (!enabled) return;
+
+    const cached = getCachedFilePanelData(cacheSessionId, fileAccessCacheKey);
+    if (cached) {
+      setFilePanelData(cached);
+      return;
+    }
+
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      const next = computeFilePanelData(
+        cacheSessionId,
+        fileAccessCacheKey,
+        messages,
+        cwd,
+        false,
+      );
+      if (cancelled) return;
+      startTransition(() => setFilePanelData(next));
+    }, 0);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [cacheSessionId, cwd, enabled, fileAccessCacheKey, messages]);
+
+  const accessByRelativePath = useMemo(() => {
+    const map = new Map<string, FileAccess>();
+    const files = filePanelData?.files ?? [];
+    if (files.length === 0) return map;
+
+    for (const file of files) {
+      if (cwd && file.path.startsWith(`${cwd}/`)) {
+        map.set(file.path.slice(cwd.length + 1), file);
+        continue;
+      }
+      map.set(file.path, file);
+    }
+    return map;
+  }, [cwd, filePanelData]);
+
+  useEffect(() => {
+    if (!activeRelativePath) return;
+    setSelectedPath(activeRelativePath);
+    const ancestorDirs = getAncestorDirs(activeRelativePath);
+    if (ancestorDirs.length === 0) return;
+    setExpandedDirs((prev) => {
+      let changed = false;
+      const next = new Set(prev);
+      for (const dir of ancestorDirs) {
+        if (!next.has(dir)) {
+          next.add(dir);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [activeRelativePath]);
 
   const handleSearchChange = useCallback((value: string) => {
     setSearchQuery(value);
@@ -273,50 +378,21 @@ export const ProjectFilesPanel = memo(function ProjectFilesPanel({
     });
   }, []);
 
-  const openEditor = useCallback(async (node: FileTreeNode) => {
-    if (!cwd || node.type !== "file") return;
+  const openFileInWorkspace = useCallback((
+    node: FileTreeNode,
+    options?: { event?: React.MouseEvent<HTMLDivElement>; openInFloating?: boolean },
+  ) => {
+    if (!cwd || node.type !== "file" || !onOpenFileInWorkspace) return;
+    setSelectedPath(node.path);
     const absolutePath = `${cwd}/${node.path}`;
-    setEditingFilePath(node.path);
-    setEditorOpen(true);
-    setEditorLoading(true);
-    setEditorContent("");
-
-    try {
-      const result = await window.claude.readFile(absolutePath);
-      if (result.error) {
-        toast.error("Failed to open file", { description: result.error });
-        setEditorOpen(false);
-        return;
-      }
-      setEditorContent(result.content ?? "");
-    } catch (err) {
-      const message = reportError("PROJECT_FILES_OPEN_EDITOR_ERR", err, { path: node.path });
-      toast.error("Failed to open file", { description: message });
-      setEditorOpen(false);
-    } finally {
-      setEditorLoading(false);
+    if (options?.event?.altKey && onPreviewFile) {
+      const rect = options.event.currentTarget.getBoundingClientRect();
+      onPreviewFile(absolutePath, rect);
+      return;
     }
-  }, [cwd]);
-
-  const saveEditor = useCallback(async () => {
-    if (!cwd || !editingFilePath) return;
-    setEditorSaving(true);
-    try {
-      const result = await window.claude.files.writeFile(cwd, editingFilePath, editorContent);
-      if (result.error) {
-        toast.error("Failed to save file", { description: result.error });
-        return;
-      }
-      toast.success("File saved");
-      setEditorOpen(false);
-      refresh();
-    } catch (err) {
-      const message = reportError("PROJECT_FILES_SAVE_EDITOR_ERR", err, { path: editingFilePath });
-      toast.error("Failed to save file", { description: message });
-    } finally {
-      setEditorSaving(false);
-    }
-  }, [cwd, editingFilePath, editorContent, refresh]);
+    const fileAccess = accessByRelativePath.get(node.path);
+    onOpenFileInWorkspace(absolutePath, undefined, options?.openInFloating ?? false, fileAccess?.accessType);
+  }, [accessByRelativePath, cwd, onOpenFileInWorkspace, onPreviewFile]);
 
   const deletePath = useCallback(async () => {
     if (!cwd || !deleteTarget) return;
@@ -434,7 +510,7 @@ export const ProjectFilesPanel = memo(function ProjectFilesPanel({
       if (selectedNode.type === "directory") {
         toggleDir(selectedNode.path);
       } else {
-        void openEditor(selectedNode);
+        openFileInWorkspace(selectedNode);
       }
       return;
     }
@@ -453,7 +529,7 @@ export const ProjectFilesPanel = memo(function ProjectFilesPanel({
       const targetDir = selectedNode.type === "directory" ? selectedNode.path : getParentDir(selectedNode.path);
       void handlePasteInto(targetDir);
     }
-  }, [handlePasteInto, openEditor, openRenameDialog, selectedNode, toggleDir]);
+  }, [handlePasteInto, openFileInWorkspace, openRenameDialog, selectedNode, toggleDir]);
 
   const getDefaultBaseDir = useCallback((): string => {
     if (!selectedNode) return "";
@@ -465,11 +541,13 @@ export const ProjectFilesPanel = memo(function ProjectFilesPanel({
     setSelectedPath(node.path);
   }, []);
 
-  const handleRowOpenFile = useCallback((node: FileTreeNode, event: React.MouseEvent<HTMLDivElement>) => {
-    if (!cwd || node.type !== "file" || !onPreviewFile) return;
-    const rect = event.currentTarget.getBoundingClientRect();
-    onPreviewFile(`${cwd}/${node.path}`, rect);
-  }, [cwd, onPreviewFile]);
+  const handleRowOpenFile = useCallback((
+    node: FileTreeNode,
+    options: { event: React.MouseEvent<HTMLDivElement>; openInFloating: boolean },
+  ) => {
+    if (node.type !== "file") return;
+    openFileInWorkspace(node, options);
+  }, [openFileInWorkspace]);
 
   if (!cwd) {
     return (
@@ -571,7 +649,11 @@ export const ProjectFilesPanel = memo(function ProjectFilesPanel({
         )}
 
         <div className="py-1">
-          {flatItems.map((item) => (
+          {flatItems.map((item) => {
+            const access = item.node.type === "file"
+              ? accessByRelativePath.get(item.node.path)
+              : undefined;
+            return (
             <FileTreeRow
               key={item.node.path}
               node={item.node}
@@ -579,12 +661,14 @@ export const ProjectFilesPanel = memo(function ProjectFilesPanel({
               depth={item.depth}
               isExpanded={item.isExpanded}
               isSelected={selectedPath === item.node.path}
+              accessType={access?.accessType}
+              accessRangeText={access ? formatRanges(access) : null}
               onClick={handleRowClick}
               onOpenFile={handleRowOpenFile}
               onToggleDir={toggleDir}
               onCreateFile={() => openCreateDialog("new-file", item.node.type === "directory" ? item.node.path : getParentDir(item.node.path))}
               onCreateFolder={() => openCreateDialog("new-folder", item.node.type === "directory" ? item.node.path : getParentDir(item.node.path))}
-              onEdit={openEditor}
+              onOpenInWorkspace={openFileInWorkspace}
               onRename={openRenameDialog}
               onDuplicate={handleDuplicate}
               onCopy={(path) => setClipboardItem({ path, mode: "copy" })}
@@ -611,7 +695,8 @@ export const ProjectFilesPanel = memo(function ProjectFilesPanel({
                 });
               }}
             />
-          ))}
+            );
+          })}
         </div>
       </ScrollArea>
 
@@ -641,32 +726,6 @@ export const ProjectFilesPanel = memo(function ProjectFilesPanel({
         </DialogContent>
       </Dialog>
 
-      <Dialog open={editorOpen} onOpenChange={setEditorOpen}>
-        <DialogContent className="max-w-4xl">
-          <DialogHeader>
-            <DialogTitle>Edit File</DialogTitle>
-            <DialogDescription>{editingFilePath ?? ""}</DialogDescription>
-          </DialogHeader>
-          {editorLoading ? (
-            <div className="flex h-72 items-center justify-center">
-              <RefreshCw className="h-4 w-4 animate-spin text-muted-foreground/50" />
-            </div>
-          ) : (
-            <textarea
-              value={editorContent}
-              onChange={(e) => setEditorContent(e.target.value)}
-              className="h-72 w-full resize-y rounded-md border border-foreground/[0.12] bg-background p-3 font-mono text-xs outline-none focus:border-primary/50"
-            />
-          )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEditorOpen(false)}>Cancel</Button>
-            <Button onClick={() => void saveEditor()} disabled={editorLoading || editorSaving}>
-              {editorSaving ? "Saving..." : "Save"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
       <ConfirmDialog
         open={deleteTarget != null}
         onOpenChange={(open) => {
@@ -692,12 +751,17 @@ interface FileTreeRowProps {
   isExpanded: boolean;
   isSelected: boolean;
   cwd: string;
+  accessType?: AccessType;
+  accessRangeText?: string | null;
   onClick: (node: FileTreeNode) => void;
-  onOpenFile: (node: FileTreeNode, event: React.MouseEvent<HTMLDivElement>) => void;
+  onOpenFile: (
+    node: FileTreeNode,
+    options: { event: React.MouseEvent<HTMLDivElement>; openInFloating: boolean },
+  ) => void;
   onToggleDir: (path: string) => void;
   onCreateFile: () => void;
   onCreateFolder: () => void;
-  onEdit: (node: FileTreeNode) => void;
+  onOpenInWorkspace: (node: FileTreeNode, options?: { openInFloating?: boolean }) => void;
   onRename: (node: FileTreeNode) => void;
   onDuplicate: (path: string) => void;
   onCopy: (path: string) => void;
@@ -718,12 +782,14 @@ const FileTreeRow = memo(function FileTreeRow({
   isExpanded,
   isSelected,
   cwd,
+  accessType,
+  accessRangeText,
   onClick,
   onOpenFile,
   onToggleDir,
   onCreateFile,
   onCreateFolder,
-  onEdit,
+  onOpenInWorkspace,
   onRename,
   onDuplicate,
   onCopy,
@@ -740,11 +806,25 @@ const FileTreeRow = memo(function FileTreeRow({
   const isDir = node.type === "directory";
   const isDropTarget = isDir && dragOverDir === node.path;
   const isDragging = draggingPath === node.path;
+  const accessBadgeClass = accessType === "created"
+    ? "border-emerald-500/35 bg-emerald-500/12 text-emerald-700 dark:text-emerald-300"
+    : accessType === "modified"
+      ? "border-amber-500/35 bg-amber-500/12 text-amber-700 dark:text-amber-300"
+      : accessType === "read"
+        ? "border-blue-500/35 bg-blue-500/12 text-blue-700 dark:text-blue-300"
+        : "";
+  const accessLabel = accessType === "created"
+    ? "new"
+    : accessType === "modified"
+      ? "mod"
+      : accessType === "read"
+        ? "read"
+        : null;
   const handleClick = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
       onClick(node);
       if (isDir) onToggleDir(node.path);
-      else if (e.detail >= 2) onOpenFile(node, e);
+      else onOpenFile(node, { event: e, openInFloating: e.detail >= 2 });
     },
     [isDir, node, onClick, onOpenFile, onToggleDir],
   );
@@ -794,6 +874,16 @@ const FileTreeRow = memo(function FileTreeRow({
       </span>
 
       <span className="min-w-0 flex-1 truncate text-xs text-foreground/80">{node.name}</span>
+      {!isDir && accessLabel && (
+        <span className={`shrink-0 rounded border px-1 py-0 text-[9px] uppercase tracking-wide ${accessBadgeClass}`}>
+          {accessLabel}
+        </span>
+      )}
+      {!isDir && accessRangeText && (
+        <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground/55">
+          {accessRangeText}
+        </span>
+      )}
 
           <div className="ms-auto flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
         {isDir && (
@@ -825,7 +915,7 @@ const FileTreeRow = memo(function FileTreeRow({
             type="button"
             onClick={(e) => {
               e.stopPropagation();
-              onEdit(node);
+              onOpenInWorkspace(node);
             }}
             className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 hover:bg-foreground/[0.08] hover:text-foreground/80"
           >
@@ -913,9 +1003,15 @@ const FileTreeRow = memo(function FileTreeRow({
           </>
         )}
         {!isDir && (
-          <ContextMenuItem onClick={() => onEdit(node)}>
+          <ContextMenuItem onClick={() => onOpenInWorkspace(node)}>
             <FileCog className="me-2 h-3.5 w-3.5" />
-            Open/Edit
+            Open in Workspace
+          </ContextMenuItem>
+        )}
+        {!isDir && (
+          <ContextMenuItem onClick={() => onOpenInWorkspace(node, { openInFloating: true })}>
+            <FileCog className="me-2 h-3.5 w-3.5" />
+            Open in Floating Editor
           </ContextMenuItem>
         )}
         <ContextMenuItem onClick={() => onRename(node)}>

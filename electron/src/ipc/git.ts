@@ -469,6 +469,33 @@ export function register(): void {
     }
   });
 
+  ipcMain.handle("git:show-file-at-head", async (_event, { cwd, file }: { cwd: string; file: string }) => {
+    const withTimeout = <T>(promise: Promise<T>, ms: number): Promise<T> =>
+      Promise.race([promise, new Promise<T>((_, reject) => setTimeout(() => reject(new Error("timeout")), ms))]);
+
+    try {
+      const headContent = await withTimeout(gitExec(["show", `HEAD:${file}`], cwd), 8000);
+
+      let hasDiff = false;
+      try {
+        const diff = await withTimeout(gitExec(["diff", "HEAD", "--", file], cwd), 4000);
+        hasDiff = diff.trim().length > 0;
+      } catch {}
+
+      if (!hasDiff) {
+        try {
+          const parentContent = await withTimeout(gitExec(["show", `HEAD~1:${file}`], cwd), 4000);
+          if (parentContent !== headContent) return { content: parentContent };
+        } catch {}
+      }
+
+      return { content: headContent };
+    } catch (err) {
+      reportError("GIT_SHOW_FILE_AT_HEAD_ERR", err, { cwd, file });
+      return { error: "not-in-git" };
+    }
+  });
+
   ipcMain.handle("git:log", async (_event, { cwd, count }: { cwd: string; count?: number }) => {
     try {
       const limit = count || 50;
