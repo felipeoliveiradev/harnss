@@ -834,7 +834,11 @@ const FileTreeRow = memo(function FileTreeRow({
         <div
           onClick={handleClick}
           draggable
-          onDragStart={() => onDragStart(node.path)}
+          onDragStart={(e) => {
+            e.dataTransfer.setData("application/x-harnss-path", node.path);
+            e.dataTransfer.setData("application/x-harnss-is-dir", String(node.type === "directory"));
+            onDragStart(node.path);
+          }}
           onDragEnd={onDragEnd}
           onDragOver={(e) => {
             if (!isDir) return;
