@@ -132,16 +132,15 @@ export class BackgroundSessionStore {
   get(sessionId: string): BackgroundSessionState | undefined {
     const state = this.sessions.get(sessionId);
     if (!state) return undefined;
-    // Clone messages to prevent external mutation of internal state
     return {
-      messages: state.messages.map(m => ({ ...m })),
+      messages: state.messages,
       isProcessing: state.isProcessing,
       isConnected: state.isConnected,
       isCompacting: state.isCompacting,
-      sessionInfo: state.sessionInfo ? { ...state.sessionInfo } : null,
+      sessionInfo: state.sessionInfo,
       totalCost: state.totalCost,
-      contextUsage: state.contextUsage ? { ...state.contextUsage } : null,
-      pendingPermission: state.pendingPermission ? { ...state.pendingPermission } : null,
+      contextUsage: state.contextUsage,
+      pendingPermission: state.pendingPermission,
       rawAcpPermission: state.rawAcpPermission,
       slashCommands: state.slashCommands ?? [],
     };

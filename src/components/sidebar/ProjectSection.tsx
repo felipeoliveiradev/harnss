@@ -391,9 +391,9 @@ export function ProjectSection({
                       : session.id === pane1SessionId ? 1
                       : null
                     }
-                    onSelect={() => onSelectSession(session.id)}
-                    onDelete={() => onDeleteSession(session.id)}
-                    onRename={(title) => onRenameSession(session.id, title)}
+                    onSelect={onSelectSession}
+                    onDelete={onDeleteSession}
+                    onRename={onRenameSession}
                     agents={agents}
                   />
                 ))}

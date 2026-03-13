@@ -180,13 +180,18 @@ function startEventLoop(
     try {
       for await (const message of queryHandle) {
         session.eventCounter++;
-        const summary = summarizeEvent(message as Record<string, unknown>);
-        log("EVENT", `${logPrefix} #${session.eventCounter} ${summary}`);
         const msgObj = message as Record<string, unknown>;
+        const isStreamDelta = msgObj.type === "stream_event" &&
+          (msgObj.event as Record<string, unknown>)?.type === "content_block_delta";
+        if (!isStreamDelta) {
+          const summary = summarizeEvent(msgObj);
+          log("EVENT", `${logPrefix} #${session.eventCounter} ${summary}`);
+        }
         if (msgObj.type === "assistant" || msgObj.type === "user" || msgObj.type === "result") {
           log("EVENT_FULL", message);
         }
-        safeSend(getMainWindow, "claude:event", { ...(message as object), _sessionId: sessionId });
+        (message as Record<string, unknown>)._sessionId = sessionId;
+        safeSend(getMainWindow, "claude:event", message);
 
         // Track session completion on result events
         if (msgObj.type === "result") {

@@ -1,3 +1,4 @@
+import { memo } from "react";
 import type { ComponentProps } from "react";
 import { InputBar } from "./InputBar";
 import { PermissionPrompt } from "./PermissionPrompt";
@@ -10,7 +11,7 @@ interface BottomComposerProps extends InputBarProps {
   onRespondPermission: PermissionPromptProps["onRespond"];
 }
 
-export function BottomComposer({
+export const BottomComposer = memo(function BottomComposer({
   pendingPermission,
   onRespondPermission,
   ...inputBarProps
@@ -34,4 +35,4 @@ export function BottomComposer({
       </div>
     </>
   );
-}
+});
