@@ -520,5 +520,7 @@ export function useSessionManager(projects: Project[], acpPermissionBehavior: Ac
     codexModelsLoadingMessage,
     // Codex plan steps (from turn/plan/updated events — separate from Claude's TodoWrite tool)
     codexTodoItems: codex.todoItems,
+    /** Peek at a session's background state — used by useSecondaryPane when switching pane 1 */
+    getBackgroundSessionState: (sessionId: string) => backgroundStoreRef.current.get(sessionId),
   };
 }

@@ -1,3 +1,7 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 # Harnss
 
 Open-source desktop client for the Agent Client Protocol. Uses the `@anthropic-ai/claude-agent-sdk` to programmatically manage Claude sessions via `query()`. Supports multiple concurrent sessions with persistent chat history, project workspaces, background agents, tool permissions, and context compaction.
@@ -60,6 +64,12 @@ pnpm install
 pnpm dev       # Starts Vite dev server + tsup watch + Electron
 pnpm build     # tsup (electron/) + Vite (renderer) production build
 pnpm start     # Run Electron with pre-built dist/
+pnpm test      # Run all tests once (vitest)
+pnpm test:watch  # Run tests in watch mode
+pnpm dist:mac    # Build macOS DMG (arm64 + x64)
+pnpm dist:win    # Build Windows NSIS installer (x64 + ARM64)
+pnpm dist:linux  # Build Linux AppImage + deb
+pnpm dist:fast   # Build without packaging (dir output, faster iteration)
 ```
 
 **Dev logs**: Main process logs go to `logs/main-{timestamp}.log` (dev) or `{userData}/logs/main-{timestamp}.log` (packaged). Check the latest file with `ls -t logs/main-*.log | head -1 | xargs cat`.
@@ -354,3 +364,5 @@ The three session IPC handlers share extracted utilities:
 - **Hook decomposition** — large hooks are split into focused sub-hooks (session/, useEngineBase)
 - **Shared components** — reusable UI patterns extracted to shared components (`TabBar`, `PanelHeader`, `SettingRow`)
 - **Error tracking** — all caught errors in IPC handlers and hooks must use `reportError(label, err)` (not bare `log()`). Benign/expected catches (cleanup, parse fallbacks, cancellation guards) are exempt. See "Error Tracking (PostHog)" section for details.
+- **TypeScript strict mode** — `noUnusedLocals` and `noUnusedParameters` are enforced; remove unused variables/imports rather than prefixing with `_`
+- **Tests** — test files live alongside source in `electron/src/**/*.test.ts` and `src/**/*.test.{ts,tsx}`, run with vitest

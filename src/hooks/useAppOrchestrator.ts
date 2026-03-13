@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useProjectManager } from "@/hooks/useProjectManager";
 import { useSessionManager } from "@/hooks/useSessionManager";
+import { useSecondaryPane } from "@/hooks/useSecondaryPane";
 import { useSidebar } from "@/hooks/useSidebar";
 import { useSpaceManager } from "@/hooks/useSpaceManager";
 import { useSettings } from "@/hooks/useSettings";
@@ -70,6 +71,12 @@ export function useAppOrchestrator() {
   const showThinking = true;
   const activeProjectPath = settings.gitCwd ?? activeProject?.path;
   const { agents, refresh: refreshAgents, saveAgent, deleteAgent } = useAgentRegistry();
+
+  // ── Split chat: secondary pane — declared early so callbacks below can reference activePaneIndex ──
+  const pane1 = useSecondaryPane();
+  const [activePaneIndex, setActivePaneIndex] = useState<0 | 1>(0);
+  const activePaneIndexRef = useRef<0 | 1>(0);
+  activePaneIndexRef.current = activePaneIndex;
   useAcpAgentAutoUpdate({ installedAgents: agents, refreshInstalledAgents: refreshAgents });
   const getClaudeEffortForModel = useCallback((model: string | undefined): ClaudeEffort | undefined => {
     if (!model) return undefined;
@@ -82,6 +89,14 @@ export function useAppOrchestrator() {
   }, [manager.supportedModels, settings.claudeEffort]);
 
   const handleAgentWorktreeChange = useCallback((nextPath: string | null) => {
+    // Route to the focused pane's cwd setting
+    if (activePaneIndex === 1 && settings.splitMode) {
+      settings.setPane1GitCwd(nextPath);
+      // No need to create a new session — pane1 keeps its current session but the
+      // git panel now uses the new worktree path for status/commit operations
+      return;
+    }
+
     settings.setGitCwd(nextPath);
 
     // If there's an active non-draft session, open a new chat so the agent
@@ -100,7 +115,7 @@ export function useAppOrchestrator() {
         agentId: manager.activeSession.agentId,
       });
     }
-  }, [manager.activeSessionId, manager.isDraft, manager.activeSession, manager.createSession, settings]);
+  }, [activePaneIndex, settings, manager.activeSessionId, manager.isDraft, manager.activeSession, manager.createSession, getClaudeEffortForModel]);
 
   const handleAgentChange = useCallback((agent: InstalledAgent | null) => {
     setSelectedAgent(agent);
@@ -160,6 +175,19 @@ export function useAppOrchestrator() {
     window.claude.agents.updateCachedConfig(agentId, manager.acpConfigOptions)
       .then(() => refreshAgents());
   }, [manager.acpConfigOptions, manager.activeSession, refreshAgents]);
+
+  const handleFocusPane = useCallback((pane: 0 | 1) => {
+    setActivePaneIndex(pane);
+  }, []);
+
+  const handleToggleSplit = useCallback(() => {
+    const next = !settings.splitMode;
+    settings.setSplitMode(next);
+    if (!next) {
+      setActivePaneIndex(0);
+      pane1.clearSecondarySession();
+    }
+  }, [settings, pane1.clearSecondarySession]);
 
   const [showSettings, setShowSettings] = useState(false);
 
@@ -370,13 +398,22 @@ export function useAppOrchestrator() {
     manager.unqueueMessage(messageId);
   }, [manager.unqueueMessage]);
 
-  // Wrap session selection to also close settings view
+  // Wrap session selection to also close settings view; in split mode, always route
+  // to the currently selected pane tab.
   const handleSelectSession = useCallback(
     (sessionId: string) => {
       setShowSettings(false);
-      manager.switchSession(sessionId);
+      if (settings.splitMode) {
+        if (activePaneIndex === 1) {
+          void pane1.switchSecondarySession(sessionId, manager.sessions, manager.getBackgroundSessionState);
+        } else {
+          manager.switchSession(sessionId);
+        }
+      } else {
+        manager.switchSession(sessionId);
+      }
     },
-    [manager.switchSession],
+    [activePaneIndex, settings.splitMode, pane1.switchSecondarySession, manager.switchSession, manager.sessions, manager.getBackgroundSessionState],
   );
 
   // Wrap project creation to also close settings view, assigning to the active space
@@ -459,9 +496,13 @@ export function useAppOrchestrator() {
 
   const prevSpaceIdRef = useRef(spaceManager.activeSpaceId);
 
-  const activeSpaceTerminalCwd = activeSpaceProject
+  const activeSpaceTerminalCwdBase = activeSpaceProject
     ? (getStoredProjectGitCwd(activeSpaceProject.id) ?? activeSpaceProject.path)
     : null;
+  // In split mode, git panel and terminal use the focused pane's worktree
+  const activeSpaceTerminalCwd = (settings.splitMode && activePaneIndex === 1)
+    ? (settings.pane1GitCwd ?? activeSpaceTerminalCwdBase)
+    : activeSpaceTerminalCwdBase;
 
   // Save current session as last-used for its owning space whenever it changes.
   // Use the session's project space (not the currently selected space), because
@@ -812,5 +853,11 @@ export function useAppOrchestrator() {
     handleDeleteSpace,
     handleSaveSpace,
     handleMoveProjectToSpace,
+
+    // Split chat
+    pane1,
+    activePaneIndex,
+    handleFocusPane,
+    handleToggleSplit,
   };
 }

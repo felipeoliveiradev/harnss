@@ -156,6 +156,16 @@ export interface Settings {
   bottomToolsSplitRatios: number[];
   setBottomToolsSplitRatios: (r: number[]) => void;
   saveBottomToolsSplitRatios: () => void;
+  /** Whether split-chat mode is active (two chat panes side by side) */
+  splitMode: boolean;
+  setSplitMode: (on: boolean) => void;
+  /** Fractional width of the left chat pane when split mode is active (0.2–0.8) */
+  chatSplitRatio: number;
+  setChatSplitRatio: (r: number) => void;
+  saveChatSplitRatio: () => void;
+  /** Working directory / worktree path for chat pane 1 (right pane) */
+  pane1GitCwd: string | null;
+  setPane1GitCwd: (path: string | null) => void;
 }
 
 /** Read toolsSplitRatios, with migration from the old single-ratio key */
@@ -669,6 +679,48 @@ export function useSettings(projectId: string | null, engine: EngineId = "claude
     localStorage.setItem(`harnss-${pid}-bottom-tools-split-ratios`, JSON.stringify(bottomToolsSplitRatiosRef.current));
   }, [pid]);
 
+  // ── Split chat settings ──
+
+  const [splitMode, setSplitModeRaw] = useState(() =>
+    readBool(`harnss-${pid}-split-mode`, false),
+  );
+  const setSplitMode = useCallback(
+    (on: boolean) => {
+      setSplitModeRaw(on);
+      localStorage.setItem(`harnss-${pid}-split-mode`, String(on));
+    },
+    [pid],
+  );
+
+  const [chatSplitRatio, setChatSplitRatioRaw] = useState(() =>
+    readNumber(`harnss-${pid}-chat-split-ratio`, DEFAULT_SPLIT, MIN_SPLIT, MAX_SPLIT),
+  );
+  const setChatSplitRatio = useCallback(
+    (r: number) => {
+      const clamped = Math.max(MIN_SPLIT, Math.min(MAX_SPLIT, r));
+      setChatSplitRatioRaw(clamped);
+    },
+    [],
+  );
+  const chatSplitRatioRef = useRef(chatSplitRatio);
+  chatSplitRatioRef.current = chatSplitRatio;
+  const saveChatSplitRatio = useCallback(() => {
+    localStorage.setItem(`harnss-${pid}-chat-split-ratio`, String(chatSplitRatioRef.current));
+  }, [pid]);
+
+  const [pane1GitCwd, setPane1GitCwdRaw] = useState<string | null>(() =>
+    localStorage.getItem(`harnss-${pid}-pane1-git-cwd`),
+  );
+  const setPane1GitCwd = useCallback(
+    (nextPath: string | null) => {
+      setPane1GitCwdRaw(nextPath);
+      const key = `harnss-${pid}-pane1-git-cwd`;
+      if (nextPath && nextPath.trim()) localStorage.setItem(key, nextPath.trim());
+      else localStorage.removeItem(key);
+    },
+    [pid],
+  );
+
   // ── Re-read per-project values when projectId changes ──
 
   useEffect(() => {
@@ -687,6 +739,10 @@ export function useSettings(projectId: string | null, engine: EngineId = "claude
 
     const bottom = readJson<ToolId[]>(`harnss-${pid}-bottom-tools`, []).filter((id) => VALID_TOOL_IDS.has(id as ToolId));
     setBottomToolsRaw(new Set(bottom));
+
+    setSplitModeRaw(readBool(`harnss-${pid}-split-mode`, false));
+    setChatSplitRatioRaw(readNumber(`harnss-${pid}-chat-split-ratio`, DEFAULT_SPLIT, MIN_SPLIT, MAX_SPLIT));
+    setPane1GitCwdRaw(localStorage.getItem(`harnss-${pid}-pane1-git-cwd`));
   }, [pid]);
 
   return {
@@ -752,5 +808,12 @@ export function useSettings(projectId: string | null, engine: EngineId = "claude
     bottomToolsSplitRatios,
     setBottomToolsSplitRatios,
     saveBottomToolsSplitRatios,
+    splitMode,
+    setSplitMode,
+    chatSplitRatio,
+    setChatSplitRatio,
+    saveChatSplitRatio,
+    pane1GitCwd,
+    setPane1GitCwd,
   };
 }

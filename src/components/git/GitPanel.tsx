@@ -104,7 +104,10 @@ export const GitPanel = memo(function GitPanel({
     setCreateError(null);
     setCreateDialogOpen(true);
     setCreateSourcePath((prev) => prev || selectedCwdValue || selectableRepos[0]?.path || "");
-  }, [selectedCwdValue, selectableRepos]);
+    // Pre-populate worktree path with the .harnss/worktrees/ convention
+    const rootPath = selectedCwdValue || selectableRepos[0]?.path || cwd || "";
+    setCreateWorktreePath((prev) => prev || (rootPath ? `${rootPath}/.harnss/worktrees/` : ""));
+  }, [selectedCwdValue, selectableRepos, cwd]);
 
   const openRemoveDialog = useCallback(() => {
     setRemoveError(null);
@@ -181,6 +184,7 @@ export const GitPanel = memo(function GitPanel({
       setCreateBranchName("");
       setCreateFromRef("");
       setCreateError(null);
+
     } finally {
       setIsCreatingWorktree(false);
     }
@@ -339,7 +343,7 @@ export const GitPanel = memo(function GitPanel({
                 type="text"
                 value={createWorktreePath}
                 onChange={(e) => setCreateWorktreePath(e.target.value)}
-                placeholder="../repo-feature-my-work"
+                placeholder=".harnss/worktrees/feature-my-work"
                 className="h-8 w-full rounded border border-input bg-background px-2 text-xs text-foreground/85 outline-none focus-visible:ring-1 focus-visible:ring-ring"
               />
             </div>
