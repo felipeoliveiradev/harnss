@@ -12,6 +12,7 @@ import type {
   ResultEvent,
   SubagentToolStep,
   ImageAttachment,
+  CodeSnippet,
   ModelInfo,
   McpServerStatus,
   McpServerConfig,
@@ -46,14 +47,12 @@ function nextId(prefix: string): string {
   return `${prefix}-${crypto.randomUUID()}`;
 }
 
-// Maps a parent_tool_use_id (Task tool_use_id) → the tool_call message id
 type ParentToolMap = Map<string, string>;
 
 interface UseClaudeOptions {
   sessionId: string | null;
   initialMessages?: import("../types").UIMessage[];
   initialMeta?: SessionMeta | null;
-  /** Restore a pending permission when switching back to this session */
   initialPermission?: import("../types").PermissionRequest | null;
 }
 
@@ -84,7 +83,6 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
   const respondingPermissionIds = useRef<Set<string>>(new Set());
   const completedPermissionIds = useRef<Set<string>>(new Set());
 
-  // Engine-specific reset — runs after base reset via the same sessionId dependency
   useEffect(() => {
     buffer.current.reset();
     parentToolMap.current.clear();
@@ -93,8 +91,6 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
     respondingPermissionIds.current.clear();
     completedPermissionIds.current.clear();
 
-    // If restoring a mid-stream session, seed the buffer with existing content
-    // so that new deltas are appended rather than replacing old content.
     const msgs = initialMessages ?? [];
     const streamingMsg = msgs.findLast(
       (m) => m.role === "assistant" && m.isStreaming,
@@ -108,23 +104,16 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
     }
   }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Index of the currently streaming message in the messages array — avoids
-  // O(n) find/map scans on every rAF flush.
   const streamingIndexRef = useRef(-1);
 
-  // Claude-specific flush — uses the full StreamingBuffer API.
-  // Optimized: replaces only the single streaming element by index instead of
-  // mapping the entire array, turning the per-frame cost from O(n) to O(1).
   const flushStreamingToState = useCallback(() => {
     const allText = buffer.current.getAllText();
     const allThinking = buffer.current.getAllThinking();
     const { thinkingComplete } = buffer.current;
     const capturedMessageId = buffer.current.messageId;
     setMessages((prev) => {
-      // Fast path: use cached index if available
       let idx = streamingIndexRef.current;
       if (idx < 0 || idx >= prev.length || prev[idx].id !== capturedMessageId) {
-        // Index stale — fall back to lookup and cache for next flush
         idx = capturedMessageId
           ? prev.findIndex((m) => m.id === capturedMessageId)
           : prev.findLastIndex((m) => m.role === "assistant" && m.isStreaming);
@@ -210,13 +199,8 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
 
   const handleEvent = useCallback(
     (event: ClaudeEvent & { _sessionId?: string }) => {
-      // Filter events by sessionId
       if (event._sessionId && event._sessionId !== sessionIdRef.current) return;
 
-      // Intercept task progress/notification events before parentId routing —
-      // these are top-level metadata for background agents, not subagent streaming content.
-      // Note: task_started fires for ALL agents (foreground + background), so we don't
-      // register from it. Background agents are registered from the tool_result with isAsync.
       if (event.type === "system" && "subtype" in event) {
         const sub = (event as { subtype: string }).subtype;
         if (sub === "task_progress") {
@@ -246,7 +230,6 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
             const compactMeta = (event as SystemCompactBoundaryEvent).compact_metadata;
             uiLog("COMPACT_BOUNDARY", { session: event.session_id, trigger: compactMeta?.trigger, preTokens: compactMeta?.pre_tokens });
             setIsCompacting(false);
-            // Insert a compact marker message so the UI shows it
             setMessages((prev) => [
               ...prev,
               {
@@ -283,7 +266,6 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
               name: s.name,
               status: toMcpStatusState(s.status),
             })));
-            // Auto-refresh detailed MCP status after a short delay (auth flows may still be in progress)
             const sid = sessionIdRef.current;
             if (sid) {
               setTimeout(() => {
@@ -291,11 +273,10 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
                   if (result.servers?.length) {
                     setMcpServerStatuses(result.servers as McpServerStatus[]);
                   }
-                }).catch(() => { /* session may have been stopped */ });
+                }).catch(() => { });
               }, 3000);
             }
           }
-          // Fetch available models from the SDK
           {
             const modelsSid = sessionIdRef.current;
             if (modelsSid) {
@@ -303,11 +284,10 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
                 if (result.models?.length) {
                   setSupportedModels(result.models);
                 }
-              }).catch(() => { /* session may have been stopped */ });
+              }).catch(() => { });
             }
           }
 
-          // Quick initial slash commands from init event (names only)
           if (init.slash_commands?.length) {
             setSlashCommands(init.slash_commands.map(name => ({
               name,
@@ -316,7 +296,6 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
             })));
           }
 
-          // Fetch detailed slash commands (with descriptions + argumentHint) from the SDK
           {
             const cmdSid = sessionIdRef.current;
             if (cmdSid) {
@@ -329,7 +308,7 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
                     source: "claude" as const,
                   })));
                 }
-              }).catch(() => { /* session may have been stopped */ });
+              }).catch(() => { });
             }
           }
 
@@ -348,7 +327,6 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
               buffer.current.messageId = id;
               uiLog("MSG_START", { id });
               setMessages((prev) => {
-                // Cache index of the new streaming message for O(1) flush lookups
                 streamingIndexRef.current = prev.length;
                 return [
                   ...prev,
@@ -412,7 +390,6 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
 
             case "message_delta": {
               flushNow();
-              // Capture messageId now — message_stop may clear it before React runs the updater
               const capturedId = buffer.current.messageId;
               setMessages((prev) => {
                 const target = capturedId
@@ -441,7 +418,6 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
           flushNow();
           uiLog("ASSISTANT_MSG", { uuid: event.uuid?.slice(0, 12) });
 
-          // Extract per-message usage for context tracking
           const nextUsage = extractAssistantContextUsage(
             event.message,
             contextUsage?.contextWindow ?? 200_000,
@@ -465,9 +441,6 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
                 ...target,
                 content: textContent || target.content,
                 thinking: thinkingContent || target.thinking || undefined,
-                // When the text snapshot arrives, streaming is effectively complete —
-                // clear isStreaming so markdown renders immediately instead of
-                // depending solely on message_delta (which can race with resetStreaming).
                 ...(textContent ? { isStreaming: false } : {}),
                 ...(thinkingContent ? { thinkingComplete: true } : {}),
               };
@@ -525,14 +498,11 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
         case "user": {
           const rawContent = event.message.content;
 
-          // Task completion arrives as user text with <task-notification> XML,
-          // not as a system event — parse it and update the bgAgentStore
           if (typeof rawContent === "string" && rawContent.includes("<task-notification>")) {
             const sid = sessionIdRef.current;
             if (sid) bgAgentStore.handleUserMessage(sid, rawContent);
           }
 
-          // Tool result — update the matching tool_call message
           if (Array.isArray(rawContent) && rawContent[0]?.type === "tool_result") {
             const toolResult = rawContent[0];
             const toolUseId = toolResult.tool_use_id;
@@ -547,7 +517,6 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
               isError,
             });
 
-            // Register background (async) agents in the shared store
             if (resultMeta?.isAsync && resultMeta.outputFile && toolUseId) {
               bgAgentStore.registerAsyncAgent(sessionIdRef.current!, {
                 toolUseId,
@@ -583,10 +552,6 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
             break;
           }
 
-          // Text content (string or array of text blocks).
-          // Only treat as a context summary if a compact_boundary placeholder
-          // is waiting to be filled — otherwise this is an SDK bookkeeping event
-          // (e.g. "[Request interrupted by user]") that doesn't need UI display.
           let textPayload: string | null = null;
           if (typeof rawContent === "string") {
             textPayload = rawContent.trim() || null;
@@ -600,26 +565,19 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
           }
 
           if (textPayload) {
-            // Checkpoint UUID from replayed user messages (replay-user-messages flag).
-            // TypeScript narrows event to ToolResultEvent in case "user".
             const checkpointUuid = event.uuid;
 
             setMessages((prev) => {
-              // Look for an unfilled compact_boundary placeholder
               const compactIdx = prev.findLastIndex(
                 (m) => m.role === "summary" && m.id.startsWith("compact-") && !m.content,
               );
               if (compactIdx >= 0) {
-                // Fill the placeholder with the summary content
                 uiLog("CONTEXT_SUMMARY", { length: textPayload.length });
                 return prev.map((m, i) =>
                   i === compactIdx ? { ...m, content: textPayload } : m,
                 );
               }
 
-              // Stamp checkpoint UUID on the first user message without one.
-              // With replay-user-messages, the SDK replays user text in order,
-              // so sequential matching assigns UUIDs to the correct messages.
               if (checkpointUuid) {
                 const userIdx = prev.findIndex(
                   (m) => m.role === "user" && !m.checkpointId,
@@ -643,10 +601,6 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
           setIsProcessing(false);
           setTotalCost((prev) => prev + (event.total_cost_usd ?? 0));
 
-          // Surface SDK error results to the user.
-          // Respect is_error flag — when false, the SDK considers it a non-fatal result
-          // (e.g. interrupt teardown with LSP cleanup errors). Only show genuine errors,
-          // or user-relevant limit subtypes (max_turns, max_budget) regardless of is_error.
           const resultEvent = event as ResultEvent;
           const isUserRelevantError = resultEvent.is_error
             || resultEvent.subtype === "error_max_turns"
@@ -668,7 +622,6 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
             ]);
           }
 
-          // Extract contextWindow from modelUsage if available
           if (resultEvent.modelUsage) {
             const entries = Object.values(resultEvent.modelUsage);
             const primaryEntry = entries.find((e) => e.contextWindow > 0);
@@ -679,8 +632,6 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
             }
           }
 
-          // Safety net: clear isStreaming on any messages still marked as streaming —
-          // the turn is complete, nothing should remain in streaming state.
           setMessages((prev) => {
             const hasStreaming = prev.some((m) => m.isStreaming);
             if (!hasStreaming) return prev;
@@ -694,7 +645,6 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
         case "auth_status": {
           const authEvt = event as AuthStatusEvent;
           uiLog("AUTH_STATUS", { isAuthenticating: authEvt.isAuthenticating, error: authEvt.error, output: authEvt.output?.length ?? 0 });
-          // Surface auth errors to user
           if (authEvt.error) {
             setMessages((prev) => [
               ...prev,
@@ -707,13 +657,12 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
               },
             ]);
           }
-          // After auth completes, refresh MCP server statuses
           if (!authEvt.isAuthenticating && sessionIdRef.current) {
             window.claude.mcpStatus(sessionIdRef.current).then((result) => {
               if (result.servers?.length) {
                 setMcpServerStatuses(result.servers as McpServerStatus[]);
               }
-            }).catch(() => { /* session may have been stopped */ });
+            }).catch(() => { });
           }
           break;
         }
@@ -723,7 +672,7 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
   );
 
   const send = useCallback(
-    async (text: string, images?: ImageAttachment[], displayText?: string): Promise<boolean> => {
+    async (text: string, images?: ImageAttachment[], displayText?: string, codeSnippets?: CodeSnippet[]): Promise<boolean> => {
       if (!sessionIdRef.current) return false;
       const content = buildSdkContent(text, images);
       const result = await window.claude.send(sessionIdRef.current, {
@@ -733,11 +682,6 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
       if (result?.error) {
         return false;
       }
-      // Both updates in the same synchronous scope so React batches them into
-      // one render.  Previously setIsProcessing(true) fired before the await,
-      // creating an intermediate render where isProcessing=true but the user
-      // message wasn't in the array yet — which made extractTurnSummaries drop
-      // the last completed turn's inline change summary.
       setIsProcessing(true);
       setMessages((prev) => [
         ...prev,
@@ -748,6 +692,7 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
           timestamp: Date.now(),
           ...(images?.length ? { images } : {}),
           ...(displayText ? { displayContent: displayText } : {}),
+          ...(codeSnippets?.length ? { codeSnippets } : {}),
         },
       ]);
       return true;
@@ -755,7 +700,6 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
     [],
   );
 
-  /** Send a message without adding it to chat (used for queued messages already in the UI) */
   const sendRaw = useCallback(
     async (text: string, images?: ImageAttachment[]): Promise<boolean> => {
       if (!sessionIdRef.current) return false;
@@ -785,13 +729,10 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
     if (!sessionIdRef.current) return;
     suppressNextSessionCompletion(sessionIdRef.current);
 
-    // Flush any rAF-buffered streaming content to React state
     flushNow();
 
-    // Interrupt the current turn via IPC (session stays alive)
     await window.claude.interrupt(sessionIdRef.current);
 
-    // Responsive UI — don't wait for the result event
     setIsProcessing(false);
     setIsCompacting(false);
     permissionQueue.current = [];
@@ -800,7 +741,6 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
     completedPermissionIds.current.clear();
     setPendingPermission(null);
 
-    // Finalize streaming message: keep partial content, remove if empty
     setMessages((prev) => {
       const streamId = buffer.current.messageId;
       const target = streamId
@@ -815,7 +755,6 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
       );
     });
 
-    // Reset streaming buffer for next turn
     resetStreaming();
   }, [flushNow, resetStreaming]);
 
@@ -980,15 +919,12 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
   const reconnectMcpServer = useCallback(async (serverName: string) => {
     if (!sessionIdRef.current) return;
     const result = await window.claude.mcpReconnect(sessionIdRef.current, serverName);
-    // If the session was restarted (to inject fresh OAuth tokens),
-    // wait for the new session to fully initialize before refreshing status
     if (result?.restarted) {
       await new Promise((r) => setTimeout(r, 3000));
     }
     await refreshMcpStatus();
   }, [refreshMcpStatus]);
 
-  /** Restart the session with a fresh MCP server list (after add/remove) */
   const restartWithMcpServers = useCallback(async (mcpServers: McpServerConfig[]) => {
     if (!sessionIdRef.current) return;
     const result = await window.claude.restartSession(sessionIdRef.current, mcpServers);
@@ -998,11 +934,9 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
     await refreshMcpStatus();
   }, [refreshMcpStatus]);
 
-  /** Revert files on disk to the state before the given checkpoint (user message UUID) */
   const revertFiles = useCallback(async (checkpointId: string) => {
     if (!sessionIdRef.current) return { error: "No session" };
     const result = await window.claude.revertFiles(sessionIdRef.current, checkpointId);
-    // Show feedback as a system message so the user knows the revert happened (or failed)
     setMessages((prev) => [
       ...prev,
       {

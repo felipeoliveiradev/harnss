@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ImageAttachment, AcpPermissionBehavior, AppPermissionBehavior, SessionMeta, SlashCommand } from "@/types";
+import type { ImageAttachment, CodeSnippet, AcpPermissionBehavior, AppPermissionBehavior, SessionMeta, SlashCommand } from "@/types";
 import type { ACPSessionEvent, ACPPermissionEvent, ACPTurnCompleteEvent, ACPConfigOption, ACPAvailableCommandsUpdate } from "@/types/acp";
 import { ACPStreamingBuffer, normalizeToolInput, normalizeToolResult, deriveToolName, mergeToolInput, pickAutoResponseOption } from "@/lib/acp-adapter";
 import { extractTaskSubagentSteps, getTaskStatus, isTaskToolName } from "@/lib/acp-task-adapter";
@@ -13,15 +13,11 @@ interface UseACPOptions {
   initialConfigOptions?: ACPConfigOption[];
   initialSlashCommands?: SlashCommand[];
   initialMeta?: SessionMeta | null;
-  /** Restore a pending permission when switching back to this session */
   initialPermission?: import("@/types").PermissionRequest | null;
-  /** Restore the raw ACP permission event (needed for optionId lookup) */
   initialRawAcpPermission?: ACPPermissionEvent | null;
-  /** Client-side ACP permission behavior — controls auto-response to permission requests */
   acpPermissionBehavior?: AcpPermissionBehavior;
 }
 
-/** Renderer-side ACP log — forwarded to main process log file as [ACP_UI:TAG] */
 function acpLog(label: string, data: unknown): void {
   window.claude.acp.log(label, data);
 }
@@ -48,25 +44,20 @@ export function useACP({ sessionId, initialMessages, initialConfigOptions, initi
   const [configOptions, setConfigOptions] = useState<ACPConfigOption[]>(initialConfigOptions ?? []);
   const [slashCommands, setSlashCommands] = useState<SlashCommand[]>(initialSlashCommands ?? []);
 
-  // Sync initialConfigOptions prop → state (useState ignores prop changes after mount)
   useEffect(() => {
     setConfigOptions(initialConfigOptions ?? []);
   }, [initialConfigOptions]);
 
-  // Sync initialSlashCommands prop → state
   useEffect(() => {
     setSlashCommands(initialSlashCommands ?? []);
   }, [initialSlashCommands]);
 
   const buffer = useRef(new ACPStreamingBuffer());
-  /** Track the active ACP task/subagent tool so inner tool_calls + text are routed into its card. */
   const activeTaskRef = useRef<{ msgId: string; toolCallId: string; hasInnerTools: boolean; textBuffer: string } | null>(null);
   const acpPermissionRef = useRef<ACPPermissionEvent | null>(null);
-  // Track latest permission behavior to avoid stale closures in event listeners
   const acpPermissionBehaviorRef = useRef<AcpPermissionBehavior>(acpPermissionBehavior ?? "ask");
   acpPermissionBehaviorRef.current = acpPermissionBehavior ?? "ask";
 
-  // Engine-specific reset — runs after base reset via the same sessionId dependency
   useEffect(() => {
     acpPermissionRef.current = initialRawAcpPermission ?? null;
     activeTaskRef.current = null;
@@ -136,9 +127,6 @@ export function useACP({ sessionId, initialMessages, initialConfigOptions, initi
     buf.reset();
   }, [flushStreamingToState]);
 
-  // Mark any tool_call messages still missing a result as completed.
-  // Some ACP agents (e.g. Codex) skip sending tool_call_update for fast tools.
-  // Task/Agent tools are excluded — they stay open until their tool_call_update arrives.
   const closePendingTools = useCallback(() => {
     setMessages(prev => {
       const pending = prev.filter(m => m.role === "tool_call" && !m.toolResult && !m.toolError && !isTaskToolName(m.toolName));
@@ -159,19 +147,15 @@ export function useACP({ sessionId, initialMessages, initialConfigOptions, initi
     const kind = update.sessionUpdate;
 
     if (kind === "agent_message_chunk" || kind === "agent_thought_chunk") {
-      // Agent moved on to generating text — close any pending tools
       closePendingTools();
       const content = update.content as { type: string; text?: string } | undefined;
       if (content?.type === "text" && content.text) {
-        // If an ACP task has inner tools running, accumulate text as task content
-        // (this is the subagent's output text, not the outer agent's)
         if (activeTaskRef.current?.hasInnerTools && kind === "agent_message_chunk") {
           activeTaskRef.current.textBuffer += content.text;
           return;
         }
         ensureStreamingMessage();
         if (kind === "agent_message_chunk") {
-          // Text arriving means thinking phase is over
           if (buffer.current.getThinking()) {
             buffer.current.thinkingComplete = true;
           }
@@ -195,7 +179,6 @@ export function useACP({ sessionId, initialMessages, initialConfigOptions, initi
         msgId,
       });
 
-      // If there's an active task, route this tool_call as a subagent step
       if (activeTaskRef.current && !isTaskToolName(toolName)) {
         activeTaskRef.current.hasInnerTools = true;
         const isAlreadyDone = tc.status === "completed" || tc.status === "failed";
@@ -214,12 +197,9 @@ export function useACP({ sessionId, initialMessages, initialConfigOptions, initi
         return;
       }
 
-      // The initial tool_call event may already carry status/rawOutput (protocol allows it).
-      // If the tool arrived completed, set toolResult immediately so it doesn't show as running.
       const isAlreadyDone = tc.status === "completed" || tc.status === "failed";
       const initialResult = isAlreadyDone ? normalizeToolResult(tc.rawOutput, tc.content) : undefined;
       const isTask = isTaskToolName(toolName);
-      // Start tracking if this is a Task tool
       if (isTask && !isAlreadyDone) {
         activeTaskRef.current = { msgId, toolCallId: tc.toolCallId, hasInnerTools: false, textBuffer: "" };
       }
@@ -251,13 +231,11 @@ export function useACP({ sessionId, initialMessages, initialConfigOptions, initi
         hasResult: result != null,
       });
 
-      // Check if this is for the active task itself
       if (activeTaskRef.current && tcu.toolCallId === activeTaskRef.current.toolCallId) {
         const taskMsgId = activeTaskRef.current.msgId;
         const isDone = tcu.status === "completed" || tcu.status === "failed" || tcu.status === "cancelled";
 
         if (isDone) {
-          // Task finished — set final result with accumulated text, clear activeTask
           const textContent = activeTaskRef.current.textBuffer;
           const finalResult = result ?? (textContent ? { content: textContent } : undefined);
           if (finalResult && textContent && typeof finalResult.content !== "string") {
@@ -286,7 +264,6 @@ export function useACP({ sessionId, initialMessages, initialConfigOptions, initi
         return;
       }
 
-      // Check if this updates a subagent step inside the active task
       if (activeTaskRef.current) {
         setMessages(prev => prev.map(m => {
           if (m.id !== activeTaskRef.current!.msgId) return m;
@@ -309,7 +286,6 @@ export function useACP({ sessionId, initialMessages, initialConfigOptions, initi
         return;
       }
 
-      // Normal tool_call_update for top-level tools
       const msgId = `tool-${tcu.toolCallId}`;
       setMessages(prev => prev.map(m => {
         if (m.id !== msgId) return m;
@@ -370,16 +346,13 @@ export function useACP({ sessionId, initialMessages, initialConfigOptions, initi
     acpLog("SESSION_CONNECTED", { sessionId: sessionId.slice(0, 8) });
     setIsConnected(true);
 
-    // Fetch any config options buffered in main process during the DRAFT→active transition
-    // (events may have arrived before this listener was subscribed)
     window.claude.acp.getConfigOptions(sessionId).then(result => {
       if (result?.configOptions?.length) {
         acpLog("CONFIG_FETCHED", { count: result.configOptions.length });
         setConfigOptions(result.configOptions as ACPConfigOption[]);
       }
-    }).catch(() => { /* session may have been stopped */ });
+    }).catch(() => { });
 
-    // Fetch any available commands buffered in main process during the DRAFT→active transition
     window.claude.acp.getAvailableCommands(sessionId).then(result => {
       if (result?.commands?.length) {
         acpLog("COMMANDS_FETCHED", { count: result.commands.length });
@@ -390,7 +363,7 @@ export function useACP({ sessionId, initialMessages, initialConfigOptions, initi
           source: "acp" as const,
         })));
       }
-    }).catch(() => { /* session may have been stopped */ });
+    }).catch(() => { });
 
     const unsubEvent = window.claude.acp.onEvent(handleSessionUpdate);
 
@@ -406,7 +379,6 @@ export function useACP({ sessionId, initialMessages, initialConfigOptions, initi
         behavior,
       });
 
-      // Auto-respond if behavior is configured and a matching allow option exists
       const autoOptionId = pickAutoResponseOption(data.options, behavior);
       if (autoOptionId) {
         acpLog("PERMISSION_AUTO_RESPOND", {
@@ -420,7 +392,6 @@ export function useACP({ sessionId, initialMessages, initialConfigOptions, initi
         return;
       }
 
-      // Fall through to manual prompt
       acpPermissionRef.current = data;
       setPendingPermission({
         requestId: data.requestId,
@@ -443,7 +414,6 @@ export function useACP({ sessionId, initialMessages, initialConfigOptions, initi
       acpLog("SESSION_EXIT", { code: data.code, error: data.error });
       setIsConnected(false);
       setIsProcessing(false);
-      // Show error message in UI if session exited with error
       if (data.code !== 0 && data.code !== null) {
         const errorDetail = data.error || `Agent process exited with code ${data.code}`;
         setMessages((prev) => [
@@ -465,7 +435,7 @@ export function useACP({ sessionId, initialMessages, initialConfigOptions, initi
     };
   }, [sessionId, handleSessionUpdate, finalizeStreamingMessage, closePendingTools]);
 
-  const send = useCallback(async (text: string, images?: ImageAttachment[], displayText?: string) => {
+  const send = useCallback(async (text: string, images?: ImageAttachment[], displayText?: string, codeSnippets?: CodeSnippet[]) => {
     if (!sessionId) return;
     acpLog("SEND", { session: sessionId.slice(0, 8), textLen: text.length, images: images?.length ?? 0 });
     setMessages(prev => [...prev, {
@@ -475,6 +445,7 @@ export function useACP({ sessionId, initialMessages, initialConfigOptions, initi
       images,
       timestamp: Date.now(),
       ...(displayText ? { displayContent: displayText } : {}),
+      ...(codeSnippets?.length ? { codeSnippets } : {}),
     }]);
     setIsProcessing(true);
     try {
@@ -493,7 +464,6 @@ export function useACP({ sessionId, initialMessages, initialConfigOptions, initi
     }
   }, [sessionId, pushSystemError]);
 
-  /** Send a message without adding it to chat (used for queued messages already in the UI) */
   const sendRaw = useCallback(async (text: string, images?: ImageAttachment[]) => {
     if (!sessionId) return;
     acpLog("SEND_RAW", { session: sessionId.slice(0, 8), textLen: text.length });
@@ -578,8 +548,8 @@ export function useACP({ sessionId, initialMessages, initialConfigOptions, initi
     }
   }, [sessionId]);
 
-  const compact = useCallback(async () => { /* no-op for ACP */ }, []);
-  const setPermissionMode = useCallback(async (_mode: string) => { /* no-op for ACP */ }, []);
+  const compact = useCallback(async () => { }, []);
+  const setPermissionMode = useCallback(async (_mode: string) => { }, []);
 
   return {
     messages, setMessages,

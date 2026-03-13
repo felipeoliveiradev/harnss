@@ -39,15 +39,18 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import type { ImageAttachment, GrabbedElement, ContextUsage, InstalledAgent, ACPConfigOption, ModelInfo, AcpPermissionBehavior, ClaudeEffort, EngineId, SlashCommand } from "@/types";
+import type { ImageAttachment, GrabbedElement, CodeSnippet, ContextUsage, InstalledAgent, ACPConfigOption, ModelInfo, AcpPermissionBehavior, ClaudeEffort, EngineId, SlashCommand } from "@/types";
 import { flattenConfigOptions } from "@/lib/acp-utils";
 import { BOTTOM_CHAT_MAX_WIDTH_CLASS } from "@/lib/layout-constants";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 import { resolveModelValue } from "@/lib/model-utils";
 import { isMac } from "@/lib/utils";
+import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { AgentIcon } from "@/components/AgentIcon";
 import { ImageAnnotationEditor } from "@/components/ImageAnnotationEditor";
 import { ENGINE_ICONS, getAgentIcon } from "@/lib/engine-icons";
+import { getLanguageFromPath } from "@/lib/languages";
 
 const ACP_PERMISSION_BEHAVIORS = [
   { id: "ask" as const, label: "Ask", description: "Show permission prompt" },
@@ -97,9 +100,7 @@ function getContextStrokeColor(percent: number): string {
   return "stroke-foreground/40";
 }
 
-// ── Reusable engine control sub-components ──
 
-/** Model selector dropdown — used by Claude and Codex engines */
 function ModelDropdown({
   modelList,
   selectedModel,
@@ -209,7 +210,6 @@ function ModelDropdown({
   );
 }
 
-/** Permission mode dropdown — used by Claude and Codex engines */
 function PermissionDropdown({
   permissionMode,
   onPermissionModeChange,
@@ -217,7 +217,6 @@ function PermissionDropdown({
 }: {
   permissionMode: string;
   onPermissionModeChange: (mode: string) => void;
-  /** When true, shows policy + description (Codex style) */
   showDetails?: boolean;
 }) {
   const selectedMode =
@@ -262,7 +261,6 @@ function PermissionDropdown({
   );
 }
 
-/** Plan mode toggle button — used by Claude and Codex engines */
 function PlanModeToggle({
   planMode,
   onPlanModeChange,
@@ -294,13 +292,11 @@ function PlanModeToggle({
   );
 }
 
-/** Renders the correct combination of controls per engine */
 function EngineControls({
   isCodexAgent,
   isACPAgent,
   isProcessing,
   showACPConfigOptions,
-  // Model
   modelList,
   selectedModel,
   selectedModelId,
@@ -310,17 +306,13 @@ function EngineControls({
   claudeActiveEffort,
   modelsLoading,
   modelsLoadingText,
-  // Permission
   permissionMode,
   onPermissionModeChange,
-  // Plan
   planMode,
   onPlanModeChange,
-  // Codex effort
   codexEffortOptions,
   codexActiveEffort,
   onCodexEffortChange,
-  // ACP
   acpPermissionBehavior,
   onAcpPermissionBehaviorChange,
   acpConfigOptions,
@@ -365,7 +357,6 @@ function EngineControls({
           modelsLoading={modelsLoading}
           modelsLoadingText={modelsLoadingText}
         />
-        {/* Codex reasoning effort dropdown */}
         {codexEffortOptions.length > 0 && onCodexEffortChange && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -405,7 +396,6 @@ function EngineControls({
   if (isACPAgent) {
     return (
       <>
-        {/* ACP permission behavior dropdown */}
         {onAcpPermissionBehaviorChange && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -434,7 +424,6 @@ function EngineControls({
             </DropdownMenuContent>
           </DropdownMenu>
         )}
-        {/* Agent-provided config dropdowns */}
         {showACPConfigOptions && acpConfigOptions && acpConfigOptions.length > 0 && onACPConfigChange &&
           acpConfigOptions.map((opt) => {
             const flat = flattenConfigOptions(opt.options);
@@ -480,7 +469,6 @@ function EngineControls({
     );
   }
 
-  // Claude SDK controls
   return (
     <>
       <ModelDropdown
@@ -529,12 +517,51 @@ function isAcceptedImage(file: globalThis.File): boolean {
 }
 
 
-// Lucide SVG paths for inline chip icons (can't use React components in DOM-created elements)
 const FILE_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3 w-3 shrink-0 text-muted-foreground"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>`;
 const FOLDER_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3 w-3 shrink-0 text-blue-400"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>`;
 
+function CodeSnippetCard({ snippet, onRemove }: { snippet: CodeSnippet; onRemove: () => void }) {
+  const [expanded, setExpanded] = useState(false);
+  const fileName = snippet.filePath.split("/").pop() ?? snippet.filePath;
+  const range = snippet.lineStart === snippet.lineEnd ? `L${snippet.lineStart}` : `L${snippet.lineStart}-${snippet.lineEnd}`;
+
+  return (
+    <div className="group/snippet relative overflow-hidden rounded-lg border border-foreground/10 bg-foreground/[0.03]">
+      <button
+        type="button"
+        onClick={() => setExpanded((prev) => !prev)}
+        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-start transition-colors hover:bg-foreground/[0.04] cursor-pointer"
+      >
+        <File className="h-3.5 w-3.5 shrink-0 text-foreground/45" />
+        <span className="text-[11px] font-medium text-foreground/80">{fileName}</span>
+        <span className="text-[10px] font-mono text-foreground/40">{range}</span>
+        <ChevronDown className={`ms-auto h-3 w-3 shrink-0 text-foreground/30 transition-transform ${expanded ? "" : "-rotate-90"}`} />
+      </button>
+      {expanded && (
+        <div className="max-h-48 overflow-auto border-t border-foreground/[0.06] text-xs">
+          <SyntaxHighlighter
+            language={getLanguageFromPath(snippet.filePath) ?? "text"}
+            style={oneDark}
+            customStyle={{ margin: 0, padding: "8px 12px", background: "transparent", fontSize: "11px" }}
+            showLineNumbers
+            startingLineNumber={snippet.lineStart}
+          >
+            {snippet.code}
+          </SyntaxHighlighter>
+        </div>
+      )}
+      <button
+        onClick={onRemove}
+        className="absolute -end-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-background/90 text-muted-foreground opacity-0 shadow-sm transition-opacity hover:text-foreground group-hover/snippet:opacity-100"
+      >
+        <X className="h-2.5 w-2.5" />
+      </button>
+    </div>
+  );
+}
+
 interface InputBarProps {
-  onSend: (text: string, images?: ImageAttachment[], displayText?: string) => void;
+  onSend: (text: string, images?: ImageAttachment[], displayText?: string, codeSnippets?: CodeSnippet[]) => void;
   onStop: () => void;
   isProcessing: boolean;
   model: string;
@@ -552,7 +579,6 @@ interface InputBarProps {
   agents?: InstalledAgent[];
   selectedAgent?: InstalledAgent | null;
   onAgentChange?: (agent: InstalledAgent | null) => void;
-  /** Slash commands available for the current engine session */
   slashCommands?: SlashCommand[];
   acpConfigOptions?: ACPConfigOption[];
   acpConfigOptionsLoading?: boolean;
@@ -561,26 +587,19 @@ interface InputBarProps {
   onAcpPermissionBehaviorChange?: (behavior: AcpPermissionBehavior) => void;
   supportedModels?: ModelInfo[];
   codexModelsLoadingMessage?: string | null;
-  /** Codex reasoning effort — per-model configurable effort level */
   codexEffort?: string;
   onCodexEffortChange?: (effort: string) => void;
-  /** Codex models carry their supported effort levels — passed through for the effort dropdown */
   codexModelData?: Array<{ id: string; supportedReasoningEfforts: Array<{ reasoningEffort: string; description: string }>; defaultReasoningEffort: string; isDefault?: boolean }>;
-  /** Non-null when session is active (not draft) — engine is locked and cross-engine agents show "Opens new chat" */
   lockedEngine?: EngineId | null;
-  /** Non-null when an ACP session is active — switching to a different ACP agent opens new chat */
   lockedAgentId?: string | null;
-  /** Number of messages currently queued for sending */
   queuedCount?: number;
-  /** Grabbed elements from browser inspector, displayed as context cards */
   grabbedElements?: GrabbedElement[];
-  /** Remove a grabbed element by ID */
   onRemoveGrabbedElement?: (id: string) => void;
-  /** Controls width profile for island vs flat layout */
+  codeSnippets?: CodeSnippet[];
+  onRemoveCodeSnippet?: (id: string) => void;
   isIslandLayout?: boolean;
 }
 
-// Simple fuzzy match: all query chars must appear in order
 function fuzzyMatch(query: string, target: string): { match: boolean; score: number } {
   const q = query.toLowerCase();
   const t = target.toLowerCase();
@@ -597,43 +616,38 @@ function fuzzyMatch(query: string, target: string): { match: boolean; score: num
   return { match: false, score: 0 };
 }
 
-/** Insert text at the current cursor position in a contentEditable element */
 function insertTextAtCursor(el: HTMLElement | null, text: string): void {
   if (!el) return;
   el.focus();
 
   const sel = window.getSelection();
   if (!sel || !sel.rangeCount) {
-    // No cursor — append to end
     el.appendChild(document.createTextNode(text));
   } else {
     const range = sel.getRangeAt(0);
     range.deleteContents();
     const textNode = document.createTextNode(text);
     range.insertNode(textNode);
-    // Move cursor after inserted text
     range.setStartAfter(textNode);
     range.collapse(true);
     sel.removeAllRanges();
     sel.addRange(range);
   }
 
-  // Trigger input handler so hasContent updates and send button enables
   el.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
-/** Fast non-whitespace check that short-circuits early for typical prompts */
 function hasMeaningfulText(text: string): boolean {
   for (let i = 0; i < text.length; i++) {
     const code = text.charCodeAt(i);
     if (
-      code !== 32 && // space
-      code !== 9 && // tab
-      code !== 10 && // \n
-      code !== 13 && // \r
-      code !== 11 && // vertical tab
-      code !== 12 && // form feed
-      code !== 160 // nbsp
+      code !== 32 &&
+      code !== 9 &&
+      code !== 10 &&
+      code !== 13 &&
+      code !== 11 &&
+      code !== 12 &&
+      code !== 160
     ) {
       return true;
     }
@@ -641,7 +655,6 @@ function hasMeaningfulText(text: string): boolean {
   return false;
 }
 
-/** Extract full text + mention paths from a contentEditable element */
 function extractEditableContent(el: HTMLElement): { text: string; mentionPaths: string[] } {
   let text = "";
   const mentionPaths: string[] = [];
@@ -671,7 +684,6 @@ function extractEditableContent(el: HTMLElement): { text: string; mentionPaths: 
         text += "\n";
       } else {
         for (const child of node.childNodes) walk(child);
-        // Preserve line boundaries when the editor stores rows as block nodes.
         if (BLOCK_TAGS.has(node.tagName) && !text.endsWith("\n")) {
           text += "\n";
         }
@@ -721,13 +733,14 @@ export const InputBar = memo(function InputBar({
   queuedCount = 0,
   grabbedElements,
   onRemoveGrabbedElement,
+  codeSnippets,
+  onRemoveCodeSnippet,
 }: InputBarProps) {
   const [hasContent, setHasContent] = useState(false);
   const [showMentions, setShowMentions] = useState(false);
   const [mentionQuery, setMentionQuery] = useState("");
   const [mentionIndex, setMentionIndex] = useState(0);
 
-  // Slash command picker state
   const [showCommands, setShowCommands] = useState(false);
   const [commandQuery, setCommandQuery] = useState("");
   const [commandIndex, setCommandIndex] = useState(0);
@@ -738,7 +751,6 @@ export const InputBar = memo(function InputBar({
   const [isDragging, setIsDragging] = useState(false);
   const [editingAttachment, setEditingAttachment] = useState<ImageAttachment | null>(null);
 
-  // ── Voice dictation ──
   const speech = useSpeechRecognition({
     onResult: (text) => insertTextAtCursor(editableRef.current, text),
   });
@@ -780,7 +792,6 @@ export const InputBar = memo(function InputBar({
     ? claudeEffort
     : (claudeEffortOptions.includes("high") ? "high" : (claudeEffortOptions[0] ?? "high"));
 
-  // Codex: find the effort options for the currently selected model
   const codexCurrentModel = codexModelData?.find((m) => m.id === selectedModelId)
     ?? codexModelData?.find((m) => m.isDefault)
     ?? codexModelData?.[0];
@@ -803,7 +814,6 @@ export const InputBar = memo(function InputBar({
     }, 150);
   }, [refreshFileCache]);
 
-  // Fetch and keep the mention file cache fresh for the active project.
   useEffect(() => {
     if (!projectPath) {
       fileCacheFetchIdRef.current += 1;
@@ -840,7 +850,6 @@ export const InputBar = memo(function InputBar({
     };
   }, [projectPath, refreshFileCache, scheduleFileCacheRefresh]);
 
-  // Filtered mention results
   const mentionResults = useCallback(() => {
     if (!fileCache) return [];
     const q = mentionQuery;
@@ -849,7 +858,6 @@ export const InputBar = memo(function InputBar({
       ...fileCache.files.map((f) => ({ path: f, isDir: false })),
     ];
 
-    // Filter out paths already mentioned as chips
     const mentionedPaths = new Set<string>();
     if (editableRef.current) {
       editableRef.current.querySelectorAll("[data-mention-path]").forEach((el) => {
@@ -883,7 +891,6 @@ export const InputBar = memo(function InputBar({
 
   const results = showMentions ? mentionResults() : [];
 
-  // Slash command filtered results
   const cmdResults = (() => {
     if (!showCommands || !slashCommands?.length) return [];
     const q = commandQuery.toLowerCase();
@@ -893,14 +900,12 @@ export const InputBar = memo(function InputBar({
       .slice(0, 15);
   })();
 
-  // Clamp mention index
   useEffect(() => {
     if (mentionIndex >= results.length) {
       setMentionIndex(Math.max(0, results.length - 1));
     }
   }, [results.length, mentionIndex]);
 
-  // Scroll active mention into view
   useEffect(() => {
     if (!mentionListRef.current) return;
     const active = mentionListRef.current.querySelector("[data-active='true']");
@@ -941,7 +946,6 @@ export const InputBar = memo(function InputBar({
     const el = editableRef.current;
     if (!el) return;
 
-    // Build the replacement text based on source engine
     let replacement: string;
     switch (cmd.source) {
       case "claude":
@@ -960,7 +964,6 @@ export const InputBar = memo(function InputBar({
 
     el.textContent = replacement;
 
-    // Move cursor to end
     const range = document.createRange();
     const sel = window.getSelection();
     range.selectNodeContents(el);
@@ -969,7 +972,6 @@ export const InputBar = memo(function InputBar({
     sel?.addRange(range);
     el.focus();
 
-    // Update hasContent
     hasContentRef.current = true;
     setHasContent(true);
   }, []);
@@ -984,14 +986,12 @@ export const InputBar = memo(function InputBar({
         return;
       }
 
-      // Delete the @query text (from @ to current cursor position)
       const range = document.createRange();
       range.setStart(node, mentionStartOffset.current);
       const curRange = sel.getRangeAt(0);
       range.setEnd(curRange.startContainer, curRange.startOffset);
       range.deleteContents();
 
-      // Create chip element
       const chip = document.createElement("span");
       chip.contentEditable = "false";
       chip.className =
@@ -1000,14 +1000,11 @@ export const InputBar = memo(function InputBar({
       chip.setAttribute("data-mention-dir", String(entry.isDir));
       chip.innerHTML = `${entry.isDir ? FOLDER_ICON_SVG : FILE_ICON_SVG}<span>${entry.path}</span>`;
 
-      // Insert chip at cursor
       range.insertNode(chip);
 
-      // Add space after chip so cursor has somewhere to go
       const space = document.createTextNode(" ");
       chip.after(space);
 
-      // Move cursor after the space
       const newRange = document.createRange();
       newRange.setStartAfter(space);
       newRange.collapse(true);
@@ -1028,14 +1025,14 @@ export const InputBar = memo(function InputBar({
     const { text: fullText, mentionPaths } = extractEditableContent(el);
     const trimmed = fullText.trim();
     const hasGrabs = grabbedElements && grabbedElements.length > 0;
-    if (isAwaitingAcpOptions || (!trimmed && attachments.length === 0 && !hasGrabs) || isSending) return;
+    const hasSnippets = codeSnippets && codeSnippets.length > 0;
+    if (isAwaitingAcpOptions || (!trimmed && attachments.length === 0 && !hasGrabs && !hasSnippets) || isSending) return;
 
     const currentImages = attachments.length > 0 ? [...attachments] : undefined;
     const contextParts: string[] = [];
     const grabbedElementDisplayTokens: string[] = [];
     let hasContext = false;
 
-    // File mentions → <file>/<folder> context blocks
     if (mentionPaths.length > 0 && projectPath) {
       setIsSending(true);
       try {
@@ -1056,9 +1053,7 @@ export const InputBar = memo(function InputBar({
       }
     }
 
-    // Grabbed elements → <element> context blocks
     if (hasGrabs) {
-      // Escape special chars for XML attribute values (webpage content can contain anything)
       const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
       const compact = (s: string) => s.trim().replace(/\s+/g, " ");
 
@@ -1091,6 +1086,14 @@ export const InputBar = memo(function InputBar({
       hasContext = true;
     }
 
+    if (hasSnippets) {
+      for (const snippet of codeSnippets) {
+        const range = snippet.lineStart === snippet.lineEnd ? `L${snippet.lineStart}` : `L${snippet.lineStart}-${snippet.lineEnd}`;
+        contextParts.push(`<file path="${snippet.filePath}:${range}">\n${snippet.code}\n</file>`);
+      }
+      hasContext = true;
+    }
+
     if (hasContext) {
       const contextBlock = contextParts.join("\n\n");
       const fullMessage = contextBlock ? `${contextBlock}\n\n${trimmed}` : trimmed;
@@ -1098,27 +1101,23 @@ export const InputBar = memo(function InputBar({
         grabbedElementDisplayTokens.length > 0
           ? `${trimmed}${trimmed ? "\n\n" : ""}${grabbedElementDisplayTokens.join(" ")}`
           : trimmed;
-      // Pass display text (including browser element chips) so MessageBubble doesn't need regex stripping
-      onSend(fullMessage, currentImages, displayText);
+      onSend(fullMessage, currentImages, displayText, hasSnippets ? codeSnippets : undefined);
     } else {
       onSend(trimmed, currentImages);
     }
 
-    // Clear input
     el.innerHTML = "";
     hasContentRef.current = false;
     setHasContent(false);
     setAttachments([]);
     closeMentions();
-  }, [attachments, isAwaitingAcpOptions, isSending, projectPath, onSend, closeMentions, grabbedElements]);
+  }, [attachments, isAwaitingAcpOptions, isSending, projectPath, onSend, closeMentions, grabbedElements, codeSnippets]);
 
   const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    // Slash command picker keyboard navigation
     if (showCommands && cmdResults.length > 0) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
         setCommandIndex((prev) => (prev + 1) % cmdResults.length);
-        // Scroll active item into view
         requestAnimationFrame(() => {
           commandListRef.current?.querySelector("[data-active=true]")?.scrollIntoView({ block: "nearest" });
         });
@@ -1181,12 +1180,10 @@ export const InputBar = memo(function InputBar({
     }
   };
 
-  // Detect @ trigger on contentEditable input
   const handleEditableInput = useCallback((e: React.FormEvent<HTMLDivElement>) => {
     const el = editableRef.current;
     if (!el) return;
 
-    // Avoid re-scanning huge buffers on normal inserts; only re-check when necessary.
     const nativeEvent = e.nativeEvent;
     const inputType = nativeEvent instanceof InputEvent ? nativeEvent.inputType : "";
     const shouldRecomputeHasContent =
@@ -1209,7 +1206,6 @@ export const InputBar = memo(function InputBar({
       setHasContent(true);
     }
 
-    // Detect @ trigger
     const sel = window.getSelection();
     if (!sel || !sel.rangeCount) {
       if (showMentions) closeMentions();
@@ -1242,7 +1238,6 @@ export const InputBar = memo(function InputBar({
       if (showMentions) closeMentions();
     }
 
-    // Slash command detection — "/" at position 0 with no spaces (still typing the command name)
     const fullText = (el.textContent ?? "").trimStart();
     const slashMatch = fullText.match(/^\/(\S*)$/);
     if (slashMatch && slashCommands?.length) {
@@ -1271,7 +1266,6 @@ export const InputBar = memo(function InputBar({
         }
       }
 
-      // Paste as plain text only (strip HTML formatting)
       e.preventDefault();
       const text = e.clipboardData.getData("text/plain");
       if (!hasContentRef.current && text.length > 0) {
@@ -1341,7 +1335,6 @@ export const InputBar = memo(function InputBar({
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
-        {/* Mention popup */}
         {showMentions && results.length > 0 && (
           <div
             ref={mentionListRef}
@@ -1373,7 +1366,6 @@ export const InputBar = memo(function InputBar({
           </div>
         )}
 
-        {/* Slash command popup */}
         {showCommands && cmdResults.length > 0 && (
           <div
             ref={commandListRef}
@@ -1419,12 +1411,10 @@ export const InputBar = memo(function InputBar({
           </div>
         )}
 
-        {/* Input area — contentEditable with inline chip support */}
         <div
           className="relative px-4 pt-3.5 pb-2"
           onClick={() => editableRef.current?.focus()}
         >
-          {/* Placeholder (shown when input is empty) */}
           {!hasContent && (
             <div className="pointer-events-none absolute inset-0 flex items-start px-4 pt-3.5 pb-2 text-sm text-muted-foreground/50">
               {isCompacting
@@ -1458,7 +1448,6 @@ export const InputBar = memo(function InputBar({
           />
         </div>
 
-        {/* Attachment previews — click to open annotation editor */}
         {attachments.length > 0 && (
           <div className="flex flex-wrap gap-2 px-4 pb-2">
             {attachments.map((att) => (
@@ -1472,11 +1461,9 @@ export const InputBar = memo(function InputBar({
                   alt={att.fileName ?? "attachment"}
                   className="h-full w-full object-cover"
                 />
-                {/* Edit overlay icon — bottom-right, visible on hover */}
                 <div className="absolute bottom-0.5 end-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-background/90 text-muted-foreground opacity-0 shadow-sm transition-opacity group-hover/att:opacity-100">
                   <Pencil className="h-2.5 w-2.5" />
                 </div>
-                {/* Remove button — top-right, stops propagation to prevent opening editor */}
                 <button
                   onClick={(e) => { e.stopPropagation(); removeAttachment(att.id); }}
                   className="absolute -end-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-background/90 text-muted-foreground opacity-0 shadow-sm transition-opacity hover:text-foreground group-hover/att:opacity-100"
@@ -1488,7 +1475,6 @@ export const InputBar = memo(function InputBar({
           </div>
         )}
 
-        {/* Grabbed element previews (from browser inspector) */}
         {grabbedElements && grabbedElements.length > 0 && (
           <div className="flex flex-wrap gap-2 px-4 pb-2">
             {grabbedElements.map((ge) => (
@@ -1524,6 +1510,14 @@ export const InputBar = memo(function InputBar({
           </div>
         )}
 
+        {codeSnippets && codeSnippets.length > 0 && (
+          <div className="flex flex-col gap-1.5 px-4 pb-2">
+            {codeSnippets.map((snippet) => (
+              <CodeSnippetCard key={snippet.id} snippet={snippet} onRemove={() => onRemoveCodeSnippet?.(snippet.id)} />
+            ))}
+          </div>
+        )}
+
         {editingAttachment && (
           <ImageAnnotationEditor
             image={editingAttachment}
@@ -1537,7 +1531,6 @@ export const InputBar = memo(function InputBar({
         )}
 
         <div className="flex items-center gap-1 px-3 pb-2.5">
-          {/* Left controls — scrollable as a defensive fallback (should never trigger with proper MIN_CHAT_WIDTH) */}
           <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto scrollbar-none">
             <button
               onClick={() => fileInputRef.current?.click()}
@@ -1547,7 +1540,6 @@ export const InputBar = memo(function InputBar({
               <Paperclip className="h-3.5 w-3.5" />
             </button>
 
-            {/* Voice dictation button */}
             {speech.isAvailable ? (
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -1616,7 +1608,6 @@ export const InputBar = memo(function InputBar({
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start">
                   {(() => {
-                    // An agent "will open new chat" if engine differs OR same ACP engine but different agent
                     const willOpenNewChat = (agent: InstalledAgent) => {
                       if (lockedEngine == null) return false;
                       if (agent.engine !== lockedEngine) return true;
@@ -1698,7 +1689,6 @@ export const InputBar = memo(function InputBar({
             />
           </div>
 
-          {/* Right controls — always visible, never shrink */}
           <div className="flex shrink-0 items-center gap-1.5">
             {contextUsage && (() => {
               const totalInput = contextUsage.inputTokens + contextUsage.cacheReadTokens + contextUsage.cacheCreationTokens;
@@ -1779,7 +1769,7 @@ export const InputBar = memo(function InputBar({
               <Button
                 size="icon"
                 onClick={handleSend}
-                disabled={isAwaitingAcpOptions || ((!hasContent && attachments.length === 0 && (!grabbedElements || grabbedElements.length === 0)) || isSending)}
+                disabled={isAwaitingAcpOptions || ((!hasContent && attachments.length === 0 && (!grabbedElements || grabbedElements.length === 0) && (!codeSnippets || codeSnippets.length === 0)) || isSending)}
                 className="h-8 w-8 rounded-full"
               >
                 <ArrowUp className="h-4 w-4" />

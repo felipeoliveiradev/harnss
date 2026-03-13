@@ -41,7 +41,9 @@ import { QuickOpenDialog } from "./QuickOpenDialog";
 import { CodeWorkspace, type CodeOpenRequest } from "./CodeWorkspace";
 
 import type { JiraIssue } from "@shared/types/jira";
+import type { CodeSnippet } from "@/types/ui";
 import { isMac } from "@/lib/utils";
+import { getLanguageFromPath } from "@/lib/languages";
 
 const JIRA_BOARD_BY_SPACE_KEY = "harnss-jira-board-by-space";
 
@@ -90,7 +92,6 @@ export function AppLayout() {
   const isGlassActive = glassSupported && settings.transparency;
   const isLightGlass = isGlassActive && resolvedTheme !== "dark";
 
-  // ── Welcome wizard (first-run onboarding) ──
 
   const [welcomeCompleted, setWelcomeCompleted] = useState(
     () => localStorage.getItem(WELCOME_COMPLETED_KEY) === "true",
@@ -107,7 +108,6 @@ export function AppLayout() {
     setShowSettings(false);
   }, [setShowSettings]);
 
-  // ── Element Grab state (browser inspector → chat context) ──
 
   const [grabbedElements, setGrabbedElements] = useState<GrabbedElement[]>([]);
 
@@ -119,13 +119,35 @@ export function AppLayout() {
     setGrabbedElements((prev) => prev.filter((e) => e.id !== id));
   }, []);
 
-  // ── File preview overlay state ──
 
   const [previewFile, setPreviewFile] = useState<{ path: string; sourceRect: DOMRect | null } | null>(null);
   const [quickOpenVisible, setQuickOpenVisible] = useState(false);
   const [editorOpenRequest, setEditorOpenRequest] = useState<CodeOpenRequest | null>(null);
   const [forceOpenFloatingToken, setForceOpenFloatingToken] = useState(0);
   const [workspaceActiveFilePath, setWorkspaceActiveFilePath] = useState<string | null>(null);
+  const [codeSnippets0, setCodeSnippets0] = useState<CodeSnippet[]>([]);
+  const [codeSnippets1, setCodeSnippets1] = useState<CodeSnippet[]>([]);
+  const handleAddToChat = useCallback((code: string, filePath: string, lineStart: number, lineEnd: number, targetPane?: number) => {
+    const snippet: CodeSnippet = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      code,
+      filePath,
+      lineStart,
+      lineEnd,
+      language: getLanguageFromPath(filePath) ?? "text",
+    };
+    if (targetPane === 1) {
+      setCodeSnippets1((prev) => [...prev, snippet]);
+    } else {
+      setCodeSnippets0((prev) => [...prev, snippet]);
+    }
+  }, []);
+  const handleRemoveCodeSnippet0 = useCallback((id: string) => {
+    setCodeSnippets0((prev) => prev.filter((s) => s.id !== id));
+  }, []);
+  const handleRemoveCodeSnippet1 = useCallback((id: string) => {
+    setCodeSnippets1((prev) => prev.filter((s) => s.id !== id));
+  }, []);
 
   const handlePreviewFile = useCallback((filePath: string, sourceRect: DOMRect) => {
     setPreviewFile({ path: filePath, sourceRect });
@@ -181,13 +203,21 @@ export function AppLayout() {
     });
   }, []);
 
-  // Wrap handleSend to clear grabbed elements after sending
   const wrappedHandleSend = useCallback(
     (...args: Parameters<typeof handleSend>) => {
       handleSend(...args);
       setGrabbedElements([]);
+      setCodeSnippets0([]);
     },
     [handleSend],
+  );
+
+  const wrappedPane1Send = useCallback(
+    (text: string, images?: Parameters<typeof pane1.send>[1]) => {
+      void pane1.send(text, images);
+      setCodeSnippets1([]);
+    },
+    [pane1],
   );
 
   const handleSidebarNewChat = useCallback(
@@ -223,7 +253,6 @@ export function AppLayout() {
     setJiraBoardProjectForSpace(spaceId, currentProjectId === projectId ? null : projectId);
   }, [jiraBoardBySpace, projectManager.projects, setJiraBoardProjectForSpace]);
 
-  // Handler for creating task from Jira issue
   const handleCreateTaskFromJiraIssue = useCallback(
     (projectId: string, issue: JiraIssue) => {
       const taskMessage = `Please help me work on this Jira issue:
@@ -408,13 +437,11 @@ Link: ${issue.url}`;
     document.addEventListener("mouseup", onMouseUp);
   }, [resizeChatIslandRef, settings.setWorkspaceSplitRatio]);
 
-  // ── Chat scroll fade & titlebar tinting ──
 
   const chatIslandRef = useRef<HTMLDivElement>(null);
   const lastTopScrollProgressRef = useRef(0);
 
   useEffect(() => {
-    // Grabbed elements are session-specific context — discard on switch
     setGrabbedElements([]);
   }, [manager.activeSessionId]);
 
@@ -446,14 +473,12 @@ Link: ${issue.url}`;
     }
   }, [manager.isConnected, manager.fullRevert]);
 
-  // Scroll fades should soften when the space itself is more transparent.
   const spaceOpacity = spaceManager.activeSpace?.color.opacity ?? 1;
   const chatFadeStrength = Math.max(0.2, Math.min(1, spaceOpacity));
 
   const chatSurfaceColor = isLightGlass
     ? "color-mix(in oklab, white 97%, var(--background) 3%)"
     : "var(--background)";
-  // Keep titlebar veil/shadow behavior consistent across island and non-island layouts.
   const titlebarOpacity = isLightGlass
     ? Math.round(69 + 14 * spaceOpacity)
     : Math.round(23 + 35 * spaceOpacity);
@@ -478,7 +503,6 @@ Link: ${issue.url}`;
       className={`relative flex h-screen overflow-hidden bg-sidebar text-foreground${settings.islandLayout ? "" : " no-islands"}`}
       style={islandLayoutVars}
     >
-      {/* Glass tint overlay — sits behind content, tints the native transparency */}
       {glassOverlayStyle && (
         <div
           className="pointer-events-none fixed inset-0 z-0 transition-[background] duration-300"
@@ -569,19 +593,14 @@ Link: ${issue.url}`;
             onReplayWelcome={handleReplayWelcome}
           />
         )}
-        {/* Keep chat area mounted (hidden) when settings is open to avoid
-            destroying/recreating the entire ChatView DOM tree on toggle */}
         <div className={showSettings ? "hidden" : "flex min-h-0 flex-1 flex-col"}>
-        {/* ── Top row: Chat | Right Panel | Tools Column | ToolPicker ── */}
         <div className="flex min-h-0 flex-1">
-          {/* ── Chat island wrapper — single ref for resize measurement, flex-row in split mode ── */}
           <div
             ref={resizeChatIslandRef}
             className={cn("relative flex flex-1 min-w-0", splitMode || showBothWorkspace ? "flex-row" : "flex-col")}
           >
           {showChatWorkspace && (
           <>
-          {/* ── Pane 0 ── */}
           <div
             ref={chatIslandRef}
             className={cn(
@@ -607,8 +626,6 @@ Link: ${issue.url}`;
               />
             ) : manager.activeSessionId ? (
               <>
-              {/* Top fade: only visible when chat is scrolled down. Island mode uses dark shadow; flat mode fades content into bg */}
-              {/* Island: gradient starts at top-0 (behind header, subtle bleed). Flat: starts at top-10 (right below header) so full gradient is visible and strong. */}
               <div
                 className={`pointer-events-none absolute inset-x-0 top-0 z-[5] ${
                   isIsland ? "h-20" : "h-24"
@@ -716,6 +733,8 @@ Link: ${issue.url}`;
                   codexModelData={manager.codexRawModels}
                   grabbedElements={grabbedElements}
                   onRemoveGrabbedElement={handleRemoveGrabbedElement}
+                  codeSnippets={codeSnippets0}
+                  onRemoveCodeSnippet={handleRemoveCodeSnippet0}
                   lockedEngine={lockedEngine}
                   lockedAgentId={lockedAgentId}
                   isIslandLayout={isIsland}
@@ -755,7 +774,6 @@ Link: ${issue.url}`;
           </>
           )}
 
-          {/* ── Chat split divider ── */}
           {splitMode && (
             <div
               className="resize-col group flex shrink-0 cursor-col-resize items-center justify-center"
@@ -770,7 +788,6 @@ Link: ${issue.url}`;
             </div>
           )}
 
-          {/* ── Pane 1 ── */}
           {splitMode && (
             <div
               className={cn(
@@ -784,7 +801,6 @@ Link: ${issue.url}`;
               } as React.CSSProperties}
               onClick={() => handleFocusPane(1)}
             >
-              {/* Pane 1 — header */}
               <div
                 className="chat-titlebar-bg pointer-events-none absolute inset-x-0 top-0 z-10"
                 style={{ background: titlebarSurfaceColor }}
@@ -813,7 +829,6 @@ Link: ${issue.url}`;
                 />
               </div>
 
-              {/* Pane 1 — content */}
               {pane1.sessionId ? (
                 <>
                 <ChatView
@@ -845,7 +860,7 @@ Link: ${issue.url}`;
                   <BottomComposer
                     pendingPermission={pane1.pendingPermission}
                     onRespondPermission={pane1.respondPermission}
-                    onSend={(text, images) => { void pane1.send(text, images); }}
+                    onSend={wrappedPane1Send}
                     onStop={pane1.stop}
                     isProcessing={pane1.isProcessing}
                     queuedCount={0}
@@ -877,6 +892,8 @@ Link: ${issue.url}`;
                     codexModelData={undefined}
                     grabbedElements={[]}
                     onRemoveGrabbedElement={() => {}}
+                    codeSnippets={codeSnippets1}
+                    onRemoveCodeSnippet={handleRemoveCodeSnippet1}
                     lockedEngine={lockedEngine}
                     lockedAgentId={lockedAgentId}
                     isIslandLayout={isIsland}
@@ -884,7 +901,6 @@ Link: ${issue.url}`;
                 </div>
                 </>
               ) : (
-                /* Empty state — prompt user to select a session */
                 <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6" style={{ paddingTop: "3rem" }}>
                   <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-foreground/[0.03]">
                     <MessageSquare className="h-5 w-5 text-foreground/15" />
@@ -925,6 +941,8 @@ Link: ${issue.url}`;
                   onRequestQuickOpen={() => setQuickOpenVisible(true)}
                   onToggleDockedMaximize={handleToggleDockedCodeMaximize}
                   onActiveFilePathChange={handleWorkspaceActiveFilePathChange}
+                  onAddToChat={handleAddToChat}
+                  splitMode={splitMode}
                 />
               </div>
             </>
@@ -943,14 +961,15 @@ Link: ${issue.url}`;
                 onRequestQuickOpen={() => setQuickOpenVisible(true)}
                 onToggleDockedMaximize={handleToggleDockedCodeMaximize}
                 onActiveFilePathChange={handleWorkspaceActiveFilePathChange}
+                onAddToChat={handleAddToChat}
+                splitMode={splitMode}
               />
             </div>
           )}
-          </div>{/* end chat island wrapper */}
+          </div>{}
 
           {hasRightPanel && (
             <>
-            {/* Resize handle — between chat and right panel */}
             <div
               className="resize-col group flex w-2 shrink-0 cursor-col-resize items-center justify-center"
               style={isIsland ? { width: "var(--island-panel-gap)" } : undefined}
@@ -965,7 +984,6 @@ Link: ${issue.url}`;
               />
             </div>
 
-            {/* Right panel — Tasks / Agents with optional draggable vertical split */}
             <div
               ref={rightPanelRef}
               className="flex shrink-0 flex-col overflow-hidden"
@@ -1024,11 +1042,7 @@ Link: ${issue.url}`;
             </>
           )}
 
-          {/* Tools panels — always mounted when session active to preserve terminal/browser state.
-            Each tool is mounted in exactly one location (side column or bottom row) based on bottomTools.
-            Hidden (display: none) when inactive, keeping processes alive. */}
           {manager.activeSessionId && (() => {
-            // Shared tool component map — each tool rendered once
             const toolComponents: Record<string, React.ReactNode> = {
               terminal: (
                 <ToolsPanel
@@ -1081,7 +1095,6 @@ Link: ${issue.url}`;
               ),
             };
 
-            // ── Side column: tools NOT in bottomTools ──
             const sideToolIds = settings.toolOrder.filter((id) => id in toolComponents && !settings.bottomTools.has(id));
             const activeSideIds = sideToolIds.filter((id) => activeTools.has(id));
             const sideCount = activeSideIds.length;
@@ -1090,7 +1103,6 @@ Link: ${issue.url}`;
 
             return (
               <>
-              {/* Resize handle — only visible when side tools column is showing */}
               {hasToolsColumn && (
                 <div
                   className="resize-col group flex w-2 shrink-0 cursor-col-resize items-center justify-center"
@@ -1147,7 +1159,6 @@ Link: ${issue.url}`;
             );
           })()}
 
-          {/* Tool picker — always visible */}
           {manager.activeSessionId && (
             <div className={isIsland ? "ms-[var(--island-panel-gap)] shrink-0" : "shrink-0 tool-picker-shell"}>
               <ToolPicker
@@ -1170,13 +1181,9 @@ Link: ${issue.url}`;
               />
             </div>
           )}
-        </div>{/* end top row */}
+        </div>{}
 
-        {/* ── Bottom tools row — tools placed in the bottom row via right-click menu ── */}
         {manager.activeSessionId && (() => {
-          // Build tool components for bottom-placed tools only.
-          // Note: moving a tool between side↔bottom is an explicit user action,
-          // so the unmount/remount is acceptable.
           const bottomToolComponents: Record<string, React.ReactNode> = {
             terminal: (
               <ToolsPanel
@@ -1229,21 +1236,17 @@ Link: ${issue.url}`;
             ),
           };
 
-          // All bottom-placed tool IDs (in display order) — mount ALL, hide inactive
           const allBottomToolIds = settings.toolOrder.filter((id) => id in bottomToolComponents && settings.bottomTools.has(id));
           const activeBottomIds = allBottomToolIds.filter((id) => activeTools.has(id));
           const bottomCount = activeBottomIds.length;
           const bottomRatios = normalizeRatios(settings.bottomToolsSplitRatios, bottomCount);
           normalizedBottomRatiosRef.current = bottomRatios;
 
-          // Always mount the bottom row when there are bottom-placed tools,
-          // hidden when none are active — preserves terminal/browser state.
           const anyBottomPlaced = allBottomToolIds.length > 0;
           if (!anyBottomPlaced) return null;
 
           return (
             <>
-            {/* Resize handle — between top area and bottom tools row */}
             <div
               className={`resize-row group flex h-2 shrink-0 cursor-row-resize items-center justify-center ${!hasBottomTools ? "hidden" : ""}`}
               style={isIsland ? { height: "var(--island-panel-gap)" } : undefined}
@@ -1297,7 +1300,7 @@ Link: ${issue.url}`;
             </>
           );
         })()}
-        </div>{/* end showSettings wrapper */}
+        </div>{}
       </div>
       {showCodexAuthDialog && (
         <CodexAuthDialog
@@ -1317,7 +1320,6 @@ Link: ${issue.url}`;
         onOpenChange={setQuickOpenVisible}
         onOpenFile={handleQuickOpenFile}
       />
-      {/* Welcome wizard — full-screen overlay on first run */}
       {!welcomeCompleted && (
         <WelcomeWizard
           theme={settings.theme}
