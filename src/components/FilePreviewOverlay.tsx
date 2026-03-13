@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { X, File, Loader2 } from "lucide-react";
 import Editor from "@monaco-editor/react";
@@ -86,10 +86,9 @@ interface FilePreviewOverlayProps {
   onClose: () => void;
 }
 
-// ── Overlay dimensions ──
-
-const OVERLAY_WIDTH = 800;
-const OVERLAY_MAX_HEIGHT_VH = 85;
+// ── Floating preview dimensions ──
+const PREVIEW_MAX_WIDTH = 1040;
+const PREVIEW_MAX_HEIGHT_VH = 78;
 
 // ── Component ──
 
@@ -175,30 +174,6 @@ const OverlayContent = memo(function OverlayContent({
     return () => window.removeEventListener("keydown", handleKeyDown, true);
   }, [onClose]);
 
-  // Compute FLIP transform from source rect
-  const flipTransform = useMemo(() => {
-    if (!sourceRect) return null;
-
-    const viewportW = window.innerWidth;
-    const viewportH = window.innerHeight;
-    const overlayW = Math.min(OVERLAY_WIDTH, viewportW - 48);
-    const overlayH = Math.min(
-      viewportH * (OVERLAY_MAX_HEIGHT_VH / 100),
-      viewportH - 48,
-    );
-
-    // Source center offset from viewport center (overlay's final position)
-    const sourceX = sourceRect.left + sourceRect.width / 2;
-    const sourceY = sourceRect.top + sourceRect.height / 2;
-
-    return {
-      x: sourceX - viewportW / 2,
-      y: sourceY - viewportH / 2,
-      scaleX: Math.max(sourceRect.width / overlayW, 0.02),
-      scaleY: Math.max(sourceRect.height / overlayH, 0.02),
-    };
-  }, [sourceRect]);
-
   // File metadata
   const fileName = filePath.split("/").pop() ?? filePath;
   const dirPath = filePath.split("/").slice(0, -1).join("/");
@@ -207,50 +182,39 @@ const OverlayContent = memo(function OverlayContent({
   const lineCount = content ? content.split("\n").length : 0;
   const fileSize = content ? formatFileSize(new Blob([content]).size) : "";
 
-  const morphTransform = flipTransform
-    ? { x: flipTransform.x, y: flipTransform.y, scaleX: flipTransform.scaleX, scaleY: flipTransform.scaleY, opacity: 0 }
-    : { scale: 0.92, opacity: 0 };
-
-  const handleBackdropClick = useCallback(
-    (e: React.MouseEvent) => {
-      if (e.target === e.currentTarget) onClose();
-    },
-    [onClose],
-  );
+  const initialTransform = useMemo(() => {
+    if (!sourceRect) return { y: 14, scale: 0.985, opacity: 0 };
+    const viewportW = window.innerWidth;
+    const viewportH = window.innerHeight;
+    const sourceX = sourceRect.left + sourceRect.width / 2;
+    const sourceY = sourceRect.top + sourceRect.height / 2;
+    return {
+      x: (sourceX - viewportW / 2) * 0.12,
+      y: (sourceY - viewportH / 2) * 0.12,
+      scale: 0.985,
+      opacity: 0,
+    };
+  }, [sourceRect]);
 
   return (
-    <>
-      {/* Backdrop */}
+    <motion.div
+      className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center px-6 py-6"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.16 }}
+    >
       <motion.div
-        className="fixed inset-0 z-50 bg-black/40"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        transition={{ duration: 0.2 }}
-        onClick={handleBackdropClick}
-      />
-
-      {/* Morphing overlay card */}
-      <motion.div
-        className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none"
-        onClick={handleBackdropClick}
+        className="pointer-events-auto flex h-[78vh] w-full max-w-[1040px] flex-col overflow-hidden rounded-2xl border border-foreground/12 bg-background/97 shadow-[0_30px_80px_-30px_rgba(0,0,0,0.45)] backdrop-blur-md"
+        style={{
+          width: Math.min(PREVIEW_MAX_WIDTH, window.innerWidth - 120),
+          maxHeight: `${PREVIEW_MAX_HEIGHT_VH}vh`,
+        }}
+        initial={initialTransform}
+        animate={{ x: 0, y: 0, scale: 1, opacity: 1 }}
+        exit={{ y: 8, scale: 0.99, opacity: 0 }}
+        transition={{ type: "spring", damping: 28, stiffness: 300, mass: 0.72 }}
       >
-        <motion.div
-          className="pointer-events-auto flex flex-col overflow-hidden rounded-xl border border-foreground/10 bg-background shadow-2xl"
-          style={{
-            width: Math.min(OVERLAY_WIDTH, window.innerWidth - 48),
-            height: `${OVERLAY_MAX_HEIGHT_VH}vh`,
-          }}
-          initial={morphTransform}
-          animate={{ x: 0, y: 0, scaleX: 1, scaleY: 1, scale: 1, opacity: 1 }}
-          exit={morphTransform}
-          transition={{
-            type: "spring",
-            damping: 32,
-            stiffness: 380,
-            mass: 0.8,
-          }}
-        >
           {/* Header */}
           <div className="flex items-center gap-2 border-b border-foreground/[0.08] px-4 py-2.5">
             <File className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
@@ -283,7 +247,7 @@ const OverlayContent = memo(function OverlayContent({
           </div>
 
           {/* Editor content */}
-          <div className="relative flex-1 overflow-hidden" style={{ minHeight: 300 }}>
+          <div className="relative flex-1 overflow-hidden" style={{ minHeight: 360 }}>
             {loading && (
               <div className="flex h-full items-center justify-center">
                 <Loader2 className="h-5 w-5 animate-spin text-muted-foreground/40" />
@@ -341,8 +305,7 @@ const OverlayContent = memo(function OverlayContent({
               <span className="text-[11px] text-muted-foreground/50">{fileSize}</span>
             </div>
           )}
-        </motion.div>
       </motion.div>
-    </>
+    </motion.div>
   );
 });

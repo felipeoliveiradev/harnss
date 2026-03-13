@@ -174,6 +174,12 @@ declare global {
             | { path: string; error: string; content?: undefined; isDir?: undefined }
           >
         >;
+        createFile: (cwd: string, path: string, content?: string) => Promise<{ ok?: boolean; error?: string }>;
+        createDirectory: (cwd: string, path: string) => Promise<{ ok?: boolean; error?: string }>;
+        writeFile: (cwd: string, path: string, content: string) => Promise<{ ok?: boolean; error?: string }>;
+        rename: (cwd: string, fromPath: string, toPath: string) => Promise<{ ok?: boolean; error?: string }>;
+        copy: (cwd: string, fromPath: string, toPath: string) => Promise<{ ok?: boolean; error?: string }>;
+        delete: (cwd: string, path: string) => Promise<{ ok?: boolean; error?: string }>;
         onChanged: (callback: (data: { cwd: string }) => void) => () => void;
       };
       git: {

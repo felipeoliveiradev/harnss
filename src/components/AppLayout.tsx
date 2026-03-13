@@ -38,6 +38,7 @@ import { FilePreviewOverlay } from "./FilePreviewOverlay";
 import { SettingsView } from "./SettingsView";
 import { CodexAuthDialog } from "./CodexAuthDialog";
 import { JiraBoardPanel } from "./JiraBoardPanel";
+import { QuickOpenDialog } from "./QuickOpenDialog";
 import type { JiraIssue } from "@shared/types/jira";
 import { isMac } from "@/lib/utils";
 
@@ -119,7 +120,8 @@ export function AppLayout() {
 
   // ── File preview overlay state ──
 
-  const [previewFile, setPreviewFile] = useState<{ path: string; sourceRect: DOMRect } | null>(null);
+  const [previewFile, setPreviewFile] = useState<{ path: string; sourceRect: DOMRect | null } | null>(null);
+  const [quickOpenVisible, setQuickOpenVisible] = useState(false);
 
   const handlePreviewFile = useCallback((filePath: string, sourceRect: DOMRect) => {
     setPreviewFile({ path: filePath, sourceRect });
@@ -127,6 +129,14 @@ export function AppLayout() {
 
   const handleClosePreview = useCallback(() => {
     setPreviewFile(null);
+  }, []);
+
+  const handleQuickOpenFile = useCallback((filePath: string, line?: number) => {
+    if (line) {
+      void window.claude.openInEditor(filePath, line);
+      return;
+    }
+    setPreviewFile({ path: filePath, sourceRect: null });
   }, []);
 
   const [jiraBoardBySpace, setJiraBoardBySpace] = useState<Record<string, string>>(() => readJiraBoardBySpace());
@@ -266,6 +276,19 @@ Link: ${issue.url}`;
       return {};
     });
   }, [jiraBoardEnabled]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const key = e.key.toLowerCase();
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && key === "p") {
+        if (!activeProjectPath) return;
+        e.preventDefault();
+        setQuickOpenVisible((prev) => !prev);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [activeProjectPath]);
 
   const isIsland = settings.islandLayout;
   const minChatWidth = getMinChatWidth(isIsland);
@@ -1142,6 +1165,12 @@ Link: ${issue.url}`;
         filePath={previewFile?.path ?? null}
         sourceRect={previewFile?.sourceRect ?? null}
         onClose={handleClosePreview}
+      />
+      <QuickOpenDialog
+        open={quickOpenVisible}
+        cwd={activeProjectPath}
+        onOpenChange={setQuickOpenVisible}
+        onOpenFile={handleQuickOpenFile}
       />
       {/* Welcome wizard — full-screen overlay on first run */}
       {!welcomeCompleted && (
