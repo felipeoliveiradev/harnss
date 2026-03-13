@@ -202,6 +202,7 @@ declare global {
         fetch: (cwd: string) => Promise<{ ok?: boolean; output?: string; error?: string }>;
         diffFile: (cwd: string, file: string, staged: boolean) => Promise<{ diff?: string; error?: string }>;
         diffStat: (cwd: string) => Promise<{ additions: number; deletions: number }>;
+        showFileAtHead: (cwd: string, file: string) => Promise<{ content?: string; error?: string }>;
         log: (cwd: string, count?: number) => Promise<GitLogEntry[] | { error: string }>;
         generateCommitMessage: (
           cwd: string,

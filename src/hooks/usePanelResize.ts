@@ -180,7 +180,7 @@ export function usePanelResize({
   const normalizedToolRatiosRef = useRef<number[]>([]);
 
   // Count of active SIDE tools (exclude bottom-placed tools)
-  const columnToolIds = ["terminal", "git", "browser", "files", "project-files", "mcp"];
+  const columnToolIds = ["terminal", "git", "browser", "project-files", "mcp"];
   const activeToolCount = useMemo(
     () => settings.toolOrder.filter((id) =>
       settings.activeTools.has(id) && columnToolIds.includes(id) && !settings.bottomTools.has(id),

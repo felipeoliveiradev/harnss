@@ -299,6 +299,22 @@ html.glass-enabled #root {
   inset: -2px 0;
 }
 
+/* Monaco editor change hooks (VSCode-like modified line markers) */
+.monaco-editor .code-workspace-changed-line {
+  background-color: color-mix(in oklab, #22c55e 13%, transparent);
+}
+
+.dark .monaco-editor .code-workspace-changed-line {
+  background-color: color-mix(in oklab, #22c55e 22%, transparent);
+}
+
+.monaco-editor .code-workspace-changed-glyph {
+  background: #22c55e;
+  width: 4px !important;
+  margin-left: 2px;
+  border-radius: 999px;
+}
+
 /* ── Flat layout: edge-to-edge sections with simple 1px borders ── */
 .no-islands .island {
   border-radius: 0;

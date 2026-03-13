@@ -158,6 +158,7 @@ contextBridge.exposeInMainWorld("claude", {
     fetch: (cwd: string) => ipcRenderer.invoke("git:fetch", cwd),
     diffFile: (cwd: string, file: string, staged: boolean) => ipcRenderer.invoke("git:diff-file", { cwd, file, staged }),
     diffStat: (cwd: string) => ipcRenderer.invoke("git:diff-stat", cwd) as Promise<{ additions: number; deletions: number }>,
+    showFileAtHead: (cwd: string, file: string) => ipcRenderer.invoke("git:show-file-at-head", { cwd, file }),
     log: (cwd: string, count?: number) => ipcRenderer.invoke("git:log", { cwd, count }),
     generateCommitMessage: (cwd: string, engine?: string, sessionId?: string) =>
       ipcRenderer.invoke("git:generate-commit-message", { cwd, engine, sessionId }),
