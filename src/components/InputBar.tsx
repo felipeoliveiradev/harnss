@@ -1296,6 +1296,43 @@ export const InputBar = memo(function InputBar({
       e.preventDefault();
       e.stopPropagation();
       setIsDragging(false);
+
+      const droppedPath = e.dataTransfer?.getData("application/x-harnss-path");
+      if (droppedPath) {
+        const isDir = e.dataTransfer.getData("application/x-harnss-is-dir") === "true";
+        const el = editableRef.current;
+        if (el) {
+          el.focus();
+          const chip = document.createElement("span");
+          chip.contentEditable = "false";
+          chip.className =
+            "mention-chip inline-flex items-center gap-1 rounded-md bg-accent/60 px-1.5 py-0.5 text-xs text-accent-foreground font-mono align-baseline cursor-default select-none";
+          chip.setAttribute("data-mention-path", droppedPath);
+          chip.setAttribute("data-mention-dir", String(isDir));
+          chip.innerHTML = `${isDir ? FOLDER_ICON_SVG : FILE_ICON_SVG}<span>${droppedPath}</span>`;
+
+          const sel = window.getSelection();
+          if (sel && sel.rangeCount) {
+            const range = sel.getRangeAt(0);
+            range.collapse(false);
+            range.insertNode(chip);
+            const space = document.createTextNode(" ");
+            chip.after(space);
+            range.setStartAfter(space);
+            range.collapse(true);
+            sel.removeAllRanges();
+            sel.addRange(range);
+          } else {
+            el.appendChild(chip);
+            el.appendChild(document.createTextNode(" "));
+          }
+
+          hasContentRef.current = true;
+          setHasContent(true);
+        }
+        return;
+      }
+
       if (e.dataTransfer?.files) {
         addImageFiles(e.dataTransfer.files);
       }

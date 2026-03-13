@@ -863,7 +863,7 @@ export const CodeWorkspace = memo(function CodeWorkspace({
 
   const renderTabRow = useCallback(() => (
     <div>
-      <div className="flex items-center gap-1 overflow-x-auto border-b border-foreground/[0.08] bg-background/70 px-2 py-1.5">
+      {tabs.length > 0 && <div className="flex items-center gap-1 overflow-x-auto border-b border-foreground/[0.08] bg-background/70 px-2 py-1.5">
         {tabs.map((tab) => {
           const isActive = tab.id === activeTabId;
           const dirty = tab.content !== tab.savedContent;
@@ -903,7 +903,7 @@ export const CodeWorkspace = memo(function CodeWorkspace({
             </button>
           );
         })}
-      </div>
+      </div>}
       {breadcrumbs.length > 0 && (
         <div className="flex items-center gap-1 border-b border-foreground/[0.04] px-3 py-1 text-[10px] text-muted-foreground/70">
           {breadcrumbs.map((segment, i) => (
