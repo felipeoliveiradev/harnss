@@ -361,6 +361,23 @@ export function register(): void {
       const args = ["worktree", "add", "-b", branch, resolvedPath];
       if (fromRef?.trim()) args.push(fromRef.trim());
       const output = await gitExec(args, cwd);
+
+      // Auto-add .harnss/ to .gitignore if the worktree is inside .harnss/worktrees/
+      if (resolvedPath.includes("/.harnss/")) {
+        try {
+          const gitignorePath = path.join(cwd, ".gitignore");
+          const existing = fs.existsSync(gitignorePath) ? fs.readFileSync(gitignorePath, "utf-8") : "";
+          if (!existing.includes(".harnss/") && !existing.includes(".harnss")) {
+            const newContent = existing
+              ? (existing.endsWith("\n") ? `${existing}.harnss/\n` : `${existing}\n.harnss/\n`)
+              : ".harnss/\n";
+            fs.writeFileSync(gitignorePath, newContent, "utf-8");
+          }
+        } catch {
+          // Non-critical — don't fail worktree creation over .gitignore
+        }
+      }
+
       return { ok: true, path: resolvedPath, output };
     } catch (err) {
       return { error: reportError("GIT_CREATE_WORKTREE_ERR", err) };

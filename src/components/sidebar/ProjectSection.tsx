@@ -99,6 +99,8 @@ export function ProjectSection({
   onReorderProject,
   defaultChatLimit,
   agents,
+  pane0SessionId,
+  pane1SessionId,
 }: {
   islandLayout: boolean;
   project: Project;
@@ -120,6 +122,10 @@ export function ProjectSection({
   onReorderProject: (targetProjectId: string) => void;
   defaultChatLimit: number;
   agents?: InstalledAgent[];
+  /** Session ID currently open in pane 0 (primary) */
+  pane0SessionId?: string | null;
+  /** Session ID currently open in pane 1 (secondary) */
+  pane1SessionId?: string | null;
 }) {
   const [expanded, setExpanded] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
@@ -380,6 +386,11 @@ export function ProjectSection({
                     islandLayout={islandLayout}
                     session={session}
                     isActive={session.id === activeSessionId}
+                    openInPane={
+                      session.id === pane0SessionId ? 0
+                      : session.id === pane1SessionId ? 1
+                      : null
+                    }
                     onSelect={() => onSelectSession(session.id)}
                     onDelete={() => onDeleteSession(session.id)}
                     onRename={(title) => onRenameSession(session.id, title)}

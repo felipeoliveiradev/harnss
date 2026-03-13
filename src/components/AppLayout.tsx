@@ -1,5 +1,6 @@
 import { useCallback, useRef, useEffect, useLayoutEffect, useState } from "react";
-import { PanelLeft } from "lucide-react";
+import { PanelLeft, MessageSquare } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { normalizeRatios } from "@/hooks/useSettings";
 import { useAppOrchestrator } from "@/hooks/useAppOrchestrator";
@@ -76,6 +77,7 @@ export function AppLayout() {
     handleCreateSpace, handleEditSpace,
     handleDeleteSpace, handleSaveSpace, handleMoveProjectToSpace,
     handleSeedDevExampleSpaceData,
+    pane1, activePaneIndex, handleFocusPane, handleToggleSplit,
   } = o;
 
   const glassOverlayStyle = useSpaceTheme(
@@ -287,11 +289,15 @@ Link: ${issue.url}`;
     activeProjectId,
   });
   const {
-    isResizing, contentRef, rightPanelRef, toolsColumnRef, bottomToolsRowRef,
+    isResizing, contentRef, chatIslandRef: resizeChatIslandRef, rightPanelRef, toolsColumnRef, bottomToolsRowRef,
     normalizedToolRatiosRef, normalizedBottomRatiosRef,
     handleResizeStart, handleToolsResizeStart, handleToolsSplitStart, handleRightSplitStart,
-    handleBottomResizeStart, handleBottomSplitStart,
+    handleBottomResizeStart, handleBottomSplitStart, handleChatSplitStart,
   } = resize;
+  const splitMode = settings.splitMode;
+  const sidebarActiveSessionId = splitMode
+    ? (activePaneIndex === 1 ? pane1.sessionId : manager.activeSessionId)
+    : manager.activeSessionId;
 
   // ── Chat scroll fade & titlebar tinting ──
 
@@ -381,7 +387,7 @@ Link: ${issue.url}`;
         islandLayout={settings.islandLayout}
         projects={projectManager.projects}
         sessions={manager.sessions}
-        activeSessionId={manager.activeSessionId}
+        activeSessionId={sidebarActiveSessionId}
         jiraBoardProjectId={jiraBoardProjectId}
         jiraBoardEnabled={jiraBoardEnabled}
         onNewChat={handleSidebarNewChat}
@@ -406,6 +412,8 @@ Link: ${issue.url}`;
         onDeleteSpace={handleDeleteSpace}
         onOpenSettings={() => setShowSettings(true)}
         agents={agents}
+        pane0SessionId={splitMode ? manager.activeSessionId : null}
+        pane1SessionId={splitMode ? pane1.sessionId : null}
       />
 
       <div ref={contentRef} className={`flex min-w-0 flex-1 flex-col ${settings.islandLayout ? "m-[var(--island-gap)]" : sidebar.isOpen ? "flat-divider-s" : ""} ${isResizing ? "select-none" : ""}`}>
@@ -442,10 +450,24 @@ Link: ${issue.url}`;
         <div className={showSettings ? "hidden" : "flex min-h-0 flex-1 flex-col"}>
         {/* ── Top row: Chat | Right Panel | Tools Column | ToolPicker ── */}
         <div className="flex min-h-0 flex-1">
+          {/* ── Chat island wrapper — single ref for resize measurement, flex-row in split mode ── */}
+          <div
+            ref={resizeChatIslandRef}
+            className={cn("flex flex-1 min-w-0", splitMode ? "flex-row" : "flex-col")}
+          >
+          {/* ── Pane 0 ── */}
           <div
             ref={chatIslandRef}
-            className="chat-island island relative flex flex-1 flex-col overflow-hidden rounded-[var(--island-radius)] bg-background"
-            style={{ minWidth: minChatWidth, "--chat-fade-strength": String(chatFadeStrength) } as React.CSSProperties}
+            className={cn(
+              "chat-island island relative flex flex-col overflow-hidden rounded-[var(--island-radius)] bg-background",
+              splitMode && activePaneIndex === 0 && "ring-1 ring-ring/30",
+            )}
+            style={{
+              flex: splitMode ? settings.chatSplitRatio : 1,
+              minWidth: splitMode ? 0 : minChatWidth,
+              "--chat-fade-strength": String(chatFadeStrength),
+            } as React.CSSProperties}
+            onClick={splitMode ? () => handleFocusPane(0) : undefined}
           >
             {jiraBoardProject ? (
               <JiraBoardPanel
@@ -490,6 +512,11 @@ Link: ${issue.url}`;
                   showDevFill={devFillEnabled}
                   onSeedDevExampleConversation={manager.seedDevExampleConversation}
                   onSeedDevExampleSpaceData={handleSeedDevExampleSpaceData}
+                  splitMode={splitMode}
+                  paneIndex={0}
+                  isActivePane={activePaneIndex === 0}
+                  onActivatePane={() => handleFocusPane(0)}
+                  onToggleSplit={handleToggleSplit}
                 />
               </div>
               {chatSearchOpen && (
@@ -599,6 +626,149 @@ Link: ${issue.url}`;
               </>
             )}
           </div>
+
+          {/* ── Chat split divider ── */}
+          {splitMode && (
+            <div
+              className="resize-col group flex shrink-0 cursor-col-resize items-center justify-center"
+              style={isIsland ? { width: "var(--island-panel-gap)" } : { width: "8px" }}
+              onMouseDown={handleChatSplitStart}
+            >
+              <div
+                className={`h-10 w-0.5 rounded-full transition-colors duration-150 ${
+                  isResizing ? "bg-foreground/40" : "bg-transparent group-hover:bg-foreground/25"
+                }`}
+              />
+            </div>
+          )}
+
+          {/* ── Pane 1 ── */}
+          {splitMode && (
+            <div
+              className={cn(
+                "chat-island island relative flex flex-col overflow-hidden rounded-[var(--island-radius)] bg-background",
+                activePaneIndex === 1 && "ring-1 ring-ring/30",
+              )}
+              style={{
+                flex: 1 - settings.chatSplitRatio,
+                minWidth: 0,
+                "--chat-fade-strength": String(chatFadeStrength),
+              } as React.CSSProperties}
+              onClick={() => handleFocusPane(1)}
+            >
+              {/* Pane 1 — header */}
+              <div
+                className="chat-titlebar-bg pointer-events-none absolute inset-x-0 top-0 z-10"
+                style={{ background: titlebarSurfaceColor }}
+              >
+                <ChatHeader
+                  islandLayout={isIsland}
+                  sidebarOpen={true}
+                  isProcessing={pane1.isProcessing}
+                  model={settings.model}
+                  sessionId={pane1.sessionId ?? undefined}
+                  totalCost={0}
+                  title={pane1.session?.title}
+                  titleGenerating={pane1.session?.titleGenerating}
+                  planMode={settings.planMode}
+                  permissionMode={settings.permissionMode}
+                  acpPermissionBehavior={pane1.session?.engine === "acp" ? settings.acpPermissionBehavior : undefined}
+                  onToggleSidebar={sidebar.toggle}
+                  showDevFill={devFillEnabled}
+                  onSeedDevExampleConversation={manager.seedDevExampleConversation}
+                  onSeedDevExampleSpaceData={handleSeedDevExampleSpaceData}
+                  splitMode={splitMode}
+                  paneIndex={1}
+                  isActivePane={activePaneIndex === 1}
+                  onActivatePane={() => handleFocusPane(1)}
+                  onToggleSplit={handleToggleSplit}
+                />
+              </div>
+
+              {/* Pane 1 — content */}
+              {pane1.sessionId ? (
+                <>
+                <ChatView
+                  messages={pane1.messages}
+                  isProcessing={pane1.isProcessing}
+                  showThinking={showThinking}
+                  autoGroupTools={settings.autoGroupTools}
+                  avoidGroupingEdits={settings.avoidGroupingEdits}
+                  autoExpandTools={settings.autoExpandTools}
+                  extraBottomPadding={!!pane1.pendingPermission}
+                  scrollToMessageId={undefined}
+                  onScrolledToMessage={() => {}}
+                  sessionId={pane1.sessionId}
+                  onRevert={undefined}
+                  onFullRevert={undefined}
+                  onTopScrollProgress={() => {}}
+                  onSendQueuedNow={() => {}}
+                  onUnqueueQueuedMessage={() => {}}
+                  sendNextId={undefined}
+                  agents={agents}
+                  selectedAgent={selectedAgent}
+                  onAgentChange={handleAgentChange}
+                />
+                <div
+                  className={`pointer-events-none absolute inset-x-0 bottom-0 z-[5] transition-opacity duration-200 ${isIsland ? "h-24" : "h-28"}`}
+                  style={{ opacity: chatFadeStrength, background: bottomFadeBackground }}
+                />
+                <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10">
+                  <BottomComposer
+                    pendingPermission={pane1.pendingPermission}
+                    onRespondPermission={pane1.respondPermission}
+                    onSend={(text, images) => { void pane1.send(text, images); }}
+                    onStop={pane1.stop}
+                    isProcessing={pane1.isProcessing}
+                    queuedCount={0}
+                    model={settings.model}
+                    claudeEffort={settings.claudeEffort}
+                    planMode={settings.planMode}
+                    permissionMode={settings.permissionMode}
+                    onModelChange={handleModelChange}
+                    onClaudeModelEffortChange={handleClaudeModelEffortChange}
+                    onPlanModeChange={handlePlanModeChange}
+                    onPermissionModeChange={handlePermissionModeChange}
+                    projectPath={settings.pane1GitCwd ?? activeProjectPath}
+                    contextUsage={undefined}
+                    isCompacting={false}
+                    onCompact={undefined}
+                    agents={agents}
+                    selectedAgent={selectedAgent}
+                    onAgentChange={handleAgentChange}
+                    slashCommands={[]}
+                    acpConfigOptions={[]}
+                    acpConfigOptionsLoading={false}
+                    onACPConfigChange={() => {}}
+                    acpPermissionBehavior={settings.acpPermissionBehavior}
+                    onAcpPermissionBehaviorChange={settings.setAcpPermissionBehavior}
+                    supportedModels={manager.supportedModels}
+                    codexModelsLoadingMessage={undefined}
+                    codexEffort={undefined}
+                    onCodexEffortChange={() => {}}
+                    codexModelData={undefined}
+                    grabbedElements={[]}
+                    onRemoveGrabbedElement={() => {}}
+                    lockedEngine={lockedEngine}
+                    lockedAgentId={lockedAgentId}
+                    isIslandLayout={isIsland}
+                  />
+                </div>
+                </>
+              ) : (
+                /* Empty state — prompt user to select a session */
+                <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6" style={{ paddingTop: "3rem" }}>
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-foreground/[0.03]">
+                    <MessageSquare className="h-5 w-5 text-foreground/15" />
+                  </div>
+                  <p className="text-center text-[11px] leading-relaxed text-muted-foreground/45">
+                    Selecione uma sessão na barra lateral<br />para abrir neste painel
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+          </div>{/* end chat island wrapper */}
 
           {hasRightPanel && (
             <>

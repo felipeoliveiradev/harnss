@@ -16,6 +16,11 @@ const MAX_PANEL_WIDTH = 500;
 const MIN_TOOLS_WIDTH = MIN_TOOLS_PANEL_WIDTH;
 const MAX_TOOLS_WIDTH = 800;
 
+// Min width per pane in split-chat mode
+const MIN_PANE_WIDTH = 320;
+const MIN_CHAT_SPLIT = 0.2;
+const MAX_CHAT_SPLIT = 0.8;
+
 interface UsePanelResizeOptions {
   settings: Settings;
   isIsland: boolean;
@@ -319,6 +324,45 @@ export function usePanelResize({
     [settings],
   );
 
+  // ── Chat pane horizontal split (split-chat mode, left/right ratio) ──
+
+  const chatIslandRef = useRef<HTMLDivElement>(null);
+  const chatSplitRatioRef = useRef(settings.chatSplitRatio);
+  chatSplitRatioRef.current = settings.chatSplitRatio;
+
+  const handleChatSplitStart = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      setIsResizing(true);
+      const startX = e.clientX;
+      const startRatio = chatSplitRatioRef.current;
+      const islandEl = chatIslandRef.current;
+      if (!islandEl) return;
+      const islandWidth = islandEl.getBoundingClientRect().width;
+
+      const onMouseMove = (ev: MouseEvent) => {
+        const delta = ev.clientX - startX;
+        const rawRatio = startRatio + delta / islandWidth;
+        // Also enforce minimum pixel width for each pane
+        const minRatio = Math.max(MIN_CHAT_SPLIT, MIN_PANE_WIDTH / islandWidth);
+        const maxRatio = Math.min(MAX_CHAT_SPLIT, 1 - MIN_PANE_WIDTH / islandWidth);
+        const next = Math.max(minRatio, Math.min(maxRatio, rawRatio));
+        settings.setChatSplitRatio(next);
+      };
+
+      const onMouseUp = () => {
+        setIsResizing(false);
+        document.removeEventListener("mousemove", onMouseMove);
+        document.removeEventListener("mouseup", onMouseUp);
+        settings.saveChatSplitRatio();
+      };
+
+      document.addEventListener("mousemove", onMouseMove);
+      document.addEventListener("mouseup", onMouseUp);
+    },
+    [settings],
+  );
+
   // ── Right panel vertical split (Tasks / Agents) ──
 
   const handleRightSplitStart = useCallback(
@@ -353,6 +397,7 @@ export function usePanelResize({
   return {
     isResizing,
     contentRef,
+    chatIslandRef,
     rightPanelRef,
     toolsColumnRef,
     bottomToolsRowRef,
@@ -364,6 +409,7 @@ export function usePanelResize({
     handleRightSplitStart,
     handleBottomResizeStart,
     handleBottomSplitStart,
+    handleChatSplitStart,
     // Expose constants for JSX layout
     MIN_CHAT_WIDTH: minChatWidth,
     MIN_PANEL_WIDTH,

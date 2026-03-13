@@ -40,6 +40,10 @@ interface AppSidebarProps {
   onDeleteSpace: (id: string) => void;
   onOpenSettings: () => void;
   agents?: InstalledAgent[];
+  /** Session ID open in pane 0 (primary) — for split chat badges */
+  pane0SessionId?: string | null;
+  /** Session ID open in pane 1 (secondary) — for split chat badges */
+  pane1SessionId?: string | null;
 }
 
 export const AppSidebar = memo(function AppSidebar({
@@ -72,6 +76,8 @@ export const AppSidebar = memo(function AppSidebar({
   onDeleteSpace,
   onOpenSettings,
   agents,
+  pane0SessionId,
+  pane1SessionId,
 }: AppSidebarProps) {
   // Load default chat limit from main-process settings
   const [defaultChatLimit, setDefaultChatLimit] = useState(10);
@@ -251,6 +257,8 @@ export const AppSidebar = memo(function AppSidebar({
                   }
                   defaultChatLimit={defaultChatLimit}
                   agents={agents}
+                  pane0SessionId={pane0SessionId}
+                  pane1SessionId={pane1SessionId}
                 />
               );
             })}
