@@ -126,6 +126,12 @@ contextBridge.exposeInMainWorld("claude", {
     watch: (cwd: string) => ipcRenderer.invoke("files:watch", cwd),
     unwatch: (cwd: string) => ipcRenderer.invoke("files:unwatch", cwd),
     readMultiple: (cwd: string, paths: string[]) => ipcRenderer.invoke("files:read-multiple", { cwd, paths }),
+    createFile: (cwd: string, path: string, content?: string) => ipcRenderer.invoke("files:create-file", { cwd, path, content }),
+    createDirectory: (cwd: string, path: string) => ipcRenderer.invoke("files:create-directory", { cwd, path }),
+    writeFile: (cwd: string, path: string, content: string) => ipcRenderer.invoke("files:write-file", { cwd, path, content }),
+    rename: (cwd: string, fromPath: string, toPath: string) => ipcRenderer.invoke("files:rename", { cwd, fromPath, toPath }),
+    copy: (cwd: string, fromPath: string, toPath: string) => ipcRenderer.invoke("files:copy", { cwd, fromPath, toPath }),
+    delete: (cwd: string, path: string) => ipcRenderer.invoke("files:delete", { cwd, path }),
     onChanged: (callback: (data: unknown) => void) => {
       const listener = (_event: IpcRendererEvent, data: unknown) => callback(data);
       ipcRenderer.on("files:changed", listener);

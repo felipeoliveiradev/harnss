@@ -1,28 +1,56 @@
 import { memo, useCallback, useMemo, useRef, useState } from "react";
 import {
-  FolderTree,
+  ClipboardPaste,
+  Copy,
+  CopyPlus,
+  CornerLeftDown,
+  Plus,
+  FileCog,
   ChevronRight,
   File,
+  FilePlus2,
   Folder,
   FolderOpen,
+  FolderPlus,
+  FolderTree,
+  Pencil,
   RefreshCw,
   Search,
+  SquarePen,
+  Trash2,
 } from "lucide-react";
+import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { PanelHeader } from "@/components/PanelHeader";
 import { OpenInEditorButton } from "./OpenInEditorButton";
 import { useProjectFiles } from "@/hooks/useProjectFiles";
 import {
+  collectDirPaths,
+  countFiles,
   filterTree,
   flattenTree,
-  countFiles,
-  collectDirPaths,
   type FileTreeNode,
 } from "@/lib/file-tree";
-
-// ── File icon by extension ──
+import { reportError } from "@/lib/analytics";
 
 const EXTENSION_ICON_COLORS: Record<string, string> = {
   ts: "text-blue-400",
@@ -49,15 +77,53 @@ function getFileIconColor(extension?: string): string {
   return EXTENSION_ICON_COLORS[extension] ?? "text-muted-foreground/70";
 }
 
-// ── Props ──
+function getParentDir(path: string): string {
+  const idx = path.lastIndexOf("/");
+  if (idx < 0) return "";
+  return path.slice(0, idx);
+}
+
+function joinRelativePath(baseDir: string, name: string): string {
+  const trimmedBase = baseDir.trim().replace(/\/$/, "");
+  const trimmedName = name.trim().replace(/^\//, "");
+  if (!trimmedName) return trimmedBase;
+  return trimmedBase ? `${trimmedBase}/${trimmedName}` : trimmedName;
+}
+
+function getBaseName(path: string): string {
+  const idx = path.lastIndexOf("/");
+  return idx < 0 ? path : path.slice(idx + 1);
+}
+
+function stripExtension(name: string): { stem: string; ext: string } {
+  const dot = name.lastIndexOf(".");
+  if (dot <= 0) return { stem: name, ext: "" };
+  return { stem: name.slice(0, dot), ext: name.slice(dot) };
+}
+
+function isPathInside(path: string, parentDir: string): boolean {
+  return path === parentDir || path.startsWith(`${parentDir}/`);
+}
+
+function collectNodeMap(nodes: FileTreeNode[]): Map<string, FileTreeNode> {
+  const map = new Map<string, FileTreeNode>();
+  const walk = (items: FileTreeNode[]) => {
+    for (const node of items) {
+      map.set(node.path, node);
+      if (node.type === "directory" && node.children) {
+        walk(node.children);
+      }
+    }
+  };
+  walk(nodes);
+  return map;
+}
 
 interface ProjectFilesPanelProps {
   cwd?: string;
   enabled: boolean;
   onPreviewFile?: (filePath: string, sourceRect: DOMRect) => void;
 }
-
-// ── Component ──
 
 export const ProjectFilesPanel = memo(function ProjectFilesPanel({
   cwd,
@@ -69,59 +135,341 @@ export const ProjectFilesPanel = memo(function ProjectFilesPanel({
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(() => new Set());
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
+  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [pathDialog, setPathDialog] = useState<{
+    open: boolean;
+    mode: "new-file" | "new-folder" | "rename";
+    title: string;
+    description: string;
+    value: string;
+    confirmLabel: string;
+    sourcePath?: string;
+  }>({
+    open: false,
+    mode: "new-file",
+    title: "",
+    description: "",
+    value: "",
+    confirmLabel: "",
+  });
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [editingFilePath, setEditingFilePath] = useState<string | null>(null);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [editorLoading, setEditorLoading] = useState(false);
+  const [editorSaving, setEditorSaving] = useState(false);
+  const [editorContent, setEditorContent] = useState("");
+  const [clipboardItem, setClipboardItem] = useState<{ path: string; mode: "copy" | "cut" } | null>(null);
+  const [draggingPath, setDraggingPath] = useState<string | null>(null);
+  const [dragOverDir, setDragOverDir] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const containerRef = useRef<HTMLDivElement>(null);
 
-  // Debounce search input
-  const handleSearchChange = useCallback((value: string) => {
-    setSearchQuery(value);
-    clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => setDebouncedQuery(value), 200);
-  }, []);
-
-  // Filter tree by search query
   const filteredTree = useMemo(() => {
     if (!tree) return null;
     if (!debouncedQuery.trim()) return tree;
     return filterTree(tree, debouncedQuery);
   }, [tree, debouncedQuery]);
 
-  // When searching, auto-expand all matching directories
   const effectiveExpanded = useMemo(() => {
     if (!filteredTree || !debouncedQuery.trim()) return expandedDirs;
     return collectDirPaths(filteredTree);
   }, [filteredTree, debouncedQuery, expandedDirs]);
 
-  // Flatten for rendering
   const flatItems = useMemo(() => {
     if (!filteredTree) return [];
     return flattenTree(filteredTree, effectiveExpanded);
   }, [filteredTree, effectiveExpanded]);
 
   const totalFiles = useMemo(() => (tree ? countFiles(tree) : 0), [tree]);
+  const nodeByPath = useMemo(() => (tree ? collectNodeMap(tree) : new Map<string, FileTreeNode>()), [tree]);
+  const selectedNode = selectedPath ? nodeByPath.get(selectedPath) ?? null : null;
 
-  // Toggle directory expanded state
+  const handleSearchChange = useCallback((value: string) => {
+    setSearchQuery(value);
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => setDebouncedQuery(value), 200);
+  }, []);
+
   const toggleDir = useCallback((path: string) => {
     setExpandedDirs((prev) => {
       const next = new Set(prev);
-      if (next.has(path)) {
-        next.delete(path);
-      } else {
-        next.add(path);
-      }
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
       return next;
     });
   }, []);
 
-  // Handle file row click
-  const handleFileClick = useCallback(
-    (node: FileTreeNode, event: React.MouseEvent<HTMLDivElement>) => {
-      if (!cwd || !onPreviewFile) return;
-      const rect = event.currentTarget.getBoundingClientRect();
-      const absolutePath = `${cwd}/${node.path}`;
-      onPreviewFile(absolutePath, rect);
-    },
-    [cwd, onPreviewFile],
-  );
+  const runPathAction = useCallback(async () => {
+    if (!cwd) return;
+    const value = pathDialog.value.trim();
+    if (!value) return;
+
+    if (pathDialog.mode === "new-file") {
+      const result = await window.claude.files.createFile(cwd, value, "");
+      if (result.error) {
+        toast.error("Failed to create file", { description: result.error });
+        return;
+      }
+      toast.success("File created");
+      setPathDialog((prev) => ({ ...prev, open: false }));
+      setSelectedPath(value);
+      refresh();
+      return;
+    }
+
+    if (pathDialog.mode === "new-folder") {
+      const result = await window.claude.files.createDirectory(cwd, value);
+      if (result.error) {
+        toast.error("Failed to create folder", { description: result.error });
+        return;
+      }
+      toast.success("Folder created");
+      setPathDialog((prev) => ({ ...prev, open: false }));
+      setExpandedDirs((prev) => {
+        const next = new Set(prev);
+        next.add(value);
+        return next;
+      });
+      setSelectedPath(value);
+      refresh();
+      return;
+    }
+
+    if (pathDialog.mode === "rename" && pathDialog.sourcePath) {
+      const result = await window.claude.files.rename(cwd, pathDialog.sourcePath, value);
+      if (result.error) {
+        toast.error("Failed to rename/move", { description: result.error });
+        return;
+      }
+      toast.success("Path updated");
+      setPathDialog((prev) => ({ ...prev, open: false }));
+      setSelectedPath(value);
+      refresh();
+    }
+  }, [cwd, pathDialog, refresh]);
+
+  const openCreateDialog = useCallback((mode: "new-file" | "new-folder", baseDir: string) => {
+    const defaultName = mode === "new-file" ? "new-file.txt" : "new-folder";
+    const initialPath = joinRelativePath(baseDir, defaultName);
+    setPathDialog({
+      open: true,
+      mode,
+      title: mode === "new-file" ? "Create File" : "Create Folder",
+      description: "Enter a relative path in the project.",
+      value: initialPath,
+      confirmLabel: mode === "new-file" ? "Create File" : "Create Folder",
+    });
+  }, []);
+
+  const openRenameDialog = useCallback((node: FileTreeNode) => {
+    setPathDialog({
+      open: true,
+      mode: "rename",
+      title: "Rename or Move",
+      description: "Change the relative path.",
+      value: node.path,
+      confirmLabel: "Save",
+      sourcePath: node.path,
+    });
+  }, []);
+
+  const openEditor = useCallback(async (node: FileTreeNode) => {
+    if (!cwd || node.type !== "file") return;
+    const absolutePath = `${cwd}/${node.path}`;
+    setEditingFilePath(node.path);
+    setEditorOpen(true);
+    setEditorLoading(true);
+    setEditorContent("");
+
+    try {
+      const result = await window.claude.readFile(absolutePath);
+      if (result.error) {
+        toast.error("Failed to open file", { description: result.error });
+        setEditorOpen(false);
+        return;
+      }
+      setEditorContent(result.content ?? "");
+    } catch (err) {
+      const message = reportError("PROJECT_FILES_OPEN_EDITOR_ERR", err, { path: node.path });
+      toast.error("Failed to open file", { description: message });
+      setEditorOpen(false);
+    } finally {
+      setEditorLoading(false);
+    }
+  }, [cwd]);
+
+  const saveEditor = useCallback(async () => {
+    if (!cwd || !editingFilePath) return;
+    setEditorSaving(true);
+    try {
+      const result = await window.claude.files.writeFile(cwd, editingFilePath, editorContent);
+      if (result.error) {
+        toast.error("Failed to save file", { description: result.error });
+        return;
+      }
+      toast.success("File saved");
+      setEditorOpen(false);
+      refresh();
+    } catch (err) {
+      const message = reportError("PROJECT_FILES_SAVE_EDITOR_ERR", err, { path: editingFilePath });
+      toast.error("Failed to save file", { description: message });
+    } finally {
+      setEditorSaving(false);
+    }
+  }, [cwd, editingFilePath, editorContent, refresh]);
+
+  const deletePath = useCallback(async () => {
+    if (!cwd || !deleteTarget) return;
+    const result = await window.claude.files.delete(cwd, deleteTarget);
+    if (result.error) {
+      toast.error("Failed to delete path", { description: result.error });
+      return;
+    }
+    toast.success("Removed");
+    if (selectedPath === deleteTarget) setSelectedPath(null);
+    setDeleteTarget(null);
+    refresh();
+  }, [cwd, deleteTarget, refresh, selectedPath]);
+
+  const renamePath = useCallback(async (fromPath: string, toPath: string) => {
+    if (!cwd) return false;
+    const result = await window.claude.files.rename(cwd, fromPath, toPath);
+    if (result.error) {
+      toast.error("Failed to move path", { description: result.error });
+      return false;
+    }
+    setSelectedPath(toPath);
+    refresh();
+    return true;
+  }, [cwd, refresh]);
+
+  const copyPath = useCallback(async (fromPath: string, toPath: string) => {
+    if (!cwd) return false;
+    const result = await window.claude.files.copy(cwd, fromPath, toPath);
+    if (result.error) {
+      toast.error("Failed to copy path", { description: result.error });
+      return false;
+    }
+    setSelectedPath(toPath);
+    refresh();
+    return true;
+  }, [cwd, refresh]);
+
+  const buildDuplicatePath = useCallback((sourcePath: string) => {
+    const parentDir = getParentDir(sourcePath);
+    const base = getBaseName(sourcePath);
+    const sourceNode = nodeByPath.get(sourcePath);
+    const existing = new Set(nodeByPath.keys());
+
+    const mkName = (i: number): string => {
+      if (sourceNode?.type === "directory") {
+        return i === 0 ? `${base} copy` : `${base} copy ${i + 1}`;
+      }
+      const { stem, ext } = stripExtension(base);
+      const name = i === 0 ? `${stem} copy${ext}` : `${stem} copy ${i + 1}${ext}`;
+      return name;
+    };
+
+    for (let i = 0; i < 500; i++) {
+      const candidate = joinRelativePath(parentDir, mkName(i));
+      if (!existing.has(candidate)) return candidate;
+    }
+    return joinRelativePath(parentDir, `${base}-copy-${Date.now()}`);
+  }, [nodeByPath]);
+
+  const handleDuplicate = useCallback(async (sourcePath: string) => {
+    const targetPath = buildDuplicatePath(sourcePath);
+    const ok = await copyPath(sourcePath, targetPath);
+    if (ok) {
+      toast.success("Path duplicated");
+    }
+  }, [buildDuplicatePath, copyPath]);
+
+  const handlePasteInto = useCallback(async (targetDir: string) => {
+    if (!clipboardItem) return;
+    const sourceNode = nodeByPath.get(clipboardItem.path);
+    if (!sourceNode) {
+      toast.error("Source item no longer exists");
+      setClipboardItem(null);
+      return;
+    }
+
+    if (clipboardItem.mode === "cut" && isPathInside(targetDir, clipboardItem.path)) {
+      toast.error("Cannot move a folder into itself");
+      return;
+    }
+
+    const targetPath = joinRelativePath(targetDir, getBaseName(clipboardItem.path));
+    if (clipboardItem.mode === "cut") {
+      const ok = await renamePath(clipboardItem.path, targetPath);
+      if (ok) {
+        toast.success("Path moved");
+        setClipboardItem(null);
+      }
+      return;
+    }
+    const ok = await copyPath(clipboardItem.path, targetPath);
+    if (ok) {
+      toast.success("Path pasted");
+    }
+  }, [clipboardItem, copyPath, nodeByPath, renamePath]);
+
+  const handleKeyboard = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!selectedNode) return;
+    const key = e.key;
+    const mod = e.metaKey || e.ctrlKey;
+
+    if (key === "F2") {
+      e.preventDefault();
+      openRenameDialog(selectedNode);
+      return;
+    }
+    if (key === "Delete" || key === "Backspace") {
+      e.preventDefault();
+      setDeleteTarget(selectedNode.path);
+      return;
+    }
+    if (key === "Enter") {
+      e.preventDefault();
+      if (selectedNode.type === "directory") {
+        toggleDir(selectedNode.path);
+      } else {
+        void openEditor(selectedNode);
+      }
+      return;
+    }
+    if (mod && key.toLowerCase() === "c") {
+      e.preventDefault();
+      setClipboardItem({ path: selectedNode.path, mode: "copy" });
+      return;
+    }
+    if (mod && key.toLowerCase() === "x") {
+      e.preventDefault();
+      setClipboardItem({ path: selectedNode.path, mode: "cut" });
+      return;
+    }
+    if (mod && key.toLowerCase() === "v") {
+      e.preventDefault();
+      const targetDir = selectedNode.type === "directory" ? selectedNode.path : getParentDir(selectedNode.path);
+      void handlePasteInto(targetDir);
+    }
+  }, [handlePasteInto, openEditor, openRenameDialog, selectedNode, toggleDir]);
+
+  const getDefaultBaseDir = useCallback((): string => {
+    if (!selectedNode) return "";
+    if (selectedNode.type === "directory") return selectedNode.path;
+    return getParentDir(selectedNode.path);
+  }, [selectedNode]);
+
+  const handleRowClick = useCallback((node: FileTreeNode) => {
+    setSelectedPath(node.path);
+  }, []);
+
+  const handleRowOpenFile = useCallback((node: FileTreeNode, event: React.MouseEvent<HTMLDivElement>) => {
+    if (!cwd || node.type !== "file" || !onPreviewFile) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    onPreviewFile(`${cwd}/${node.path}`, rect);
+  }, [cwd, onPreviewFile]);
 
   if (!cwd) {
     return (
@@ -135,7 +483,13 @@ export const ProjectFilesPanel = memo(function ProjectFilesPanel({
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div
+      ref={containerRef}
+      className="flex h-full flex-col outline-none"
+      tabIndex={0}
+      onKeyDown={handleKeyboard}
+      onMouseDown={() => containerRef.current?.focus()}
+    >
       <PanelHeader icon={FolderTree} label="Project Files" iconClass="text-teal-600/70 dark:text-teal-200/50">
         {totalFiles > 0 && (
           <Badge variant="secondary" className="h-5 rounded-full px-2 text-[10px] font-semibold tabular-nums">
@@ -147,10 +501,7 @@ export const ProjectFilesPanel = memo(function ProjectFilesPanel({
             <button
               type="button"
               onClick={refresh}
-              className="inline-flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-md
-                text-muted-foreground/50 transition-all duration-150
-                hover:text-muted-foreground hover:bg-foreground/[0.06]
-                active:scale-90"
+              className="inline-flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground/50 transition-all duration-150 hover:bg-foreground/[0.06] hover:text-muted-foreground active:scale-90"
             >
               <RefreshCw className={`h-3 w-3 ${loading ? "animate-spin" : ""}`} />
             </button>
@@ -161,7 +512,6 @@ export const ProjectFilesPanel = memo(function ProjectFilesPanel({
         </Tooltip>
       </PanelHeader>
 
-      {/* Search bar */}
       <div className="flex items-center gap-1.5 border-b border-foreground/[0.08] px-3 py-1.5">
         <Search className="h-3 w-3 shrink-0 text-muted-foreground/50" />
         <input
@@ -173,8 +523,33 @@ export const ProjectFilesPanel = memo(function ProjectFilesPanel({
         />
       </div>
 
-      {/* Tree content */}
-      <ScrollArea className="flex-1 min-h-0">
+      <div className="flex items-center border-b border-foreground/[0.08] px-2 py-1.5">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="sm" className="h-6 px-2 text-[11px]">
+              <Plus className="me-1 h-3.5 w-3.5" />
+              Create
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent side="bottom" align="start">
+            <DropdownMenuItem onClick={() => openCreateDialog("new-file", getDefaultBaseDir())}>
+              <FilePlus2 className="me-2 h-3.5 w-3.5" />
+              New File
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => openCreateDialog("new-folder", getDefaultBaseDir())}>
+              <FolderPlus className="me-2 h-3.5 w-3.5" />
+              New Folder
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+      {clipboardItem && (
+        <div className="border-b border-foreground/[0.08] px-2 py-1 text-[10px] text-muted-foreground/70">
+          {clipboardItem.mode === "cut" ? "Cut" : "Copy"}: <span className="font-mono">{clipboardItem.path}</span>
+        </div>
+      )}
+
+      <ScrollArea className="min-h-0 flex-1">
         {loading && !tree && (
           <div className="flex items-center justify-center p-8">
             <RefreshCw className="h-4 w-4 animate-spin text-muted-foreground/50" />
@@ -200,86 +575,377 @@ export const ProjectFilesPanel = memo(function ProjectFilesPanel({
             <FileTreeRow
               key={item.node.path}
               node={item.node}
+              cwd={cwd}
               depth={item.depth}
               isExpanded={item.isExpanded}
-              cwd={cwd}
+              isSelected={selectedPath === item.node.path}
+              onClick={handleRowClick}
+              onOpenFile={handleRowOpenFile}
               onToggleDir={toggleDir}
-              onFileClick={handleFileClick}
+              onCreateFile={() => openCreateDialog("new-file", item.node.type === "directory" ? item.node.path : getParentDir(item.node.path))}
+              onCreateFolder={() => openCreateDialog("new-folder", item.node.type === "directory" ? item.node.path : getParentDir(item.node.path))}
+              onEdit={openEditor}
+              onRename={openRenameDialog}
+              onDuplicate={handleDuplicate}
+              onCopy={(path) => setClipboardItem({ path, mode: "copy" })}
+              onCut={(path) => setClipboardItem({ path, mode: "cut" })}
+              onPaste={(targetDir) => void handlePasteInto(targetDir)}
+              onDelete={(path) => setDeleteTarget(path)}
+              draggingPath={draggingPath}
+              dragOverDir={dragOverDir}
+              onDragStart={(path) => setDraggingPath(path)}
+              onDragEnd={() => {
+                setDraggingPath(null);
+                setDragOverDir(null);
+              }}
+              onDragOverDir={(path) => setDragOverDir(path)}
+              onDropToDir={(targetDir) => {
+                if (!draggingPath || draggingPath === targetDir) return;
+                if (isPathInside(targetDir, draggingPath)) {
+                  toast.error("Cannot move a folder into itself");
+                  return;
+                }
+                const targetPath = joinRelativePath(targetDir, getBaseName(draggingPath));
+                void renamePath(draggingPath, targetPath).then((ok) => {
+                  if (ok) toast.success("Path moved");
+                });
+              }}
             />
           ))}
         </div>
       </ScrollArea>
+
+      <Dialog open={pathDialog.open} onOpenChange={(open) => setPathDialog((prev) => ({ ...prev, open }))}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{pathDialog.title}</DialogTitle>
+            <DialogDescription>{pathDialog.description}</DialogDescription>
+          </DialogHeader>
+          <Input
+            value={pathDialog.value}
+            onChange={(e) => setPathDialog((prev) => ({ ...prev, value: e.target.value }))}
+            placeholder="relative/path"
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void runPathAction();
+              }
+            }}
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPathDialog((prev) => ({ ...prev, open: false }))}>
+              Cancel
+            </Button>
+            <Button onClick={() => void runPathAction()}>{pathDialog.confirmLabel}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={editorOpen} onOpenChange={setEditorOpen}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>Edit File</DialogTitle>
+            <DialogDescription>{editingFilePath ?? ""}</DialogDescription>
+          </DialogHeader>
+          {editorLoading ? (
+            <div className="flex h-72 items-center justify-center">
+              <RefreshCw className="h-4 w-4 animate-spin text-muted-foreground/50" />
+            </div>
+          ) : (
+            <textarea
+              value={editorContent}
+              onChange={(e) => setEditorContent(e.target.value)}
+              className="h-72 w-full resize-y rounded-md border border-foreground/[0.12] bg-background p-3 font-mono text-xs outline-none focus:border-primary/50"
+            />
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditorOpen(false)}>Cancel</Button>
+            <Button onClick={() => void saveEditor()} disabled={editorLoading || editorSaving}>
+              {editorSaving ? "Saving..." : "Save"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <ConfirmDialog
+        open={deleteTarget != null}
+        onOpenChange={(open) => {
+          if (!open) setDeleteTarget(null);
+        }}
+        onConfirm={() => void deletePath()}
+        title="Delete path"
+        description={
+          <p className="text-sm text-muted-foreground">
+            This will permanently delete <span className="font-mono text-foreground">{deleteTarget ?? ""}</span>.
+          </p>
+        }
+        confirmLabel="Delete"
+        confirmVariant="destructive"
+      />
     </div>
   );
 });
-
-// ── FileTreeRow ──
 
 interface FileTreeRowProps {
   node: FileTreeNode;
   depth: number;
   isExpanded: boolean;
+  isSelected: boolean;
   cwd: string;
+  onClick: (node: FileTreeNode) => void;
+  onOpenFile: (node: FileTreeNode, event: React.MouseEvent<HTMLDivElement>) => void;
   onToggleDir: (path: string) => void;
-  onFileClick: (node: FileTreeNode, event: React.MouseEvent<HTMLDivElement>) => void;
+  onCreateFile: () => void;
+  onCreateFolder: () => void;
+  onEdit: (node: FileTreeNode) => void;
+  onRename: (node: FileTreeNode) => void;
+  onDuplicate: (path: string) => void;
+  onCopy: (path: string) => void;
+  onCut: (path: string) => void;
+  onPaste: (targetDir: string) => void;
+  onDelete: (path: string) => void;
+  draggingPath: string | null;
+  dragOverDir: string | null;
+  onDragStart: (path: string) => void;
+  onDragEnd: () => void;
+  onDragOverDir: (path: string | null) => void;
+  onDropToDir: (path: string) => void;
 }
 
 const FileTreeRow = memo(function FileTreeRow({
   node,
   depth,
   isExpanded,
+  isSelected,
   cwd,
+  onClick,
+  onOpenFile,
   onToggleDir,
-  onFileClick,
+  onCreateFile,
+  onCreateFolder,
+  onEdit,
+  onRename,
+  onDuplicate,
+  onCopy,
+  onCut,
+  onPaste,
+  onDelete,
+  draggingPath,
+  dragOverDir,
+  onDragStart,
+  onDragEnd,
+  onDragOverDir,
+  onDropToDir,
 }: FileTreeRowProps) {
   const isDir = node.type === "directory";
-
+  const isDropTarget = isDir && dragOverDir === node.path;
+  const isDragging = draggingPath === node.path;
   const handleClick = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
-      if (isDir) {
-        onToggleDir(node.path);
-      } else {
-        onFileClick(node, e);
-      }
+      onClick(node);
+      if (isDir) onToggleDir(node.path);
+      else if (e.detail >= 2) onOpenFile(node, e);
     },
-    [isDir, node, onToggleDir, onFileClick],
+    [isDir, node, onClick, onOpenFile, onToggleDir],
   );
 
   return (
-    <div
-      onClick={handleClick}
-      className="group flex min-h-7 cursor-pointer items-center gap-2 pe-1.5 py-1 transition-colors duration-75 hover:bg-foreground/[0.05]"
-      style={{ paddingInlineStart: depth * 14 + 8 }}
-    >
-      {/* Chevron for directories */}
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <div
+          onClick={handleClick}
+          draggable
+          onDragStart={() => onDragStart(node.path)}
+          onDragEnd={onDragEnd}
+          onDragOver={(e) => {
+            if (!isDir) return;
+            if (draggingPath == null || draggingPath === node.path) return;
+            e.preventDefault();
+            onDragOverDir(node.path);
+          }}
+          onDragLeave={() => {
+            if (isDir && isDropTarget) onDragOverDir(null);
+          }}
+          onDrop={(e) => {
+            if (!isDir) return;
+            e.preventDefault();
+            onDragOverDir(null);
+            onDropToDir(node.path);
+          }}
+          className={`group flex min-h-7 items-center gap-2 pe-1.5 py-1 transition-colors duration-75 ${
+            isSelected ? "bg-foreground/[0.08]" : "hover:bg-foreground/[0.05]"
+          } ${isDropTarget ? "ring-1 ring-primary/45" : ""} ${isDragging ? "opacity-60" : ""} cursor-pointer`}
+          style={{ paddingInlineStart: depth * 14 + 8 }}
+        >
       {isDir ? (
         <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
           <ChevronRight
-            className={`h-3 w-3 text-muted-foreground/50 transition-transform duration-150 ${
-              isExpanded ? "rotate-90" : ""
-            }`}
+            className={`h-3 w-3 text-muted-foreground/50 transition-transform duration-150 ${isExpanded ? "rotate-90" : ""}`}
           />
         </span>
       ) : (
         <span className="h-3.5 w-3.5 shrink-0" />
       )}
 
-      {/* Icon */}
       <span className="flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded-sm bg-foreground/[0.03] transition-colors duration-150 group-hover:bg-foreground/[0.06]">
         {isDir && isExpanded && <FolderOpen className="h-3.25 w-3.25 text-amber-400/80" />}
         {isDir && !isExpanded && <Folder className="h-3.25 w-3.25 text-amber-400/80" />}
         {!isDir && <File className={`h-3.25 w-3.25 ${getFileIconColor(node.extension)}`} />}
       </span>
 
-      {/* Name */}
       <span className="min-w-0 flex-1 truncate text-xs text-foreground/80">{node.name}</span>
 
-      {/* Reserve the same trailing space for both row types so folders and files align. */}
-      <span className="ms-auto flex h-4.5 w-4.5 shrink-0 items-center justify-center">
-        {!isDir && (
-          <OpenInEditorButton filePath={`${cwd}/${node.path}`} />
+          <div className="ms-auto flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+        {isDir && (
+          <>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onCreateFile();
+              }}
+              className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 hover:bg-foreground/[0.08] hover:text-foreground/80"
+            >
+              <FilePlus2 className="h-3 w-3" />
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onCreateFolder();
+              }}
+              className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 hover:bg-foreground/[0.08] hover:text-foreground/80"
+            >
+              <FolderPlus className="h-3 w-3" />
+            </button>
+          </>
         )}
-      </span>
-    </div>
+        {!isDir && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onEdit(node);
+            }}
+            className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 hover:bg-foreground/[0.08] hover:text-foreground/80"
+          >
+            <Pencil className="h-3 w-3" />
+          </button>
+        )}
+            <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onRename(node);
+          }}
+          className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 hover:bg-foreground/[0.08] hover:text-foreground/80"
+        >
+          <SquarePen className="h-3 w-3" />
+        </button>
+            <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDuplicate(node.path);
+          }}
+          className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 hover:bg-foreground/[0.08] hover:text-foreground/80"
+        >
+          <CopyPlus className="h-3 w-3" />
+        </button>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onCopy(node.path);
+          }}
+          className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 hover:bg-foreground/[0.08] hover:text-foreground/80"
+        >
+          <Copy className="h-3 w-3" />
+        </button>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onCut(node.path);
+          }}
+          className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 hover:bg-foreground/[0.08] hover:text-foreground/80"
+        >
+          <CornerLeftDown className="h-3 w-3" />
+        </button>
+        {isDir && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onPaste(node.path);
+            }}
+            className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 hover:bg-foreground/[0.08] hover:text-foreground/80"
+          >
+            <ClipboardPaste className="h-3 w-3" />
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete(node.path);
+          }}
+          className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 hover:bg-destructive/20 hover:text-destructive"
+        >
+          <Trash2 className="h-3 w-3" />
+        </button>
+            {!isDir && <OpenInEditorButton filePath={`${cwd}/${node.path}`} />}
+          </div>
+        </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        {isDir && (
+          <>
+            <ContextMenuItem onClick={onCreateFile}>
+              <FilePlus2 className="me-2 h-3.5 w-3.5" />
+              New File
+            </ContextMenuItem>
+            <ContextMenuItem onClick={onCreateFolder}>
+              <FolderPlus className="me-2 h-3.5 w-3.5" />
+              New Folder
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+          </>
+        )}
+        {!isDir && (
+          <ContextMenuItem onClick={() => onEdit(node)}>
+            <FileCog className="me-2 h-3.5 w-3.5" />
+            Open/Edit
+          </ContextMenuItem>
+        )}
+        <ContextMenuItem onClick={() => onRename(node)}>
+          <SquarePen className="me-2 h-3.5 w-3.5" />
+          Rename
+        </ContextMenuItem>
+        <ContextMenuItem onClick={() => onDuplicate(node.path)}>
+          <CopyPlus className="me-2 h-3.5 w-3.5" />
+          Duplicate
+        </ContextMenuItem>
+        <ContextMenuItem onClick={() => onCopy(node.path)}>
+          <Copy className="me-2 h-3.5 w-3.5" />
+          Copy
+        </ContextMenuItem>
+        <ContextMenuItem onClick={() => onCut(node.path)}>
+          <CornerLeftDown className="me-2 h-3.5 w-3.5" />
+          Cut
+        </ContextMenuItem>
+        {isDir && (
+          <ContextMenuItem onClick={() => onPaste(node.path)}>
+            <ClipboardPaste className="me-2 h-3.5 w-3.5" />
+            Paste
+          </ContextMenuItem>
+        )}
+        <ContextMenuSeparator />
+        <ContextMenuItem onClick={() => onDelete(node.path)} variant="destructive">
+          <Trash2 className="me-2 h-3.5 w-3.5" />
+          Delete
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   );
 });
