@@ -39,6 +39,8 @@ interface CodeWorkspaceProps {
   onRequestQuickOpen: () => void;
   onToggleDockedMaximize: () => void;
   onActiveFilePathChange?: (filePath: string | null) => void;
+  onAddToChat?: (code: string, filePath: string, lineStart: number, lineEnd: number, targetPane?: number) => void;
+  splitMode?: boolean;
 }
 
 type FloatingRect = {
@@ -278,6 +280,8 @@ export const CodeWorkspace = memo(function CodeWorkspace({
   onRequestQuickOpen,
   onToggleDockedMaximize,
   onActiveFilePathChange,
+  onAddToChat,
+  splitMode,
 }: CodeWorkspaceProps) {
   type MonacoEditorInstance = Parameters<OnMount>[0];
   type MonacoInstance = Parameters<OnMount>[1];
@@ -290,6 +294,7 @@ export const CodeWorkspace = memo(function CodeWorkspace({
   const [showLineHooks, setShowLineHooks] = useState(true);
   const [wordWrap, setWordWrap] = useState(false);
   const [cursorPosition, setCursorPosition] = useState<{ line: number; column: number } | null>(null);
+  const [addToChatDropdown, setAddToChatDropdown] = useState<{ x: number; y: number; code: string; filePath: string; lineStart: number; lineEnd: number } | null>(null);
   const [floatingRect, setFloatingRect] = useState<FloatingRect>(DEFAULT_FLOATING_RECT);
   const rootRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<MonacoEditorInstance | null>(null);
@@ -298,6 +303,14 @@ export const CodeWorkspace = memo(function CodeWorkspace({
   const diffChangeDisposeRef = useRef<{ dispose: () => void } | null>(null);
   const pendingLineRef = useRef<number | null>(null);
   const openingPathsRef = useRef(new Set<string>());
+  const tabsRef = useRef(tabs);
+  tabsRef.current = tabs;
+  const activeTabIdRef = useRef(activeTabId);
+  activeTabIdRef.current = activeTabId;
+  const onAddToChatRef = useRef(onAddToChat);
+  onAddToChatRef.current = onAddToChat;
+  const splitModeRef = useRef(splitMode);
+  splitModeRef.current = splitMode;
 
   const activeTab = useMemo(
     () => tabs.find((tab) => tab.id === activeTabId) ?? null,
@@ -523,6 +536,64 @@ export const CodeWorkspace = memo(function CodeWorkspace({
     monacoRef.current = monacoInstance;
     editorInstance.onDidChangeCursorPosition((e: { position: { lineNumber: number; column: number } }) => {
       setCursorPosition({ line: e.position.lineNumber, column: e.position.column });
+    });
+
+    editorInstance.addAction({
+      id: "add-to-chat",
+      label: "Add Selection to Chat",
+      keybindings: [monacoInstance.KeyMod.CtrlCmd | monacoInstance.KeyMod.Shift | monacoInstance.KeyCode.KeyL],
+      contextMenuGroupId: "9_cutcopypaste",
+      contextMenuOrder: 5,
+      run: (ed: typeof editorInstance) => {
+        const selection = ed.getSelection();
+        if (!selection || selection.isEmpty()) return;
+        const selectedText = ed.getModel()?.getValueInRange(selection) ?? "";
+        const tab = tabsRef.current.find((t) => t.id === activeTabIdRef.current);
+        if (!tab || !onAddToChatRef.current) return;
+        if (splitModeRef.current) {
+          const pos = ed.getScrolledVisiblePosition(selection.getEndPosition());
+          const domNode = ed.getDomNode();
+          const rect = domNode?.getBoundingClientRect();
+          const x = (rect?.left ?? 0) + (pos?.left ?? 0);
+          const y = (rect?.top ?? 0) + (pos?.top ?? 0) + (pos?.height ?? 0);
+          setAddToChatDropdown({ x, y, code: selectedText, filePath: tab.relativePath, lineStart: selection.startLineNumber, lineEnd: selection.endLineNumber });
+        } else {
+          onAddToChatRef.current(selectedText, tab.relativePath, selection.startLineNumber, selection.endLineNumber);
+        }
+      },
+    });
+
+    editorInstance.addAction({
+      id: "format-document",
+      label: "Format Document",
+      keybindings: [monacoInstance.KeyMod.CtrlCmd | monacoInstance.KeyMod.Shift | monacoInstance.KeyCode.KeyF],
+      contextMenuGroupId: "1_modification",
+      contextMenuOrder: 3,
+      run: (ed: typeof editorInstance) => {
+        ed.getAction("editor.action.formatDocument")?.run();
+      },
+    });
+
+    editorInstance.addAction({
+      id: "go-to-definition",
+      label: "Go to Definition",
+      keybindings: [monacoInstance.KeyCode.F12],
+      contextMenuGroupId: "navigation",
+      contextMenuOrder: 1,
+      run: (ed: typeof editorInstance) => {
+        ed.getAction("editor.action.revealDefinition")?.run();
+      },
+    });
+
+    editorInstance.addAction({
+      id: "peek-definition",
+      label: "Peek Definition",
+      keybindings: [monacoInstance.KeyMod.Alt | monacoInstance.KeyCode.F12],
+      contextMenuGroupId: "navigation",
+      contextMenuOrder: 2,
+      run: (ed: typeof editorInstance) => {
+        ed.getAction("editor.action.peekDefinition")?.run();
+      },
     });
   }, []);
 
@@ -982,6 +1053,34 @@ export const CodeWorkspace = memo(function CodeWorkspace({
           {statusText}
         </div>
       </div>
+
+      {addToChatDropdown && (
+        <div
+          className="fixed z-50"
+          style={{ left: addToChatDropdown.x, top: addToChatDropdown.y }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <div
+            className="flex flex-col overflow-hidden rounded-lg border border-foreground/15 bg-background shadow-lg"
+            onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setAddToChatDropdown(null); }}
+          >
+            {[0, 1].map((pane) => (
+              <button
+                key={pane}
+                type="button"
+                autoFocus={pane === 0}
+                className="px-3 py-1.5 text-start text-xs text-foreground/85 hover:bg-foreground/[0.08] focus:bg-foreground/[0.08] focus:outline-none"
+                onClick={() => {
+                  onAddToChat?.(addToChatDropdown.code, addToChatDropdown.filePath, addToChatDropdown.lineStart, addToChatDropdown.lineEnd, pane);
+                  setAddToChatDropdown(null);
+                }}
+              >
+                Chat {pane + 1}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {floatingOpen && (
         <div className="pointer-events-none absolute inset-0 z-20">

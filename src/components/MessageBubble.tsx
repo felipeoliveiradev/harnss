@@ -19,15 +19,9 @@ import { ThinkingBlock } from "./ThinkingBlock";
 import { CopyButton } from "./CopyButton";
 import { ImageLightbox } from "./ImageLightbox";
 
-// Stable references to avoid re-creating on every render
 const REMARK_PLUGINS = [remarkGfm];
 import type { Components } from "react-markdown";
 
-/**
- * Context to distinguish fenced code blocks (inside <pre>) from inline `code`.
- * react-markdown v10 removed the `inline` prop from the code component —
- * this Context replaces it by having the `pre` component signal block context.
- */
 const IsBlockCodeContext = createContext(false);
 
 function parseFileHref(href: string): { filePath: string; line?: number } | null {
@@ -41,7 +35,6 @@ function parseFileHref(href: string): { filePath: string; line?: number } | null
     const line = hashLine ? Number(hashLine) : undefined;
     return { filePath, line };
   } catch {
-    // Not an absolute URL; continue with path-like fallback.
   }
 
   if (
@@ -85,7 +78,6 @@ const MD_COMPONENTS: Components = {
     );
   },
   code: CodeBlock,
-  // Strip the <pre> wrapper but signal block context to CodeBlock
   pre({ children }) {
     return (
       <IsBlockCodeContext.Provider value={true}>
@@ -103,10 +95,8 @@ const SYNTAX_STYLE: React.CSSProperties = {
   padding: "12px",
 };
 
-/** Override oneDark's background on the inner <code> element */
 const CODE_TAG_PROPS = { style: { background: "transparent", textShadow: "none" } };
 
-/** Strip `<file path="...">...</file>` and `<folder path="...">...</folder>` context blocks from user messages */
 function stripFileContext(text: string): string {
   let result = text.replace(/<file path="[^"]*">[\s\S]*?<\/file>\s*/g, "");
   result = result.replace(/<folder path="[^"]*">[\s\S]*?<\/folder>\s*/g, "");
@@ -114,9 +104,7 @@ function stripFileContext(text: string): string {
   return result.trim();
 }
 
-/** Render @path references and grabbed-element markers as styled inline badges */
 function renderWithMentions(text: string): ReactNode[] {
-  // Match @path/to/file, @path/to/dir/, or [[element:...]]
   const parts = text.split(/(@[\w./_-]+\/?|\[\[element:[^\]]+\]\])/g);
   return parts.map((part, i) => {
     const browserMatch = /^\[\[element:(.+)\]\]$/.exec(part);
@@ -156,15 +144,10 @@ interface MessageBubbleProps {
   message: UIMessage;
   showThinking?: boolean;
   isContinuation?: boolean;
-  /** True when this queued message is the prioritized "send next" item */
   isSendNextQueued?: boolean;
-  /** Called when user clicks "Revert files only" — restores files to state before this message */
   onRevert?: (checkpointId: string) => void;
-  /** Called when user clicks "Revert files + chat" — restores files AND truncates conversation */
   onFullRevert?: (checkpointId: string) => void;
-  /** Called when user clicks "Send next" on a queued user message */
   onSendQueuedNow?: (messageId: string) => void;
-  /** Called when user removes a queued user message before it is sent */
   onUnqueueQueued?: (messageId: string) => void;
 }
 
@@ -178,15 +161,11 @@ export const MessageBubble = memo(function MessageBubble({
   onSendQueuedNow,
   onUnqueueQueued,
 }: MessageBubbleProps) {
-  // All hooks must be called before any early returns (Rules of Hooks)
   const isUser = message.role === "user";
   const [viewingImage, setViewingImage] = useState<ImageAttachment | null>(null);
   const time = useMemo(() => new Date(message.timestamp).toLocaleTimeString(), [message.timestamp]);
   const displayContent = useMemo(() => isUser ? (message.displayContent ?? stripFileContext(message.content)) : message.content, [isUser, message.content, message.displayContent]);
 
-  // Per-token fade-in animation via DOM surgery in useLayoutEffect.
-  // Always renders ReactMarkdown (real-time markdown parsing) — the hook
-  // splits trailing text nodes into [old | animated-new] before each paint.
   const proseRef = useStreamingTextReveal(
     message.role === "assistant" ? message.isStreaming : undefined,
     message.role === "assistant" ? message.content : "",
@@ -238,6 +217,34 @@ export const MessageBubble = memo(function MessageBubble({
                   open={!!viewingImage}
                   onOpenChange={(isOpen) => { if (!isOpen) setViewingImage(null); }}
                 />
+                {message.codeSnippets && message.codeSnippets.length > 0 && (
+                  <div className="mb-2 flex flex-col gap-1.5">
+                    {message.codeSnippets.map((snippet) => {
+                      const fileName = snippet.filePath.split("/").pop() ?? snippet.filePath;
+                      const range = snippet.lineStart === snippet.lineEnd ? `L${snippet.lineStart}` : `L${snippet.lineStart}-${snippet.lineEnd}`;
+                      return (
+                        <div key={snippet.id} className="overflow-hidden rounded-lg border border-foreground/10 bg-foreground/[0.03]">
+                          <div className="flex items-center gap-2 px-2.5 py-1.5">
+                            <File className="h-3.5 w-3.5 shrink-0 text-foreground/45" />
+                            <span className="text-[11px] font-medium text-foreground/80">{fileName}</span>
+                            <span className="text-[10px] font-mono text-foreground/40">{range}</span>
+                          </div>
+                          <div className="max-h-48 overflow-auto border-t border-foreground/[0.06] text-xs">
+                            <SyntaxHighlighter
+                              language={snippet.language}
+                              style={oneDark}
+                              customStyle={{ margin: 0, padding: "8px 12px", background: "transparent", fontSize: "11px" }}
+                              showLineNumbers
+                              startingLineNumber={snippet.lineStart}
+                            >
+                              {snippet.code}
+                            </SyntaxHighlighter>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
                 {renderWithMentions(displayContent)}
                 {message.isQueued && (
                   <div className="mt-2 flex items-center gap-2 border-t border-foreground/[0.06] pt-2 text-[11px] text-muted-foreground">
@@ -280,7 +287,6 @@ export const MessageBubble = memo(function MessageBubble({
               <p className="text-xs">{time}</p>
             </TooltipContent>
           </Tooltip>
-          {/* Revert dropdown — visible on hover, offers file-only or full (files + chat) revert */}
           {canRevert && (
             <div className="pointer-events-none absolute end-0 -bottom-0.5 w-max opacity-0 transition-opacity group-hover/user:opacity-100">
               <DropdownMenu>
@@ -312,17 +318,10 @@ export const MessageBubble = memo(function MessageBubble({
     );
   }
 
-  // Assistant message
-  //
-  // Performance: defer expensive ReactMarkdown parsing for off-screen messages.
-  // Non-streaming messages start as plain text and swap to full markdown once
-  // visible via IntersectionObserver. Streaming messages always use ReactMarkdown
-  // since they're at the bottom of the chat (always visible).
   const sentinelRef = useRef<HTMLDivElement>(null);
   const [isVisible, setIsVisible] = useState(!!message.isStreaming);
 
   useEffect(() => {
-    // Streaming messages are always visible (at the scroll bottom)
     if (message.isStreaming) {
       setIsVisible(true);
       return;
@@ -333,10 +332,10 @@ export const MessageBubble = memo(function MessageBubble({
       ([entry]) => {
         if (entry.isIntersecting) {
           setIsVisible(true);
-          observer.disconnect(); // Once visible, stay visible permanently
+          observer.disconnect();
         }
       },
-      { rootMargin: "200px" }, // Start parsing slightly before entering viewport
+      { rootMargin: "200px" },
     );
     observer.observe(el);
     return () => observer.disconnect();
@@ -401,18 +400,12 @@ export const MessageBubble = memo(function MessageBubble({
   prev.onUnqueueQueued === next.onUnqueueQueued,
 );
 
-/**
- * Handles both fenced code blocks and inline `code` spans.
- * Uses IsBlockCodeContext (from the `pre` component) to detect fenced blocks,
- * since react-markdown v10 removed the `inline` prop.
- */
 function CodeBlock(props: React.HTMLAttributes<HTMLElement> & { node?: unknown }) {
   const { className, children } = props;
   const isBlock = useContext(IsBlockCodeContext);
   const match = /language-(\w+)/.exec(String(className ?? ""));
   const code = String(children).replace(/\n$/, "");
 
-  // Fenced code block with language tag → syntax highlighted
   if (isBlock && match) {
     return (
       <div className="not-prose group/code relative my-2 rounded-lg bg-foreground/[0.03] overflow-hidden">
@@ -433,7 +426,6 @@ function CodeBlock(props: React.HTMLAttributes<HTMLElement> & { node?: unknown }
     );
   }
 
-  // Fenced code block without language tag → try auto-detect
   if (isBlock) {
     const guessedLang = guessLanguage(code);
     return (
@@ -465,7 +457,6 @@ function CodeBlock(props: React.HTMLAttributes<HTMLElement> & { node?: unknown }
     );
   }
 
-  // Inline code — not-prose prevents Typography backtick pseudo-elements
   return (
     <code className="not-prose rounded bg-foreground/[0.08] px-1.5 py-0.5 text-xs font-mono">
       {children}
