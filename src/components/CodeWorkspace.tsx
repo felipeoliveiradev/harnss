@@ -924,7 +924,7 @@ export const CodeWorkspace = memo(function CodeWorkspace({
   return (
     <div ref={rootRef} className="relative flex h-full min-h-0 w-full flex-1 flex-col">
       <div className={dockedShellClassName}>
-        <div className={`flex items-center gap-2 border-b border-foreground/[0.08] pe-3 py-2 ${!sidebarOpen && isMac ? "ps-[84px]" : "ps-3"}`}>
+        <div className={`flex items-center gap-2 border-b border-foreground/[0.08] pe-3 py-2 ${isDockedMaximized && !sidebarOpen && isMac ? "ps-[84px]" : "ps-3"}`}>
           <div className="flex h-6 w-6 items-center justify-center rounded-md bg-foreground/[0.06]">
             <SquarePen className="h-3.5 w-3.5 text-foreground/65" />
           </div>
