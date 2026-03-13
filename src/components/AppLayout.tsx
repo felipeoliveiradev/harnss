@@ -406,7 +406,7 @@ Link: ${issue.url}`;
   } = resize;
   const showChatWorkspace = workspaceMode !== "code";
   const showBothWorkspace = workspaceMode === "both";
-  const splitMode = settings.splitMode && workspaceMode === "chat";
+  const splitMode = settings.splitMode && workspaceMode !== "code";
   const sidebarActiveSessionId = splitMode
     ? (activePaneIndex === 1 ? pane1.sessionId : manager.activeSessionId)
     : manager.activeSessionId;
@@ -608,7 +608,11 @@ Link: ${issue.url}`;
               splitMode && activePaneIndex === 0 && "ring-1 ring-ring/30",
             )}
             style={{
-              flex: splitMode ? settings.chatSplitRatio : showBothWorkspace ? settings.workspaceSplitRatio : 1,
+              flex: splitMode && showBothWorkspace
+                ? settings.workspaceSplitRatio * settings.chatSplitRatio
+                : splitMode ? settings.chatSplitRatio
+                : showBothWorkspace ? settings.workspaceSplitRatio
+                : 1,
               minWidth: splitMode || showBothWorkspace ? 0 : minChatWidth,
               "--chat-fade-strength": String(chatFadeStrength),
             } as React.CSSProperties}
@@ -795,7 +799,9 @@ Link: ${issue.url}`;
                 activePaneIndex === 1 && "ring-1 ring-ring/30",
               )}
               style={{
-                flex: 1 - settings.chatSplitRatio,
+                flex: showBothWorkspace
+                  ? settings.workspaceSplitRatio * (1 - settings.chatSplitRatio)
+                  : 1 - settings.chatSplitRatio,
                 minWidth: 0,
                 "--chat-fade-strength": String(chatFadeStrength),
               } as React.CSSProperties}

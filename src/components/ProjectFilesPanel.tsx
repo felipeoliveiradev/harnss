@@ -4,6 +4,7 @@ import {
   Copy,
   CopyPlus,
   CornerLeftDown,
+  ExternalLink,
   Plus,
   FileCog,
   ChevronRight,
@@ -13,7 +14,6 @@ import {
   FolderOpen,
   FolderPlus,
   FolderTree,
-  Pencil,
   RefreshCw,
   Search,
   SquarePen,
@@ -888,107 +888,11 @@ const FileTreeRow = memo(function FileTreeRow({
         </span>
       )}
 
-          <div className="ms-auto flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-        {isDir && (
-          <>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onCreateFile();
-              }}
-              className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 hover:bg-foreground/[0.08] hover:text-foreground/80"
-            >
-              <FilePlus2 className="h-3 w-3" />
-            </button>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onCreateFolder();
-              }}
-              className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 hover:bg-foreground/[0.08] hover:text-foreground/80"
-            >
-              <FolderPlus className="h-3 w-3" />
-            </button>
-          </>
-        )}
-        {!isDir && (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onOpenInWorkspace(node);
-            }}
-            className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 hover:bg-foreground/[0.08] hover:text-foreground/80"
-          >
-            <Pencil className="h-3 w-3" />
-          </button>
-        )}
-            <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onRename(node);
-          }}
-          className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 hover:bg-foreground/[0.08] hover:text-foreground/80"
-        >
-          <SquarePen className="h-3 w-3" />
-        </button>
-            <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onDuplicate(node.path);
-          }}
-          className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 hover:bg-foreground/[0.08] hover:text-foreground/80"
-        >
-          <CopyPlus className="h-3 w-3" />
-        </button>
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onCopy(node.path);
-          }}
-          className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 hover:bg-foreground/[0.08] hover:text-foreground/80"
-        >
-          <Copy className="h-3 w-3" />
-        </button>
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onCut(node.path);
-          }}
-          className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 hover:bg-foreground/[0.08] hover:text-foreground/80"
-        >
-          <CornerLeftDown className="h-3 w-3" />
-        </button>
-        {isDir && (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onPaste(node.path);
-            }}
-            className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 hover:bg-foreground/[0.08] hover:text-foreground/80"
-          >
-            <ClipboardPaste className="h-3 w-3" />
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete(node.path);
-          }}
-          className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 hover:bg-destructive/20 hover:text-destructive"
-        >
-          <Trash2 className="h-3 w-3" />
-        </button>
-            {!isDir && <OpenInEditorButton filePath={`${cwd}/${node.path}`} />}
-          </div>
+          {!isDir && (
+            <div className="ms-auto flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+              <OpenInEditorButton filePath={`${cwd}/${node.path}`} />
+            </div>
+          )}
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent>
@@ -1017,6 +921,13 @@ const FileTreeRow = memo(function FileTreeRow({
             Open in Floating Editor
           </ContextMenuItem>
         )}
+        {!isDir && (
+          <ContextMenuItem onClick={() => window.claude.openInEditor(`${cwd}/${node.path}`)}>
+            <ExternalLink className="me-2 h-3.5 w-3.5" />
+            Open in External Editor
+          </ContextMenuItem>
+        )}
+        {!isDir && <ContextMenuSeparator />}
         <ContextMenuItem onClick={() => onRename(node)}>
           <SquarePen className="me-2 h-3.5 w-3.5" />
           Rename

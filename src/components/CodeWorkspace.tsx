@@ -1,5 +1,11 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { GitCompare, Maximize2, Minimize2, MonitorUp, PanelTopClose, Save, SquarePen, WrapText, X } from "lucide-react";
+import { GitCompare, Maximize2, Minimize2, MonitorUp, MoreHorizontal, PanelTopClose, Save, SquarePen, WrapText, X } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { isMac } from "@/lib/utils";
 import Editor, { DiffEditor, type DiffOnMount, type OnMount } from "@monaco-editor/react";
 import { diffLines } from "diff";
@@ -924,7 +930,7 @@ export const CodeWorkspace = memo(function CodeWorkspace({
   return (
     <div ref={rootRef} className="relative flex h-full min-h-0 w-full flex-1 flex-col">
       <div className={dockedShellClassName}>
-        <div className={`flex items-center gap-2 border-b border-foreground/[0.08] pe-3 py-2 ${isDockedMaximized && !sidebarOpen && isMac ? "ps-[84px]" : "ps-3"}`}>
+        <div className={`@container flex items-center gap-2 border-b border-foreground/[0.08] pe-3 py-2 ${isDockedMaximized && !sidebarOpen && isMac ? "ps-[84px]" : "ps-3"}`}>
           <div className="flex h-6 w-6 items-center justify-center rounded-md bg-foreground/[0.06]">
             <SquarePen className="h-3.5 w-3.5 text-foreground/65" />
           </div>
@@ -932,7 +938,7 @@ export const CodeWorkspace = memo(function CodeWorkspace({
             <p className="truncate text-xs font-semibold text-foreground/85">Code Workspace</p>
             <p className="truncate text-[10px] text-muted-foreground/65">{activeTab?.relativePath ?? "No file selected"}</p>
           </div>
-          <div className="hidden items-center gap-2 lg:flex">
+          <div className="hidden items-center gap-2 @[500px]:flex">
             <Button
               variant={showDiff ? "secondary" : "ghost"}
               size="sm"
@@ -978,38 +984,89 @@ export const CodeWorkspace = memo(function CodeWorkspace({
             >
               Next change
             </Button>
+            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onRequestQuickOpen} title="Quick Open (Cmd/Ctrl+P)">
+              <MonitorUp className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={() => setFloatingOpen((prev) => !prev)}
+              title="Toggle floating editor"
+            >
+              <PanelTopClose className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={onToggleDockedMaximize}
+              title={isDockedMaximized ? "Restore split view" : "Maximize editor"}
+            >
+              {isDockedMaximized ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              disabled={!activeTab || saving || activeTab.content === activeTab.savedContent}
+              onClick={() => { void handleSave(); }}
+              title="Save file"
+            >
+              <Save className="h-3.5 w-3.5" />
+            </Button>
           </div>
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onRequestQuickOpen} title="Quick Open (Cmd/Ctrl+P)">
-            <MonitorUp className="h-3.5 w-3.5" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7"
-            onClick={() => setFloatingOpen((prev) => !prev)}
-            title="Toggle floating editor (Cmd/Ctrl+Shift+E)"
-          >
-            <PanelTopClose className="h-3.5 w-3.5" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7"
-            onClick={onToggleDockedMaximize}
-            title={isDockedMaximized ? "Restore split view" : "Maximize editor"}
-          >
-            {isDockedMaximized ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7"
-            disabled={!activeTab || saving || activeTab.content === activeTab.savedContent}
-            onClick={() => { void handleSave(); }}
-            title="Save file"
-          >
-            <Save className="h-3.5 w-3.5" />
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-7 w-7 @[500px]:hidden">
+                <MoreHorizontal className="h-3.5 w-3.5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                disabled={!activeTab || activeTab.loading}
+                onClick={() => {
+                  if (!activeTabId) return;
+                  setTabs((prev) => prev.map((t) => t.id === activeTabId ? { ...t, showDiff: !t.showDiff } : t));
+                }}
+              >
+                <GitCompare className="h-3.5 w-3.5 me-2" />
+                {showDiff ? "Hide diff" : activeTab?.gitHeadContent !== null ? "Git diff" : "Diff"}
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setWordWrap((prev) => !prev)}>
+                <WrapText className="h-3.5 w-3.5 me-2" />
+                {wordWrap ? "Disable word wrap" : "Word wrap"}
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setShowLineHooks((prev) => !prev)}>
+                {showLineHooks ? "Hide hooks" : "Show hooks"}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={lineChangeSummary.changedLines.length === 0}
+                onClick={handleJumpToNextChange}
+              >
+                Next change
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={onRequestQuickOpen}>
+                <MonitorUp className="h-3.5 w-3.5 me-2" />
+                Quick Open
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setFloatingOpen((prev) => !prev)}>
+                <PanelTopClose className="h-3.5 w-3.5 me-2" />
+                Floating editor
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={onToggleDockedMaximize}>
+                {isDockedMaximized ? <Minimize2 className="h-3.5 w-3.5 me-2" /> : <Maximize2 className="h-3.5 w-3.5 me-2" />}
+                {isDockedMaximized ? "Restore split" : "Maximize"}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={!activeTab || saving || activeTab.content === activeTab.savedContent}
+                onClick={() => { void handleSave(); }}
+              >
+                <Save className="h-3.5 w-3.5 me-2" />
+                Save
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
         {renderTabRow()}
         {showLineHooks && lineChangeSummary.hooks.length > 0 && (
