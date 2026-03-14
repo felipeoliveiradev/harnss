@@ -207,6 +207,12 @@ export function useOpenClaw({ sessionId, initialMessages, initialMeta, initialPe
     setPendingPermission(null);
   }, [setPendingPermission]);
 
+  const setPermissionMode = useCallback(async (_mode: string) => {
+  }, []);
+
+  const compact = useCallback(async () => {
+  }, []);
+
   return {
     messages,
     setMessages,
@@ -225,5 +231,7 @@ export function useOpenClaw({ sessionId, initialMessages, initialMeta, initialPe
     send,
     stop,
     interrupt,
+    setPermissionMode,
+    compact,
   };
 }

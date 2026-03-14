@@ -20,7 +20,7 @@ type BoundaryWaitState =
   | { kind: "asap" };
 
 export function useMessageQueue({ refs, setters, engines, activeSessionId }: UseMessageQueueParams) {
-  const { claude, acp, codex, engine } = engines;
+  const { claude, acp, codex, openclaw, engine } = engines;
   const { setQueuedCount } = setters;
   const {
     activeSessionIdRef,
@@ -151,8 +151,8 @@ export function useMessageQueue({ refs, setters, engines, activeSessionId }: Use
     if (!queue || queue.length === 0) return;
 
     const sessionEngine = sessionsRef.current.find((s) => s.id === activeId)?.engine ?? "claude";
-    const targetSetMessages = sessionEngine === "codex" ? codex.setMessages : sessionEngine === "acp" ? acp.setMessages : claude.setMessages;
-    const targetSetIsProcessing = sessionEngine === "codex" ? codex.setIsProcessing : sessionEngine === "acp" ? acp.setIsProcessing : claude.setIsProcessing;
+    const targetSetMessages = sessionEngine === "codex" ? codex.setMessages : sessionEngine === "acp" ? acp.setMessages : sessionEngine === "openclaw" ? openclaw.setMessages : claude.setMessages;
+    const targetSetIsProcessing = sessionEngine === "codex" ? codex.setIsProcessing : sessionEngine === "acp" ? acp.setIsProcessing : sessionEngine === "openclaw" ? openclaw.setIsProcessing : claude.setIsProcessing;
 
     const next = queue.shift()!;
     if (queue.length === 0) {
@@ -194,6 +194,10 @@ export function useMessageQueue({ refs, setters, engines, activeSessionId }: Use
       if (sessionEngine === "acp") {
         targetSetIsProcessing(true);
         const result = await window.claude.acp.prompt(activeId, next.text, next.images);
+        if (result?.error) handleSendError();
+      } else if (sessionEngine === "openclaw") {
+        targetSetIsProcessing(true);
+        const result = await window.claude.openclaw.send(activeId, next.text);
         if (result?.error) handleSendError();
       } else if (sessionEngine === "codex") {
         targetSetIsProcessing(true);
@@ -247,6 +251,8 @@ export function useMessageQueue({ refs, setters, engines, activeSessionId }: Use
     clearQueue,
     codex.setIsProcessing,
     codex.setMessages,
+    openclaw.setIsProcessing,
+    openclaw.setMessages,
     codexEffortRef,
     engine.isProcessing,
     liveSessionIdsRef,
@@ -365,6 +371,8 @@ export function useMessageQueue({ refs, setters, engines, activeSessionId }: Use
     suppressNextSessionCompletion(activeId);
     if (sessionEngine === "acp") {
       void window.claude.acp.cancel(activeId);
+    } else if (sessionEngine === "openclaw") {
+      void window.claude.openclaw.interrupt(activeId);
     } else if (sessionEngine === "codex") {
       void window.claude.codex.interrupt(activeId);
     } else {
