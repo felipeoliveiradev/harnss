@@ -70,7 +70,7 @@ export function useSessionLifecycle({
   clearQueue,
   resetCodexEffortToModelDefault,
 }: UseSessionLifecycleParams) {
-  const { claude, acp, codex, engine } = engines;
+  const { claude, acp, codex, openclaw, engine } = engines;
   const {
     setSessions,
     setActiveSessionId,
@@ -452,6 +452,9 @@ export function useSessionLifecycle({
         } else if (session.engine === "acp") {
           suppressNextSessionCompletion(id);
           await window.claude.acp.stop(id);
+        } else if (session.engine === "openclaw") {
+          suppressNextSessionCompletion(id);
+          await window.claude.openclaw.stop(id);
         } else {
           suppressNextSessionCompletion(id);
           await window.claude.stop(id, "session_delete");
@@ -982,6 +985,10 @@ export function useSessionLifecycle({
       return restartAcpSession(mcpServers, nextCwd);
     }
 
+    if (session.engine === "openclaw") {
+      return { error: "OpenClaw session restart in another worktree is not yet supported." };
+    }
+
     if (session.engine === "codex") {
       let codexThreadId: string | undefined = session.codexThreadId;
       if (!codexThreadId) {
@@ -1257,6 +1264,44 @@ export function useSessionLifecycle({
           return;
         }
 
+        if (draftEngine === "openclaw") {
+          trackMessageSent();
+          const sessionId = await materializeDraft(text, images, displayText);
+          if (!sessionId) return;
+          await new Promise((resolve) => setTimeout(resolve, 50));
+
+          openclaw.setMessages((prev) => [
+            ...prev,
+            {
+              id: `user-${Date.now()}`,
+              role: "user",
+              content: text,
+              timestamp: Date.now(),
+              ...(images?.length ? { images } : {}),
+              ...(displayText ? { displayContent: displayText } : {}),
+              ...(codeSnippets?.length ? { codeSnippets } : {}),
+            },
+          ]);
+          openclaw.setIsProcessing(true);
+
+          const sendResult = await window.claude.openclaw.send(sessionId, text);
+          if (sendResult?.error) {
+            liveSessionIdsRef.current.delete(sessionId);
+            openclaw.setMessages((prev) => [
+              ...prev,
+              {
+                id: `system-send-error-${Date.now()}`,
+                role: "system",
+                content: `Unable to send message: ${sendResult.error}`,
+                timestamp: Date.now(),
+                isError: true,
+              },
+            ]);
+            openclaw.setIsProcessing(false);
+          }
+          return;
+        }
+
         trackMessageSent();
         const sessionId = await materializeDraft(text);
         if (!sessionId) return;
@@ -1344,6 +1389,15 @@ export function useSessionLifecycle({
         return;
       }
 
+      if (activeSessionEngine === "openclaw") {
+        if (liveSessionIdsRef.current.has(activeId)) {
+          trackMessageSent();
+          await openclaw.send(text, images, displayText, codeSnippets);
+          return;
+        }
+        return;
+      }
+
       if (liveSessionIdsRef.current.has(activeId)) {
         const sent = await claude.send(text, images, displayText, codeSnippets);
         if (sent) return;
@@ -1364,6 +1418,9 @@ export function useSessionLifecycle({
       codex.send,
       codex.setMessages,
       codex.setIsProcessing,
+      openclaw.send,
+      openclaw.setMessages,
+      openclaw.setIsProcessing,
       materializeDraft,
       reviveSession,
       reviveAcpSession,

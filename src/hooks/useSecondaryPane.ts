@@ -16,6 +16,7 @@ import type { BackgroundSessionState } from "@/lib/background-session-store";
 import { useClaude } from "./useClaude";
 import { useACP } from "./useACP";
 import { useCodex } from "./useCodex";
+import { useOpenClaw } from "./useOpenClaw";
 
 export interface SecondaryPaneState {
   /** The session ID currently shown in pane 1 (null = pane is empty) */
@@ -58,6 +59,7 @@ export function useSecondaryPane(): SecondaryPaneState {
   const claudeId = activeEngine === "claude" ? sessionId : null;
   const acpId = activeEngine === "acp" ? sessionId : null;
   const codexId = activeEngine === "codex" ? sessionId : null;
+  const openclawId = activeEngine === "openclaw" ? sessionId : null;
 
   const claude = useClaude({
     sessionId: claudeId,
@@ -74,8 +76,13 @@ export function useSecondaryPane(): SecondaryPaneState {
     initialMessages: activeEngine === "codex" ? initialMessages : [],
   });
 
+  const openclawHook = useOpenClaw({
+    sessionId: openclawId,
+    initialMessages: activeEngine === "openclaw" ? initialMessages : [],
+  });
+
   // Pick the active engine's state
-  const engine = activeEngine === "codex" ? codex : activeEngine === "acp" ? acp : claude;
+  const engine = activeEngine === "openclaw" ? openclawHook : activeEngine === "codex" ? codex : activeEngine === "acp" ? acp : claude;
 
   const switchSecondarySession = useCallback(
     async (

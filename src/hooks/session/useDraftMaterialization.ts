@@ -514,6 +514,42 @@ export function useDraftMaterialization({
         if (result.needsAuth) {
           // Session is alive but waiting for auth — UI will render CodexAuthDialog
         }
+      } else if (draftEngine === "openclaw") {
+        setSessions(prev => [{
+          id: DRAFT_ID,
+          projectId: project.id,
+          title: "New Chat",
+          createdAt: Date.now(),
+          lastMessageAt: Date.now(),
+          totalCost: 0,
+          planMode: false,
+          isActive: true,
+          engine: "openclaw" as const,
+        }, ...prev.map(s => ({ ...s, isActive: false }))]);
+
+        const result = await window.claude.openclaw.start({
+          cwd: getProjectCwd(project),
+          ...(options.model ? { model: options.model } : {}),
+        });
+
+        if (result.error || !result.sessionId) {
+          const errorMsg = result.error || "Failed to connect to OpenClaw Gateway";
+          const failedId = `failed-openclaw-${Date.now()}`;
+          const now = Date.now();
+          const errorMessages: UIMessage[] = [
+            { id: `user-${now}`, role: "user" as const, content: text, timestamp: now, ...(images?.length ? { images } : {}), ...(displayText ? { displayContent: displayText } : {}) },
+            { id: `system-error-${now}`, role: "system" as const, content: errorMsg, isError: true, timestamp: now },
+          ];
+          setSessions(prev => prev.map(s => s.id === DRAFT_ID ? { ...s, id: failedId, titleGenerating: false } : s));
+          setInitialMessages(errorMessages);
+          setInitialMeta({ isProcessing: false, isConnected: false, sessionInfo: null, totalCost: 0, contextUsage: null });
+          setActiveSessionId(failedId);
+          setDraftProjectId(null);
+          window.claude.sessions.save({ id: failedId, projectId: project.id, title: "New Chat", createdAt: Date.now(), messages: errorMessages, planMode: false, totalCost: 0, engine: "openclaw" });
+          materializingRef.current = false;
+          return "";
+        }
+        sessionId = result.sessionId;
       } else {
         // Claude SDK path — reuse pre-started session if available
         const preStarted = preStartedSessionIdRef.current;
