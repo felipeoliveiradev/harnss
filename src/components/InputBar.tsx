@@ -760,6 +760,7 @@ export const InputBar = memo(function InputBar({
   const [attachments, setAttachments] = useState<ImageAttachment[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [editingAttachment, setEditingAttachment] = useState<ImageAttachment | null>(null);
+  const [gatewayAvailable, setGatewayAvailable] = useState<boolean | null>(null);
 
   const speech = useSpeechRecognition({
     onResult: (text) => insertTextAtCursor(editableRef.current, text),
@@ -1639,7 +1640,11 @@ export const InputBar = memo(function InputBar({
             ) : null}
 
             {agents && agents.length > 1 && onAgentChange && (
-              <DropdownMenu>
+              <DropdownMenu onOpenChange={(open) => {
+                if (open && agents.some((a) => a.engine === "openclaw")) {
+                  window.claude.openclaw.status().then((s) => setGatewayAvailable(s.available)).catch(() => setGatewayAvailable(false));
+                }
+              }}>
                 <DropdownMenuTrigger asChild>
                   <button
                     className="flex shrink-0 items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
@@ -1685,6 +1690,11 @@ export const InputBar = memo(function InputBar({
                               <span className="rounded bg-amber-500/15 px-1 py-px text-[10px] font-medium text-amber-400">Beta</span>
                             )}
                           </div>
+                          {agent.engine === "openclaw" && gatewayAvailable !== null && (
+                            <div className={`text-[10px] ${gatewayAvailable ? "text-emerald-400" : "text-red-400"}`}>
+                              {gatewayAvailable ? "Gateway connected" : "Gateway offline"}
+                            </div>
+                          )}
                           {crossEngine && (
                             <div className="text-[10px] text-muted-foreground/70">
                               Opens new chat
