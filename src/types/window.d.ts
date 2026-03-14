@@ -10,6 +10,7 @@ import type {
 import type { ACPSessionEvent, ACPPermissionEvent, ACPTurnCompleteEvent, ACPConfigOption } from "./acp";
 import type { EngineId, AppPermissionBehavior } from "./engine";
 import type { CodexSessionEvent, CodexServerRequest, CodexExitEvent } from "./codex";
+import type { OpenClawSessionEvent, OpenClawExitEvent, OpenClawStartOptions, OpenClawConnectResult } from "@shared/types/openclaw";
 import type { Model as CodexModel } from "./codex-protocol/v2/Model";
 import type { CollaborationMode } from "./codex-protocol/CollaborationMode";
 import type {
@@ -320,6 +321,15 @@ declare global {
         onEvent: (callback: (data: CodexSessionEvent) => void) => () => void;
         onApprovalRequest: (callback: (data: CodexServerRequest) => void) => () => void;
         onExit: (callback: (data: CodexExitEvent) => void) => () => void;
+      };
+      openclaw: {
+        start: (options: OpenClawStartOptions) => Promise<OpenClawConnectResult>;
+        send: (sessionId: string, text: string) => Promise<{ ok?: boolean; error?: string }>;
+        stop: (sessionId: string) => Promise<{ ok?: boolean; error?: string }>;
+        interrupt: (sessionId: string) => Promise<{ ok?: boolean; error?: string }>;
+        status: () => Promise<{ available: boolean }>;
+        onEvent: (callback: (data: OpenClawSessionEvent) => void) => () => void;
+        onExit: (callback: (data: OpenClawExitEvent) => void) => () => void;
       };
       mcp: {
         list: (projectId: string) => Promise<McpServerConfig[]>;

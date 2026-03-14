@@ -275,6 +275,25 @@ contextBridge.exposeInMainWorld("claude", {
       return () => ipcRenderer.removeListener("codex:exit", listener);
     },
   },
+  openclaw: {
+    start: (options: { cwd: string; gatewayUrl?: string; model?: string; skills?: string[] }) =>
+      ipcRenderer.invoke("openclaw:start", options),
+    send: (sessionId: string, text: string) =>
+      ipcRenderer.invoke("openclaw:send", { sessionId, text }),
+    stop: (sessionId: string) => ipcRenderer.invoke("openclaw:stop", sessionId),
+    interrupt: (sessionId: string) => ipcRenderer.invoke("openclaw:interrupt", sessionId),
+    status: () => ipcRenderer.invoke("openclaw:status"),
+    onEvent: (callback: (data: unknown) => void) => {
+      const listener = (_event: IpcRendererEvent, data: unknown) => callback(data);
+      ipcRenderer.on("openclaw:event", listener);
+      return () => ipcRenderer.removeListener("openclaw:event", listener);
+    },
+    onExit: (callback: (data: unknown) => void) => {
+      const listener = (_event: IpcRendererEvent, data: unknown) => callback(data);
+      ipcRenderer.on("openclaw:exit", listener);
+      return () => ipcRenderer.removeListener("openclaw:exit", listener);
+    },
+  },
   mcp: {
     list: (projectId: string) => ipcRenderer.invoke("mcp:list", projectId),
     add: (projectId: string, server: unknown) => ipcRenderer.invoke("mcp:add", { projectId, server }),

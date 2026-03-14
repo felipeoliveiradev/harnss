@@ -8,9 +8,11 @@ import type {
 } from "../types";
 import type { ACPSessionEvent, ACPPermissionEvent } from "../types/acp";
 import type { CodexSessionEvent } from "../types/codex";
+import type { OpenClawSessionEvent } from "../types/openclaw";
 import { handleClaudeEvent } from "./background-claude-handler";
 import { handleACPEvent as acpHandler, handleACPTurnComplete as acpTurnComplete } from "./background-acp-handler";
 import { handleCodexEvent as codexHandler } from "./background-codex-handler";
+import { handleOpenClawEvent as openclawHandler } from "./background-openclaw-handler";
 
 export interface BackgroundSessionState {
   messages: UIMessage[];
@@ -114,6 +116,16 @@ export class BackgroundSessionStore {
     }
     if (result?.permissionRequest) {
       this.onPermissionRequest?.(sessionId, result.permissionRequest);
+    }
+  }
+
+  handleOpenClawEvent(event: OpenClawSessionEvent): void {
+    const sessionId = event._sessionId;
+    if (!sessionId) return;
+    const state = this.getOrCreate(sessionId);
+    openclawHandler(state, event);
+    if (!state.isProcessing) {
+      this.onProcessingChange?.(sessionId, false);
     }
   }
 
