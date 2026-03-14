@@ -6,7 +6,7 @@ import { app } from "electron";
 
 const execFileAsync = promisify(execFile);
 
-export type EngineId = "claude" | "acp" | "codex";
+export type EngineId = "claude" | "acp" | "codex" | "openclaw";
 
 export interface InstalledAgent {
   id: string;
@@ -43,11 +43,21 @@ const BUILTIN_CODEX: InstalledAgent = {
   icon: "zap",
 };
 
-const BUILTIN_IDS = new Set([BUILTIN_CLAUDE.id, BUILTIN_CODEX.id]);
+const BUILTIN_OPENCLAW: InstalledAgent = {
+  id: "openclaw",
+  name: "OpenClaw",
+  engine: "openclaw",
+  builtIn: true,
+  icon: "Lobster",
+  description: "Open-source AI agent framework with 300K+ GitHub stars. Connects to local Gateway for multi-tool orchestration.",
+};
+
+const BUILTIN_IDS = new Set([BUILTIN_CLAUDE.id, BUILTIN_CODEX.id, BUILTIN_OPENCLAW.id]);
 
 const agents = new Map<string, InstalledAgent>();
 agents.set(BUILTIN_CLAUDE.id, BUILTIN_CLAUDE);
 agents.set(BUILTIN_CODEX.id, BUILTIN_CODEX);
+agents.set(BUILTIN_OPENCLAW.id, BUILTIN_OPENCLAW);
 
 function getConfigPath(): string {
   return path.join(app.getPath("userData"), "openacpui-data", "agents.json");
