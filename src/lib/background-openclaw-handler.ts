@@ -56,9 +56,23 @@ export function handleOpenClawEvent(state: InternalState, event: OpenClawSession
       });
       break;
 
-    case "tool:start":
+    case "thinking:delta": {
+      ensureStreamingMsg(state);
+      const target = state.messages.find(m => m.id === state.currentStreamingMsgId);
+      if (target) target.thinking = (target.thinking ?? "") + ((event.payload.text as string) ?? "");
+      break;
+    }
+
+    case "thinking:done": {
+      const target = state.messages.find(m => m.id === state.currentStreamingMsgId);
+      if (target) target.thinkingComplete = true;
+      break;
+    }
+
+    case "tool:start": {
+      const toolUseId = (event.payload.toolUseId as string) ?? nextId("tool-call-bg");
       state.messages.push({
-        id: nextId("tool-call-bg"),
+        id: toolUseId,
         role: "tool_call",
         content: "",
         toolName: (event.payload.toolName as string) ?? "unknown",
@@ -66,15 +80,20 @@ export function handleOpenClawEvent(state: InternalState, event: OpenClawSession
         timestamp: Date.now(),
       });
       break;
+    }
 
-    case "tool:result":
+    case "tool:result": {
+      const resultToolUseId = (event.payload.toolUseId as string) ?? "";
+      const resultToolName = (event.payload.toolName as string) ?? "";
       for (const msg of state.messages) {
-        if (msg.role === "tool_call" && msg.toolName === event.payload.toolName && !msg.toolResult) {
+        if (msg.role !== "tool_call" || msg.toolResult) continue;
+        if ((resultToolUseId && msg.id === resultToolUseId) || (!resultToolUseId && msg.toolName === resultToolName)) {
           msg.toolResult = event.payload.result as Record<string, unknown>;
           break;
         }
       }
       break;
+    }
 
     case "lifecycle:end":
       finalizeStreamingMsg(state);

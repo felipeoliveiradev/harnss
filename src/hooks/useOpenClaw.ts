@@ -95,9 +95,23 @@ export function useOpenClaw({ sessionId, initialMessages, initialMeta, initialPe
           scheduleFlush();
           break;
 
-        case "thinking:delta":
+        case "thinking:delta": {
           ensureStreamingMessage();
-          scheduleFlush();
+          const thinkingText = (event.payload.text as string) ?? "";
+          if (thinkingText) {
+            setMessages(prev => prev.map(m => {
+              if (m.id !== buffer.current.messageId) return m;
+              return { ...m, thinking: (m.thinking ?? "") + thinkingText };
+            }));
+          }
+          break;
+        }
+
+        case "thinking:done":
+          setMessages(prev => prev.map(m => {
+            if (m.id !== buffer.current.messageId) return m;
+            return { ...m, thinkingComplete: true };
+          }));
           break;
 
         case "chat:final":
@@ -117,9 +131,10 @@ export function useOpenClaw({ sessionId, initialMessages, initialMeta, initialPe
           }]);
           break;
 
-        case "tool:start":
+        case "tool:start": {
+          const toolUseId = (event.payload.toolUseId as string) ?? nextId("tool-use");
           setMessages(prev => [...prev, {
-            id: nextId("tool-call"),
+            id: toolUseId,
             role: "tool_call",
             content: "",
             toolName: (event.payload.toolName as string) ?? "unknown",
@@ -127,15 +142,23 @@ export function useOpenClaw({ sessionId, initialMessages, initialMeta, initialPe
             timestamp: Date.now(),
           }]);
           break;
+        }
 
-        case "tool:result":
+        case "tool:result": {
+          const resultToolUseId = (event.payload.toolUseId as string) ?? "";
+          const resultToolName = (event.payload.toolName as string) ?? "";
           setMessages(prev => prev.map(m => {
-            if (m.role === "tool_call" && m.toolName === event.payload.toolName && !m.toolResult) {
+            if (m.role !== "tool_call" || m.toolResult) return m;
+            if (resultToolUseId && m.id === resultToolUseId) {
+              return { ...m, toolResult: event.payload.result as Record<string, unknown> };
+            }
+            if (!resultToolUseId && m.toolName === resultToolName) {
               return { ...m, toolResult: event.payload.result as Record<string, unknown> };
             }
             return m;
           }));
           break;
+        }
 
         case "lifecycle:end":
           finalizeStreamingMessage();
