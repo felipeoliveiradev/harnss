@@ -34,6 +34,12 @@ export const TOOL_ICONS: Record<string, typeof Terminal> = {
   AskUserQuestion: MessageCircleQuestion,
   ToolSearch: PackageSearch,
   Skill: Sparkles,
+  shell_exec: Terminal,
+  file_read: FileText,
+  file_write: FileEdit,
+  code_edit: FileEdit,
+  web_search: Globe,
+  browser_navigate: Globe,
 };
 
 export function getToolIcon(toolName: string) {
@@ -61,6 +67,12 @@ export const TOOL_LABELS: Record<string, ToolLabels> = {
   AskUserQuestion: { past: "Asked", active: "Asking", failure: "ask" },
   ToolSearch: { past: "Loaded tools", active: "Loading tools", failure: "load tools" },
   Skill: { past: "Loaded skill", active: "Loading skill", failure: "load skill" },
+  shell_exec: { past: "Ran", active: "Running", failure: "run" },
+  file_read: { past: "Read", active: "Reading", failure: "read" },
+  file_write: { past: "Wrote", active: "Writing", failure: "write" },
+  code_edit: { past: "Edited", active: "Editing", failure: "edit" },
+  web_search: { past: "Searched web", active: "Searching web", failure: "search web" },
+  browser_navigate: { past: "Navigated", active: "Navigating", failure: "navigate" },
 };
 
 // MCP tool friendly names — pattern-matched for different server name prefixes
