@@ -354,3 +354,48 @@ The three session IPC handlers share extracted utilities:
 - **Hook decomposition** — large hooks are split into focused sub-hooks (session/, useEngineBase)
 - **Shared components** — reusable UI patterns extracted to shared components (`TabBar`, `PanelHeader`, `SettingRow`)
 - **Error tracking** — all caught errors in IPC handlers and hooks must use `reportError(label, err)` (not bare `log()`). Benign/expected catches (cleanup, parse fallbacks, cancellation guards) are exempt. See "Error Tracking (PostHog)" section for details.
+
+## Performance Guidelines
+
+Hard-won lessons from the chat rendering rebuild. Apply these whenever building list-heavy or streaming-heavy UI.
+
+### Virtualization over content-visibility
+
+**Never use `content-visibility: auto` for long lists.** It keeps all DOM nodes alive (300+ React trees in memory) and merely defers painting. Use `@tanstack/react-virtual` (or equivalent) for true windowing — only ~20 DOM nodes exist regardless of list length. This is the single biggest perf win for large chats.
+
+### Streaming update isolation
+
+During streaming, only the last message changes. The entire render path must be designed so that only that one component re-renders per frame:
+
+- **Referential identity**: React state updates that spread an array (`[...msgs.slice(0, -1), updatedLast]`) preserve object references for unchanged items. `React.memo` with `prev.msg === next.msg` correctly skips them.
+- **Structural identity caching**: expensive derived data (tool groups, turn summaries) should only recompute when the message *structure* changes (new message added, tool result arrives), not when streaming content updates. Cache with a `structureKey` (length + lastId + toolResultCount) and skip recomputation when it hasn't changed.
+- **Never pass the full messages array as a prop to row components** — it changes on every frame. Pass individual message objects or use refs.
+
+### Refs for transient values, not state
+
+Scroll position, bottom-lock state, animation frame IDs, user scroll intent timestamps — these change on every frame and must **never** be `useState`. Use `useRef` and read them in event handlers. A `useState` for scroll position causes a full re-render on every scroll event.
+
+### Module-level components and functions
+
+Components defined inside other components (`const Row = () => ...` inside a list component) are re-created on every render, destroying all internal state and remounting the DOM. Always extract to module level. Same for helper functions used in `useMemo` — define them outside the component to avoid stale closure issues and enable referential stability.
+
+### Height estimation for virtualizers
+
+`@tanstack/react-virtual` needs `estimateSize` for items before measurement. Provide role-based estimates (system: 32px, tool_call: 44px, user: 48-200px, assistant: 40-600px scaled by content length). The virtualizer corrects via `measureElement` after first render. Poor estimates cause scroll jumps but are self-healing.
+
+### Explicit height vs CSS padding with border-box
+
+When setting explicit `height` on a container, **do not use CSS padding** (`pt-*`, `pb-*`). With Tailwind's `box-sizing: border-box`, padding is subtracted from the content area, shrinking it below what the virtualizer expects. Instead, add padding values directly to the height calculation:
+```tsx
+style={{ height: `${virtualizer.getTotalSize() + headerSpace + bottomSpace}px` }}
+```
+
+### Performance best practices reference
+
+See `.agents/skills/vercel-react-best-practices/` for 62 rules across 8 categories (waterfalls, bundle size, re-renders, rendering, JS perf). Key rules applied in this codebase:
+- `rerender-use-ref-transient-values` — refs for scroll/animation state
+- `rerender-no-inline-components` — module-level components
+- `rerender-memo` — custom comparators on row components
+- `js-index-maps` / `js-set-map-lookups` — Map/Set for O(1) lookups
+- `js-combine-iterations` — single-pass row building
+- `advanced-event-handler-refs` — callback refs to avoid effect re-subscription
