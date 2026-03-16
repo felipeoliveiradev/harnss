@@ -11,7 +11,7 @@ import { getAppSetting, setAppSettings } from "../lib/app-settings";
 import { getDataDir } from "../lib/data-dir";
 
 function getGatewayUrl(): string {
-  return getAppSetting("openclawGatewayUrl") || "wss://127.0.0.1:18789";
+  return getAppSetting("openclawGatewayUrl") || "ws://127.0.0.1:18789";
 }
 
 function getGatewayToken(): string {
