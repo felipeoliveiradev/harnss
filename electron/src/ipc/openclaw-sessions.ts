@@ -82,6 +82,7 @@ let shared: {
   currentRunId: string | null;
   cwd: string | null;
   chatBuffer: string;
+  lastEmittedCleanLength: number;
   processedCurrentTurn: boolean;
 } | null = null;
 
@@ -414,6 +415,7 @@ function handleMessage(raw: string): void {
         if (phase === "start") {
           shared.processedCurrentTurn = false;
           shared.chatBuffer = "";
+          shared.lastEmittedCleanLength = 0;
           emitToSessions("lifecycle:start", {});
         }
         else if (phase === "error") emitToSessions("chat:error", { message: (data.error as string) ?? "Agent error" });
@@ -443,8 +445,10 @@ function handleMessage(raw: string): void {
             shared.chatBuffer += raw;
           }
           const cleaned = stripFileTagsForDisplay(shared.chatBuffer);
-          if (cleaned) {
-            emitToSessions("chat:delta", { text: cleaned });
+          const delta = cleaned.slice(shared.lastEmittedCleanLength);
+          if (delta) {
+            shared.lastEmittedCleanLength = cleaned.length;
+            emitToSessions("chat:delta", { text: delta });
           }
         }
       } else if (stream === "tool") {
@@ -493,6 +497,7 @@ async function ensureConnection(getMainWindow: () => BrowserWindow | null): Prom
       currentRunId: null,
       cwd: null,
       chatBuffer: "",
+      lastEmittedCleanLength: 0,
       processedCurrentTurn: false,
     };
   } else {
