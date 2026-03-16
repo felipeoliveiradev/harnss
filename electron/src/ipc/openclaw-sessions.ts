@@ -229,7 +229,7 @@ function processCompletedMessage(
   const editPattern = /<edit_file\s+path="([^"]+)">([\s\S]*?)<\/edit_file>/g;
   while ((m = editPattern.exec(fullText)) !== null) {
     const relPath = m[1];
-    const dedupeKey = `edit:${relPath}:${m[2].slice(0, 50)}`;
+    const dedupeKey = `edit:${relPath}`;
     if (processedPaths.has(dedupeKey) || totalOps >= MAX_FILE_OPS_PER_TURN) continue;
     processedPaths.add(dedupeKey);
     totalOps++;
@@ -269,14 +269,13 @@ function processCompletedMessage(
         log("OPENCLAW_FILE_EDIT", { file: relPath, replacements });
         emit("tool:result", { toolUseId, toolName: "Edit", result: { status: "ok", replacements, oldString: oldStr, newString: newStr, filePath: relPath } });
       } else {
-        emit("tool:start", { toolUseId, toolName: "Edit", input: { file_path: relPath } });
         results.push(`Edit ${relPath}: no matching blocks found`);
-        emit("tool:result", { toolUseId, toolName: "Edit", result: { error: "no matching SEARCH blocks found in file" } });
+        log("OPENCLAW_FILE_EDIT_SKIP", { file: relPath, reason: "no matching SEARCH blocks" });
       }
     } catch (err) {
       const errMsg2 = (err as Error).message;
       results.push(`Edit ${relPath}: ${errMsg2}`);
-      emit("tool:result", { toolUseId, toolName: "Edit", result: { error: errMsg2 } });
+      log("OPENCLAW_FILE_EDIT_ERR", { file: relPath, error: errMsg2 });
     }
   }
 
