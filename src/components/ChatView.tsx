@@ -115,6 +115,7 @@ interface ChatMessageRowProps {
   autoExpandTools: boolean;
   animatingGroupKeys: Set<string>;
   continuationIds: Set<string>;
+  sendNextId?: string | null;
   onRevert?: (checkpointId: string) => void;
   onFullRevert?: (checkpointId: string) => void;
   onSendQueuedNow?: (messageId: string) => void;
@@ -127,6 +128,7 @@ const ChatMessageRow = memo(function ChatMessageRow({
   autoExpandTools,
   animatingGroupKeys,
   continuationIds,
+  sendNextId,
   onRevert,
   onFullRevert,
   onSendQueuedNow,
@@ -191,6 +193,7 @@ const ChatMessageRow = memo(function ChatMessageRow({
         message={msg}
         showThinking={showThinking}
         isContinuation={continuationIds.has(msg.id)}
+        isSendNextQueued={sendNextId === msg.id}
         onRevert={onRevert}
         onFullRevert={onFullRevert}
         onSendQueuedNow={onSendQueuedNow}
@@ -204,6 +207,7 @@ const ChatMessageRow = memo(function ChatMessageRow({
   prev.autoExpandTools === next.autoExpandTools &&
   prev.animatingGroupKeys === next.animatingGroupKeys &&
   prev.continuationIds === next.continuationIds &&
+  prev.sendNextId === next.sendNextId &&
   prev.onRevert === next.onRevert &&
   prev.onFullRevert === next.onFullRevert &&
   prev.onSendQueuedNow === next.onSendQueuedNow &&
@@ -485,10 +489,20 @@ function ChatViewContent({
   }, [isProcessing, nonQueuedMessages]);
 
   // ── Build rows (single O(n) pass — js-combine-iterations) ──
-  const rows = useMemo(
+  const baseRows = useMemo(
     () => buildRows(nonQueuedMessages, toolGroups, groupedIndices, turnSummaryByEndIndex, showProcessingIndicator),
     [nonQueuedMessages, toolGroups, groupedIndices, turnSummaryByEndIndex, showProcessingIndicator],
   );
+
+  const rows = useMemo(() => {
+    if (queuedMessages.length === 0) return baseRows;
+    const queuedRows = queuedMessages.map((msg, index) => ({
+      kind: "message" as const,
+      msg,
+      originalIndex: nonQueuedMessages.length + index,
+    }));
+    return [...baseRows, ...queuedRows];
+  }, [baseRows, nonQueuedMessages.length, queuedMessages]);
 
   // ── Virtualizer ──
   const virtualizer = useVirtualizer({
@@ -680,6 +694,7 @@ function ChatViewContent({
               autoExpandTools={autoExpandTools}
               animatingGroupKeys={animatingGroupKeys}
               continuationIds={continuationIds}
+              sendNextId={sendNextId}
               onRevert={onRevert}
               onFullRevert={onFullRevert}
               onSendQueuedNow={onSendQueuedNow}
@@ -689,25 +704,6 @@ function ChatViewContent({
         ))}
       </div>
 
-      {/* Queued messages rendered below virtual list (always small count) */}
-      {queuedMessages.length > 0 && (
-        <div>
-          {queuedMessages.map((msg) => (
-            <div key={msg.id} data-message-id={msg.id}>
-              <MessageBubble
-                message={msg}
-                isSendNextQueued={sendNextId === msg.id}
-                showThinking={showThinking}
-                isContinuation={continuationIds.has(msg.id)}
-                onRevert={onRevert}
-                onFullRevert={onFullRevert}
-                onSendQueuedNow={onSendQueuedNow}
-                onUnqueueQueued={onUnqueueQueuedMessage}
-              />
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
