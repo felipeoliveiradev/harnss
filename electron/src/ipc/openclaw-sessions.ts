@@ -204,7 +204,7 @@ function processCompletedMessage(
     hadFileOps = true;
     const fileContent = m[2].replace(/^\n/, "");
     const toolUseId = `openclaw-write-${crypto.randomUUID().slice(0, 8)}`;
-    emit("tool:start", { toolUseId, toolName: "Write", input: { file_path: relPath, content: fileContent.slice(0, 200) + (fileContent.length > 200 ? "..." : "") } });
+    emit("tool:start", { toolUseId, toolName: "Write", input: { file_path: relPath, content: fileContent } });
     const abs = safePath(relPath);
     if (!abs) {
       results.push(`Write ${relPath}: path outside project`);
@@ -235,9 +235,9 @@ function processCompletedMessage(
     hadFileOps = true;
     const editBody = m[2];
     const toolUseId = `openclaw-edit-${crypto.randomUUID().slice(0, 8)}`;
-    emit("tool:start", { toolUseId, toolName: "Edit", input: { file_path: relPath } });
     const abs = safePath(relPath);
     if (!abs) {
+      emit("tool:start", { toolUseId, toolName: "Edit", input: { file_path: relPath } });
       results.push(`Edit ${relPath}: path outside project`);
       emit("tool:result", { toolUseId, toolName: "Edit", result: { error: "path outside project" } });
       continue;
@@ -247,20 +247,28 @@ function processCompletedMessage(
       const blockPattern = /<<<<<<< SEARCH\n([\s\S]*?)\n=======\n([\s\S]*?)\n>>>>>>> REPLACE/g;
       let blockMatch: RegExpExecArray | null;
       let replacements = 0;
+      const allOldParts: string[] = [];
+      const allNewParts: string[] = [];
       while ((blockMatch = blockPattern.exec(editBody)) !== null) {
         const search = blockMatch[1];
         const replace = blockMatch[2];
         if (fileContent.includes(search)) {
           fileContent = fileContent.replace(search, replace);
+          allOldParts.push(search);
+          allNewParts.push(replace);
           replacements++;
         }
       }
       if (replacements > 0) {
         fs.writeFileSync(abs, fileContent, "utf-8");
+        const oldStr = allOldParts.join("\n...\n");
+        const newStr = allNewParts.join("\n...\n");
+        emit("tool:start", { toolUseId, toolName: "Edit", input: { file_path: relPath, old_string: oldStr, new_string: newStr } });
         results.push(`Edit ${relPath}: OK (${replacements} replacement${replacements > 1 ? "s" : ""})`);
         log("OPENCLAW_FILE_EDIT", { file: relPath, replacements });
-        emit("tool:result", { toolUseId, toolName: "Edit", result: { status: "ok", replacements } });
+        emit("tool:result", { toolUseId, toolName: "Edit", result: { status: "ok", replacements, oldString: oldStr, newString: newStr, filePath: relPath } });
       } else {
+        emit("tool:start", { toolUseId, toolName: "Edit", input: { file_path: relPath } });
         results.push(`Edit ${relPath}: no matching blocks found`);
         emit("tool:result", { toolUseId, toolName: "Edit", result: { error: "no matching SEARCH blocks found in file" } });
       }
