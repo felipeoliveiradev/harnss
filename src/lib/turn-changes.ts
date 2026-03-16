@@ -1,5 +1,7 @@
 import type { UIMessage } from "../types";
 import { parseUnifiedDiffFromUnknown } from "./unified-diff";
+import { getStructuredPatches, getPatchPath, type StructuredPatchEntry } from "./patch-utils";
+import { firstDefinedString } from "@/components/lib/tool-formatting";
 
 // ── Types ──
 
@@ -39,73 +41,106 @@ function basename(filePath: string): string {
 function getStructuredPatchEntry(
   result: UIMessage["toolResult"],
   filePath: string,
-): Record<string, unknown> | null {
-  const patches = Array.isArray(result?.structuredPatch)
-    ? (result.structuredPatch as Array<Record<string, unknown>>)
-    : [];
+): StructuredPatchEntry | null {
+  const patches = getStructuredPatches(result);
   if (patches.length === 0) return null;
 
   if (filePath) {
-    const byPath = patches.find((entry) => {
-      const path = entry.filePath ?? entry.path;
-      return typeof path === "string" && path === filePath;
-    });
+    const byPath = patches.find((entry) => getPatchPath(entry) === filePath);
     if (byPath) return byPath;
   }
 
   return patches[0] ?? null;
 }
 
-function firstDefinedString(...values: Array<unknown>): string | undefined {
-  for (const value of values) {
-    if (typeof value === "string") return value;
-  }
-  return undefined;
-}
-
-/** Extract a file change from a tool_call message, if it's a file-modifying tool. */
-function extractChange(msg: UIMessage): FileChange | null {
+/** Extract file changes from a tool_call message. Returns one entry per file. */
+function extractChanges(msg: UIMessage): FileChange[] {
   const { toolName, toolInput } = msg;
-  if (!toolName || !toolInput) return null;
+  if (!toolName || !toolInput) return [];
+
+  const patches = getStructuredPatches(msg.toolResult);
 
   switch (toolName) {
     case "Edit": {
+      // Multi-file Codex fileChange: one FileChange per patch entry
+      if (patches.length > 1) {
+        const results: FileChange[] = [];
+        for (const patch of patches) {
+          const patchPath = getPatchPath(patch);
+          if (!patchPath) continue;
+          const parsedDiff = parseUnifiedDiffFromUnknown(patch.diff);
+          results.push({
+            filePath: patchPath,
+            fileName: basename(patchPath),
+            changeType: patch.kind === "add" ? "created" : "modified",
+            toolName: "Edit",
+            unifiedDiff: patch.diff,
+            oldString: firstDefinedString(patch.oldString, parsedDiff?.oldString),
+            newString: firstDefinedString(patch.newString, parsedDiff?.newString),
+            messageId: msg.id,
+            timestamp: msg.timestamp,
+          });
+        }
+        return results;
+      }
+
+      // Single file: existing logic
       const filePath = String(toolInput.file_path ?? "");
       const structuredPatch = getStructuredPatchEntry(msg.toolResult, filePath);
       const parsedStructuredDiff = parseUnifiedDiffFromUnknown(structuredPatch?.diff);
       const parsedDiff = parseUnifiedDiffFromUnknown(msg.toolResult?.content);
-      if (!filePath) return null;
-      return {
+      if (!filePath) return [];
+      return [{
         filePath,
         fileName: basename(filePath),
         changeType: "modified",
         toolName,
         unifiedDiff: firstDefinedString(
-          typeof structuredPatch?.diff === "string" ? structuredPatch.diff : undefined,
+          structuredPatch?.diff,
           typeof msg.toolResult?.content === "string" ? msg.toolResult.content : undefined,
         ),
         oldString: firstDefinedString(
-          typeof structuredPatch?.oldString === "string" ? structuredPatch.oldString : undefined,
+          structuredPatch?.oldString,
           parsedStructuredDiff?.oldString,
           parsedDiff?.oldString,
           msg.toolResult?.oldString,
           toolInput.old_string,
-        ) ?? "",
+        ),
         newString: firstDefinedString(
-          typeof structuredPatch?.newString === "string" ? structuredPatch.newString : undefined,
+          structuredPatch?.newString,
           parsedStructuredDiff?.newString,
           parsedDiff?.newString,
           msg.toolResult?.newString,
           toolInput.new_string,
-        ) ?? "",
+        ),
         messageId: msg.id,
         timestamp: msg.timestamp,
-      };
+      }];
     }
     case "Write": {
+      // Multi-file Codex fileChange (all adds)
+      if (patches.length > 1) {
+        const results: FileChange[] = [];
+        for (const patch of patches) {
+          const patchPath = getPatchPath(patch);
+          if (!patchPath) continue;
+          results.push({
+            filePath: patchPath,
+            fileName: basename(patchPath),
+            changeType: "created",
+            toolName: "Write",
+            content: patch.newString ?? "",
+            messageId: msg.id,
+            timestamp: msg.timestamp,
+          });
+        }
+        return results;
+      }
+
+      // Single file
       const filePath = String(toolInput.file_path ?? "");
-      if (!filePath) return null;
-      return {
+      if (!filePath) return [];
+      return [{
         filePath,
         fileName: basename(filePath),
         changeType: "created",
@@ -113,12 +148,12 @@ function extractChange(msg: UIMessage): FileChange | null {
         content: String(toolInput.content ?? ""),
         messageId: msg.id,
         timestamp: msg.timestamp,
-      };
+      }];
     }
     case "NotebookEdit": {
       const filePath = String(toolInput.notebook_path ?? "");
-      if (!filePath) return null;
-      return {
+      if (!filePath) return [];
+      return [{
         filePath,
         fileName: basename(filePath),
         changeType: "created",
@@ -126,10 +161,10 @@ function extractChange(msg: UIMessage): FileChange | null {
         content: String(toolInput.new_source ?? ""),
         messageId: msg.id,
         timestamp: msg.timestamp,
-      };
+      }];
     }
     default:
-      return null;
+      return [];
   }
 }
 
@@ -158,23 +193,23 @@ function extractSubagentChanges(msg: UIMessage): FileChange[] {
           const parsedStructuredDiff = parseUnifiedDiffFromUnknown(structuredPatch?.diff);
           const parsedDiff = parseUnifiedDiffFromUnknown(step.toolResult?.content);
           const unifiedDiff = firstDefinedString(
-            typeof structuredPatch?.diff === "string" ? structuredPatch.diff : undefined,
+            structuredPatch?.diff,
             typeof step.toolResult?.content === "string" ? step.toolResult.content : undefined,
           );
           oldString = firstDefinedString(
-            typeof structuredPatch?.oldString === "string" ? structuredPatch.oldString : undefined,
+            structuredPatch?.oldString,
             parsedStructuredDiff?.oldString,
             parsedDiff?.oldString,
             step.toolResult?.oldString,
             input.old_string,
-          ) ?? "";
+          );
           newString = firstDefinedString(
-            typeof structuredPatch?.newString === "string" ? structuredPatch.newString : undefined,
+            structuredPatch?.newString,
             parsedStructuredDiff?.newString,
             parsedDiff?.newString,
             step.toolResult?.newString,
             input.new_string,
-          ) ?? "";
+          );
           if (!filePath) continue;
           results.push({
             filePath,
@@ -304,8 +339,7 @@ function collectChangesInRange(
   for (let i = start; i < end; i++) {
     const msg = messages[i];
     if (msg.role === "tool_call") {
-      const change = extractChange(msg);
-      if (change) changes.push(change);
+      changes.push(...extractChanges(msg));
       // Also check subagent steps (Task tool with nested file changes)
       changes.push(...extractSubagentChanges(msg));
     }
