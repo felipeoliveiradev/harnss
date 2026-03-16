@@ -120,15 +120,25 @@ function emitToSessions(type: string, payload: Record<string, unknown>): void {
   }
 }
 
+const FILE_TAG_PREFIXES = ["read_file", "write_file", "edit_file", "delete_file"];
+
 function stripFileTagsForDisplay(text: string): string {
   let result = text;
   result = result.replace(/<read_file\s+path="[^"]+"\s*\/>/g, "");
   result = result.replace(/<write_file\s+path="[^"]+">([\s\S]*?)<\/write_file>/g, "");
   result = result.replace(/<edit_file\s+path="[^"]+">([\s\S]*?)<\/edit_file>/g, "");
   result = result.replace(/<delete_file\s+path="[^"]+"\s*\/>/g, "");
-  result = result.replace(/<write_file\s+path="[^"]*"?>[\s\S]*$/g, "");
-  result = result.replace(/<edit_file\s+path="[^"]*"?>[\s\S]*$/g, "");
-  result = result.replace(/<(?:read_file|write_file|edit_file|delete_file)[\s\S]*$/g, "");
+  result = result.replace(/<write_file[\s\S]*$/g, "");
+  result = result.replace(/<edit_file[\s\S]*$/g, "");
+  result = result.replace(/<read_file[\s\S]*$/g, "");
+  result = result.replace(/<delete_file[\s\S]*$/g, "");
+  const lastLt = result.lastIndexOf("<");
+  if (lastLt !== -1 && lastLt >= result.length - 30) {
+    const tail = result.slice(lastLt + 1).split(/[\s>"\/]/)[0].toLowerCase();
+    if (tail && FILE_TAG_PREFIXES.some(name => name.startsWith(tail))) {
+      result = result.slice(0, lastLt);
+    }
+  }
   result = result.replace(/\n{3,}/g, "\n\n");
   return result;
 }
