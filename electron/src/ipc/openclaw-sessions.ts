@@ -318,16 +318,12 @@ function processCompletedMessage(
     }
   }
 
-  const cleanedText = fullText
-    .replace(/<read_file\s+path="[^"]+"\s*\/>/g, "")
-    .replace(/<write_file\s+path="[^"]+">([\s\S]*?)<\/write_file>/g, "")
-    .replace(/<edit_file\s+path="[^"]+">([\s\S]*?)<\/edit_file>/g, "")
-    .replace(/<delete_file\s+path="[^"]+"\s*\/>/g, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-  emit("chat:final", { message: cleanedText });
+  const cleanedText = stripFileTagsForDisplay(fullText);
 
   if (hadFileOps && results.length > 0) {
+    state.lastEmittedCleanLength = cleanedText.length;
+    emit("chat:delta", { text: cleanedText });
+
     const feedbackParams: Record<string, unknown> = {
       sessionKey: state.sessionKey,
       message: results.join("\n"),
@@ -338,10 +334,12 @@ function processCompletedMessage(
 
     rpcCall("chat.send", feedbackParams).then((result) => {
       state.currentRunId = ((result as Record<string, unknown>)?.runId as string) ?? null;
-      emit("lifecycle:start", {});
+      state.processedCurrentTurn = false;
     }).catch((err) => {
       log("OPENCLAW_FILE_SEND_ERR", (err as Error).message);
     });
+  } else {
+    emit("chat:final", { message: cleanedText });
   }
 }
 
