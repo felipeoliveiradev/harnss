@@ -1,19 +1,67 @@
+import { memo } from "react";
 import type { UIMessage } from "@/types";
 import { parseUnifiedDiffFromUnknown } from "@/lib/unified-diff";
 import { DiffViewer } from "@/components/DiffViewer";
 import { UnifiedPatchViewer } from "@/components/UnifiedPatchViewer";
 import { firstDefinedString } from "@/components/lib/tool-formatting";
+import { getStructuredPatches, getPatchPath, filterValidPatches, type StructuredPatchEntry } from "@/lib/patch-utils";
 import { GenericContent } from "./GenericContent";
 
+// ── Multi-file rendering (Codex fileChange with N > 1 changes) ──
+
+/** Render a single patch entry from a structuredPatch array. */
+const PatchEntryDiff = memo(function PatchEntryDiff({ patch }: { patch: StructuredPatchEntry }) {
+  const filePath = getPatchPath(patch);
+  const diffText = patch.diff ?? "";
+  const parsedDiff = diffText ? parseUnifiedDiffFromUnknown(diffText) : null;
+  const oldStr = firstDefinedString(patch.oldString, parsedDiff?.oldString);
+  const newStr = firstDefinedString(patch.newString, parsedDiff?.newString);
+
+  if (oldStr || newStr) {
+    return (
+      <DiffViewer
+        oldString={oldStr}
+        newString={newStr}
+        filePath={filePath}
+        unifiedDiff={hasUnifiedDiffMarkers(diffText) ? diffText : undefined}
+      />
+    );
+  }
+
+  if (diffText) {
+    return <UnifiedPatchViewer diffText={diffText} filePath={filePath} />;
+  }
+
+  return null;
+});
+
+// ── Main component ──
+
 export function EditContent({ message }: { message: UIMessage }) {
-  const structuredPatch = Array.isArray(message.toolResult?.structuredPatch)
-    ? (message.toolResult.structuredPatch as Array<Record<string, unknown>>)
-    : [];
+  const structuredPatch = getStructuredPatches(message.toolResult);
+
+  // Multi-file Codex fileChange: render each file's diff separately
+  if (structuredPatch.length > 1) {
+    const validPatches = filterValidPatches(structuredPatch);
+    if (validPatches.length === 0) return <GenericContent message={message} />;
+    return (
+      <div className="space-y-2">
+        {validPatches.map((patch, i) => (
+          <PatchEntryDiff
+            key={`${getPatchPath(patch)}-${i}`}
+            patch={patch}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  // Single-file: existing logic with full fallback chain
+  // (Claude engine, ACP engine, single-file Codex edits)
   const matchingPatch =
     structuredPatch.find((entry) => {
-      const entryPath = entry.filePath ?? entry.path;
-      return typeof entryPath === "string"
-        && entryPath
+      const entryPath = getPatchPath(entry);
+      return entryPath
         && entryPath === String(message.toolInput?.file_path ?? message.toolResult?.filePath ?? "");
     }) ?? structuredPatch[0];
   const resultContent = typeof message.toolResult?.content === "string"
@@ -22,12 +70,12 @@ export function EditContent({ message }: { message: UIMessage }) {
   const detailedContent = typeof message.toolResult?.detailedContent === "string"
     ? message.toolResult.detailedContent
     : "";
-  const patchDiffText = typeof matchingPatch?.diff === "string" ? matchingPatch.diff : "";
+  const patchDiffText = matchingPatch?.diff ?? "";
   const candidateDiffText = selectUnifiedDiffText(patchDiffText, detailedContent, resultContent);
   const filePath = String(
     message.toolInput?.file_path
       ?? message.toolResult?.filePath
-      ?? (typeof matchingPatch?.filePath === "string" ? matchingPatch.filePath : "")
+      ?? matchingPatch?.filePath
       ?? extractFilePathFromDiff(candidateDiffText)
       ?? "",
   );
@@ -38,7 +86,7 @@ export function EditContent({ message }: { message: UIMessage }) {
   const unifiedDiffText = candidateDiffText;
   // Prefer parsed/structured patch text first; toolInput can be a lossy representation.
   const oldStr = firstDefinedString(
-    typeof matchingPatch?.oldString === "string" ? matchingPatch.oldString : undefined,
+    matchingPatch?.oldString,
     parsedStructuredDiff?.oldString,
     parsedDiff?.oldString,
     parsedDetailedDiff?.oldString,
@@ -46,7 +94,7 @@ export function EditContent({ message }: { message: UIMessage }) {
     message.toolInput?.old_string,
   );
   const newStr = firstDefinedString(
-    typeof matchingPatch?.newString === "string" ? matchingPatch.newString : undefined,
+    matchingPatch?.newString,
     parsedStructuredDiff?.newString,
     parsedDiff?.newString,
     parsedDetailedDiff?.newString,
