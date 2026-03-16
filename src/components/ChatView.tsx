@@ -492,6 +492,7 @@ function ChatViewContent({
     count: rows.length,
     getScrollElement: () => scrollContainerRef.current,
     estimateSize: (index) => estimateRowHeight(rows[index]),
+    getItemKey: (index) => getRowKey(rows[index]),
     overscan: 5,
   });
 
@@ -582,11 +583,16 @@ function ChatViewContent({
   }, [sessionId]);
 
   // ── Content resize (mermaid diagrams etc.) ──
+  // Don't call virtualizer.measure() here — it nukes the entire itemSizeCache,
+  // forcing all items back to estimates and causing layout jumps/overlaps.
+  // The ResizeObserver on each item's measureElement ref already tracks individual
+  // size changes (e.g. mermaid SVG rendering). We only need to maintain scroll lock.
   useEffect(() => {
     const handleContentResize = () => {
-      virtualizer.measure();
       if (bottomLockedRef.current && rows.length > 0) {
-        virtualizer.scrollToIndex(rows.length - 1, { align: "end" });
+        requestAnimationFrame(() => {
+          virtualizer.scrollToIndex(rows.length - 1, { align: "end" });
+        });
       }
     };
     window.addEventListener(CHAT_CONTENT_RESIZED_EVENT, handleContentResize);

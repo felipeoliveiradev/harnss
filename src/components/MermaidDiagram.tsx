@@ -6,9 +6,11 @@ import { useResolvedThemeClass } from "@/hooks/useResolvedThemeClass";
 import { CopyButton } from "./CopyButton";
 
 /** Bump when mermaid config changes to invalidate cached SVGs. */
-const MERMAID_RENDER_VERSION = "5";
+const MERMAID_RENDER_VERSION = "7";
 const MAX_CACHE_ENTRIES = 80;
 const mermaidSvgCache = new Map<string, string>();
+/** Cache parse errors so failed diagrams don't retry on virtualizer remount. */
+const mermaidErrorCache = new Map<string, string>();
 
 // ── Shared theme variables (identical in both light & dark) ─────────────
 
@@ -210,6 +212,63 @@ function evictCache() {
   }
 }
 
+/** Parse a CSS color (hex or rgb()) to relative luminance (0–1). */
+function getColorLuminance(color: string): number | null {
+  const hexMatch = color.match(/^#([0-9a-f]{3,8})$/i);
+  if (hexMatch) {
+    const hex = hexMatch[1];
+    if (hex.length === 3) {
+      const r = parseInt(hex[0] + hex[0], 16);
+      const g = parseInt(hex[1] + hex[1], 16);
+      const b = parseInt(hex[2] + hex[2], 16);
+      return (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    }
+    if (hex.length >= 6) {
+      const r = parseInt(hex.slice(0, 2), 16);
+      const g = parseInt(hex.slice(2, 4), 16);
+      const b = parseInt(hex.slice(4, 6), 16);
+      return (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    }
+    return null;
+  }
+  // Browser normalizes inline styles to rgb(r, g, b)
+  const rgbMatch = color.match(/^rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/);
+  if (rgbMatch) {
+    const r = parseInt(rgbMatch[1], 10);
+    const g = parseInt(rgbMatch[2], 10);
+    const b = parseInt(rgbMatch[3], 10);
+    return (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  }
+  return null;
+}
+
+/**
+ * Fix text contrast in nodes with custom inline fills (from mermaid `style` directives).
+ * Theme-managed fills already pair with correct text colors — only inline overrides break contrast.
+ */
+function fixNodeTextContrast(container: HTMLElement): void {
+  const nodes = container.querySelectorAll(".node");
+  for (const node of nodes) {
+    const shape = node.querySelector("rect, polygon, circle, ellipse");
+    if (!shape) continue;
+
+    // Only fix nodes with inline fill styles (mermaid `style X fill:...` directives).
+    const inlineFill = (shape as HTMLElement).style?.fill;
+    if (!inlineFill) continue;
+
+    const lum = getColorLuminance(inlineFill);
+    if (lum === null) continue;
+
+    const textColor = lum > 0.5 ? "#1a1a1a" : "#f5f5f5";
+
+    // foreignObject text (flowchart/graph nodes)
+    const labels = node.querySelectorAll(".nodeLabel");
+    for (const label of labels) {
+      (label as HTMLElement).style.color = textColor;
+    }
+  }
+}
+
 // ── Shared wrapper ──────────────────────────────────────────────────────
 
 function MermaidCard({ label, code, children }: { label: string; code: string; children: ReactNode }) {
@@ -263,10 +322,23 @@ export function MermaidDiagram({ code, isStreaming }: MermaidDiagramProps) {
       return;
     }
 
+    // Check caches — success cache first, then error cache to avoid
+    // retrying failed renders on virtualizer remount (which causes an
+    // infinite unmount/remount loop from height changes between states).
     const cached = mermaidSvgCache.get(cacheKey);
     if (cached) {
       container.innerHTML = cached;
       setError(null);
+      requestAnimationFrame(() => {
+        window.dispatchEvent(new Event(CHAT_CONTENT_RESIZED_EVENT));
+      });
+      return;
+    }
+
+    const cachedError = mermaidErrorCache.get(cacheKey);
+    if (cachedError) {
+      container.innerHTML = "";
+      setError(cachedError);
       return;
     }
 
@@ -277,18 +349,49 @@ export function MermaidDiagram({ code, isStreaming }: MermaidDiagramProps) {
         setError(null);
 
         const id = `mermaid-${requestId}-${Math.random().toString(36).slice(2, 9)}`;
-        const { svg: renderedSvg } = await mermaid.render(id, code, container!);
+        // Don't pass our container to mermaid.render() — mermaid uses the
+        // container for DOM measurements (getBBox, getBoundingClientRect).
+        // The virtualizer can unmount this component mid-render, detaching
+        // the container and crashing mermaid. Without a container arg,
+        // mermaid creates its own temp element in document.body.
+        const { svg: renderedSvg } = await mermaid.render(id, code);
 
         if (renderRequestRef.current !== requestId) return;
 
-        mermaidSvgCache.set(cacheKey, renderedSvg);
-        evictCache();
         container!.innerHTML = renderedSvg;
+
+        // Fix SVG dimensions: mermaid sets width="100%" + max-width style,
+        // which forces all diagrams to stretch to container width. Convert to
+        // pixel width so diagrams use their natural size (small ones stay small,
+        // wide ones extend and the container scrolls horizontally).
+        const svg = container!.querySelector("svg");
+        if (svg) {
+          const maxW = svg.style.maxWidth;
+          if (svg.getAttribute("width") === "100%" && maxW) {
+            svg.setAttribute("width", maxW);
+            svg.style.maxWidth = "";
+          }
+        }
+
+        // Fix text contrast for nodes with custom inline fills (e.g. `style DEV fill:#e1f5ff`).
+        // Mermaid doesn't adjust text color to match custom fills, so light fills
+        // get light text in dark mode (invisible). Runs before caching.
+        fixNodeTextContrast(container!);
+
+        mermaidSvgCache.set(cacheKey, container!.innerHTML);
+        evictCache();
+
+        // Notify virtualizer that content height changed after async render
+        requestAnimationFrame(() => {
+          window.dispatchEvent(new Event(CHAT_CONTENT_RESIZED_EVENT));
+        });
       } catch (err) {
         if (renderRequestRef.current !== requestId) return;
 
         container!.innerHTML = "";
-        setError(reportError("MERMAID_RENDER", err));
+        const errorMsg = reportError("MERMAID_RENDER", err);
+        mermaidErrorCache.set(cacheKey, errorMsg);
+        setError(errorMsg);
       }
     }
 
@@ -299,17 +402,6 @@ export function MermaidDiagram({ code, isStreaming }: MermaidDiagramProps) {
         container.innerHTML = "";
       }
     };
-  }, [cacheKey, isStreaming]);
-
-  // Notify ChatView that async content changed size (for scroll settling)
-  useEffect(() => {
-    if (typeof window === "undefined" || isStreaming || !containerRef.current?.innerHTML) return;
-
-    const frame = window.requestAnimationFrame(() => {
-      window.dispatchEvent(new Event(CHAT_CONTENT_RESIZED_EVENT));
-    });
-
-    return () => window.cancelAnimationFrame(frame);
   }, [cacheKey, isStreaming]);
 
   if (error) {
@@ -339,7 +431,7 @@ export function MermaidDiagram({ code, isStreaming }: MermaidDiagramProps) {
     <MermaidCard label="mermaid" code={code}>
       <div
         ref={containerRef}
-        className="flex min-h-24 items-center justify-center overflow-x-auto p-4 [&_svg]:h-auto [&_svg]:max-w-full [&_svg]:min-w-full [&_svg]:w-full"
+        className="flex min-h-24 items-center justify-center overflow-x-auto p-4 [&_svg]:h-auto"
       />
     </MermaidCard>
   );

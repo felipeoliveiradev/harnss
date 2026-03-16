@@ -325,8 +325,6 @@ export const MessageBubble = memo(function MessageBubble({
   // reliably — e.g. after session switch-back, persistence restore, or within
   // Radix ScrollArea. Always rendering markdown is fast enough for individual
   // messages; for truly long chats, proper virtualization should be used instead.
-  const hasMermaidContent = containsMermaidFence(message.content);
-
   const hasRenderableAssistantContent = !!message.content || (showThinking && !!message.thinking);
   if (!hasRenderableAssistantContent) {
     return null;
@@ -336,7 +334,7 @@ export const MessageBubble = memo(function MessageBubble({
     <div className={`flex justify-start px-4 ${isContinuation ? "py-0.5" : "py-1.5"}`}>
       <Tooltip>
         <TooltipTrigger asChild>
-          <div className={cn("min-w-0 wrap-break-word", hasMermaidContent ? "w-full max-w-[50%]" : "max-w-[85%]")}>
+          <div className="min-w-0 wrap-break-word max-w-[85%]">
             {showThinking && message.thinking && (
               <div className={message.content ? "mb-2" : undefined}>
                 <ThinkingBlock
