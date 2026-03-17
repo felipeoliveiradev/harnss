@@ -379,4 +379,19 @@ contextBridge.exposeInMainWorld("claude", {
     check: () => ipcRenderer.invoke("updater:check"),
     currentVersion: () => ipcRenderer.invoke("updater:current-version") as Promise<string>,
   },
+  groups: {
+    list: () => ipcRenderer.invoke("group:list"),
+    create: (group: unknown) => ipcRenderer.invoke("group:create", group),
+    update: (group: unknown) => ipcRenderer.invoke("group:update", group),
+    delete: (groupId: string) => ipcRenderer.invoke("group:delete", groupId),
+    startSession: (params: { groupId: string; prompt: string; cwd?: string }) =>
+      ipcRenderer.invoke("group:start-session", params),
+    stopSession: (sessionId: string) => ipcRenderer.invoke("group:stop-session", sessionId),
+    getSession: (sessionId: string) => ipcRenderer.invoke("group:get-session", sessionId),
+    onEvent: (callback: (data: unknown) => void) => {
+      const listener = (_event: IpcRendererEvent, data: unknown) => callback(data);
+      ipcRenderer.on("group:event", listener);
+      return () => ipcRenderer.removeListener("group:event", listener);
+    },
+  },
 });

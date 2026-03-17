@@ -1,5 +1,5 @@
 import { memo, useCallback, useMemo, useState } from "react";
-import { Terminal, Globe, GitBranch, FolderTree, ListTodo, Bot, Plug, SquareArrowOutUpRight, ArrowDown, ArrowRight } from "lucide-react";
+import { Terminal, Globe, GitBranch, FolderTree, ListTodo, Bot, Plug, Users, SquareArrowOutUpRight, ArrowDown, ArrowRight } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   DropdownMenu,
@@ -9,7 +9,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
-export type ToolId = "terminal" | "browser" | "git" | "files" | "project-files" | "tasks" | "agents" | "mcp";
+export type ToolId = "terminal" | "browser" | "git" | "files" | "project-files" | "tasks" | "agents" | "mcp" | "groups";
 
 /** SVG circular progress ring that wraps the tool icon button. */
 function ToolProgressRing({ progress, isComplete, size }: { progress: number; isComplete: boolean; size: number }) {
@@ -62,6 +62,7 @@ const TOOL_TINTS: Record<string, { idle: string; hover: string; active: string }
   mcp:             { idle: "text-violet-600/70 dark:text-violet-200/50",    hover: "hover:text-violet-600/90 dark:hover:text-violet-200/70",   active: "text-violet-600 dark:text-violet-200/90" },
   tasks:           { idle: "text-blue-600/70 dark:text-blue-200/50",        hover: "hover:text-blue-600/90 dark:hover:text-blue-200/70",       active: "text-blue-600 dark:text-blue-200/90" },
   agents:          { idle: "text-indigo-600/70 dark:text-indigo-200/50",    hover: "hover:text-indigo-600/90 dark:hover:text-indigo-200/70",   active: "text-indigo-600 dark:text-indigo-200/90" },
+  groups:          { idle: "text-pink-600/70 dark:text-pink-200/50",      hover: "hover:text-pink-600/90 dark:hover:text-pink-200/70",      active: "text-pink-600 dark:text-pink-200/90" },
 };
 
 interface ToolDef {
@@ -76,6 +77,7 @@ const PANEL_TOOLS_MAP: Record<string, ToolDef> = {
   git: { id: "git", label: "Source Control", icon: GitBranch },
   "project-files": { id: "project-files", label: "Files", icon: FolderTree },
   mcp: { id: "mcp", label: "MCP Servers", icon: Plug },
+  groups: { id: "groups", label: "Agent Groups", icon: Users },
 };
 
 /** Tool IDs that render in the tools column (not contextual right-panel tools). */
