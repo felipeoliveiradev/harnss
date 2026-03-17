@@ -1,7 +1,7 @@
 import type { UIMessage, SubagentToolStep } from "@/types";
 import { getMcpCompactSummary } from "@/components/McpToolContent";
 import { getTodoItems } from "@/lib/todo-utils";
-import { getStructuredPatches } from "@/lib/patch-utils";
+import { getDistinctPatchPaths, getStructuredPatches } from "@/lib/patch-utils";
 
 // ── Compact summary for collapsed tool line ──
 
@@ -65,8 +65,9 @@ export function formatCompactSummary(message: UIMessage): string {
   if (input.command) return String(input.command).split("\n")[0];
   // Multi-file Codex edits: show file count instead of single filename
   const patches = getStructuredPatches(result);
-  if (input.file_path && patches.length > 1) {
-    return `${patches.length} files`;
+  const patchPaths = getDistinctPatchPaths(patches);
+  if (input.file_path && patchPaths.length > 1) {
+    return `${patchPaths.length} files`;
   }
   if (input.file_path) return String(input.file_path).split("/").pop() ?? "";
   if (filePathFromResult) return filePathFromResult.split("/").pop() ?? filePathFromResult;

@@ -4,7 +4,13 @@ import { parseUnifiedDiffFromUnknown } from "@/lib/unified-diff";
 import { DiffViewer } from "@/components/DiffViewer";
 import { UnifiedPatchViewer } from "@/components/UnifiedPatchViewer";
 import { firstDefinedString } from "@/components/lib/tool-formatting";
-import { getStructuredPatches, getPatchPath, filterValidPatches, type StructuredPatchEntry } from "@/lib/patch-utils";
+import {
+  getStructuredPatches,
+  getPatchPath,
+  filterValidPatches,
+  isMultiFileStructuredPatch,
+  type StructuredPatchEntry,
+} from "@/lib/patch-utils";
 import { GenericContent } from "./GenericContent";
 
 // ── Multi-file rendering (Codex fileChange with N > 1 changes) ──
@@ -41,7 +47,7 @@ export function EditContent({ message }: { message: UIMessage }) {
   const structuredPatch = getStructuredPatches(message.toolResult);
 
   // Multi-file Codex fileChange: render each file's diff separately
-  if (structuredPatch.length > 1) {
+  if (isMultiFileStructuredPatch(structuredPatch)) {
     const validPatches = filterValidPatches(structuredPatch);
     if (validPatches.length === 0) return <GenericContent message={message} />;
     return (

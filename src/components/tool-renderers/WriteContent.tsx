@@ -8,7 +8,13 @@ import { useResolvedThemeClass } from "@/hooks/useResolvedThemeClass";
 import { parseUnifiedDiff } from "@/lib/unified-diff";
 import { UnifiedPatchViewer } from "@/components/UnifiedPatchViewer";
 import { OpenInEditorButton } from "@/components/OpenInEditorButton";
-import { getStructuredPatches, getPatchPath, filterValidPatches, type StructuredPatchEntry } from "@/lib/patch-utils";
+import {
+  getStructuredPatches,
+  getPatchPath,
+  filterValidPatches,
+  isMultiFileStructuredPatch,
+  type StructuredPatchEntry,
+} from "@/lib/patch-utils";
 import { GenericContent } from "./GenericContent";
 
 // ── Stable style constants (avoid re-creating on every render) ──
@@ -55,7 +61,7 @@ export function WriteContent({ message }: { message: UIMessage }) {
   const structuredPatch = getStructuredPatches(message.toolResult);
 
   // Multi-file Codex fileChange: render each new file separately
-  if (structuredPatch.length > 1) {
+  if (isMultiFileStructuredPatch(structuredPatch)) {
     const validPatches = filterValidPatches(structuredPatch);
     if (validPatches.length === 0) return <GenericContent message={message} />;
     return (

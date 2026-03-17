@@ -1,6 +1,11 @@
 import type { UIMessage } from "../types";
 import { parseUnifiedDiffFromUnknown } from "./unified-diff";
-import { getStructuredPatches, getPatchPath, type StructuredPatchEntry } from "./patch-utils";
+import {
+  getStructuredPatches,
+  getPatchPath,
+  isMultiFileStructuredPatch,
+  type StructuredPatchEntry,
+} from "./patch-utils";
 import { firstDefinedString } from "@/components/lib/tool-formatting";
 
 // ── Types ──
@@ -63,7 +68,7 @@ function extractChanges(msg: UIMessage): FileChange[] {
   switch (toolName) {
     case "Edit": {
       // Multi-file Codex fileChange: one FileChange per patch entry
-      if (patches.length > 1) {
+      if (isMultiFileStructuredPatch(patches)) {
         const results: FileChange[] = [];
         for (const patch of patches) {
           const patchPath = getPatchPath(patch);
@@ -119,7 +124,7 @@ function extractChanges(msg: UIMessage): FileChange[] {
     }
     case "Write": {
       // Multi-file Codex fileChange (all adds)
-      if (patches.length > 1) {
+      if (isMultiFileStructuredPatch(patches)) {
         const results: FileChange[] = [];
         for (const patch of patches) {
           const patchPath = getPatchPath(patch);

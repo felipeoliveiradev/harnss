@@ -43,6 +43,10 @@ interface CodexSession {
   eventCounter: number;
   cwd: string;
   model?: string;
+  /** Approval policy for the session — passed to turn/start and lazy thread/start */
+  approvalPolicy?: string;
+  /** Sandbox policy for the session — passed to lazy thread/start */
+  sandbox?: string;
 }
 
 import { SUPPORTED_SERVER_REQUESTS, isSupportedServerRequestMethod, pickModelId } from "@shared/lib/codex-helpers";
@@ -258,6 +262,8 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
           eventCounter: 0,
           cwd: options.cwd,
           model: undefined,
+          approvalPolicy: options.approvalPolicy,
+          sandbox: options.sandbox,
         };
         codexSessions.set(internalId, session);
         setupCodexHandlers(rpc, session, internalId, getMainWindow);
@@ -374,6 +380,8 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
             persistExtendedHistory: false,
           };
           if (session.model) threadParams.model = session.model;
+          if (session.approvalPolicy) threadParams.approvalPolicy = session.approvalPolicy;
+          if (session.sandbox) threadParams.sandbox = session.sandbox;
           const threadResult = await session.rpc.request<CodexThreadStartResponse>("thread/start", threadParams);
           session.threadId = threadResult.thread.id;
           log(
@@ -388,7 +396,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
 
       log(
         "codex",
-        ` Send requested: session=${shortId(data.sessionId, 12)} thread=${shortId(session.threadId, 12)} text_len=${data.text.length} images=${data.images?.length ?? 0} effort=${data.effort ?? "default"} collab=${data.collaborationMode?.mode ?? "none"} activeTurn=${session.activeTurnId ? shortId(session.activeTurnId, 12) : "none"}`,
+        ` Send requested: session=${shortId(data.sessionId, 12)} thread=${shortId(session.threadId, 12)} text_len=${data.text.length} images=${data.images?.length ?? 0} effort=${data.effort ?? "default"} collab=${data.collaborationMode?.mode ?? "none"} approval=${session.approvalPolicy ?? "default"} activeTurn=${session.activeTurnId ? shortId(session.activeTurnId, 12) : "none"}`,
       );
 
       try {
@@ -405,6 +413,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
           ...(session.model ? { model: session.model } : {}),
           ...(data.effort ? { effort: data.effort } : {}),
           ...(data.collaborationMode ? { collaborationMode: data.collaborationMode } : {}),
+          ...(session.approvalPolicy ? { approvalPolicy: session.approvalPolicy } : {}),
         };
 
 
@@ -703,6 +712,8 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
           eventCounter: 0,
           cwd: data.cwd,
           model: data.model,
+          approvalPolicy: data.approvalPolicy,
+          sandbox: data.sandbox,
         };
         codexSessions.set(internalId, session);
         setupCodexHandlers(rpc, session, internalId, getMainWindow);

@@ -19,6 +19,11 @@ export interface StructuredPatchEntry {
   diff?: string;
   oldString?: string;
   newString?: string;
+  oldStart?: number;
+  oldLines?: number;
+  newStart?: number;
+  newLines?: number;
+  lines?: string[];
 }
 
 // ── Extraction ──
@@ -42,4 +47,28 @@ export function filterValidPatches(
   patches: StructuredPatchEntry[],
 ): StructuredPatchEntry[] {
   return patches.filter((p) => getPatchPath(p) !== "");
+}
+
+/** Return the distinct non-empty file paths represented in a structuredPatch array. */
+export function getDistinctPatchPaths(
+  patches: StructuredPatchEntry[],
+): string[] {
+  const seen = new Set<string>();
+  const paths: string[] = [];
+
+  for (const patch of patches) {
+    const patchPath = getPatchPath(patch);
+    if (!patchPath || seen.has(patchPath)) continue;
+    seen.add(patchPath);
+    paths.push(patchPath);
+  }
+
+  return paths;
+}
+
+/** True only when structuredPatch entries clearly represent multiple files. */
+export function isMultiFileStructuredPatch(
+  patches: StructuredPatchEntry[],
+): boolean {
+  return getDistinctPatchPaths(patches).length > 1;
 }
