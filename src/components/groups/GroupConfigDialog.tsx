@@ -1,5 +1,5 @@
-import { useState, useCallback, memo } from "react";
-import { Plus, Trash2, Crown, X } from "lucide-react";
+import { useState, useCallback, useEffect, useRef, memo } from "react";
+import { Plus, Trash2, Crown, X, Sparkles, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { AgentGroup, AgentSlot } from "@/types/groups";
 import { SLOT_COLORS } from "@/types/groups";
@@ -10,6 +10,12 @@ const ENGINES: { id: EngineId; label: string }[] = [
   { id: "openclaw", label: "OpenClaw" },
   { id: "codex", label: "Codex" },
   { id: "acp", label: "ACP" },
+];
+
+const CLAUDE_MODELS = [
+  { id: "claude-sonnet-4-6", label: "Sonnet 4.6" },
+  { id: "claude-opus-4-6", label: "Opus 4.6" },
+  { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5" },
 ];
 
 const TURN_ORDERS = [
@@ -51,6 +57,69 @@ export const GroupConfigDialog = memo(function GroupConfigDialog({
       },
     ],
   );
+
+  const [openclawAgents, setOpenclawAgents] = useState<string[]>([]);
+  const [aiPrompt, setAiPrompt] = useState("");
+  const [generating, setGenerating] = useState(false);
+  const [showAiGen, setShowAiGen] = useState(!group);
+  const fetchedAgents = useRef(false);
+
+  useEffect(() => {
+    if (fetchedAgents.current) return;
+    fetchedAgents.current = true;
+    window.claude.openclaw.listAgents().then((result) => {
+      if (result.agents && Array.isArray(result.agents)) {
+        const ids = result.agents.map((a: unknown) =>
+          typeof a === "string" ? a : (a as { agentId?: string })?.agentId ?? ""
+        ).filter(Boolean);
+        setOpenclawAgents(ids);
+      }
+    }).catch(() => {});
+  }, []);
+
+  const handleGenerateTeam = useCallback(async () => {
+    if (!aiPrompt.trim()) return;
+    setGenerating(true);
+    try {
+      const agentList = openclawAgents.length > 0
+        ? `Available OpenClaw agents: ${openclawAgents.join(", ")}.`
+        : "";
+      const systemPrompt = `You are a team composition AI. Given a task description, generate an optimal agent team configuration as JSON.
+${agentList}
+Available Claude models: claude-sonnet-4-6 (fast), claude-opus-4-6 (powerful), claude-haiku-4-5-20251001 (lightweight).
+Available engines: claude, openclaw, codex.
+
+Respond with ONLY valid JSON in this exact format, no other text:
+{"name": "Team Name", "turnOrder": "leader-decides", "slots": [{"label": "Role Name", "engine": "claude", "model": "claude-sonnet-4-6", "role": "leader"}, {"label": "Role Name", "engine": "openclaw", "model": "default", "agentId": "sofi", "role": "member"}]}
+
+Task: ${aiPrompt.trim()}`;
+
+      const result = await window.claude.generateTitle(systemPrompt);
+      if (result?.title) {
+        const jsonMatch = result.title.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          if (parsed.name) setName(parsed.name);
+          if (parsed.turnOrder) setTurnOrder(parsed.turnOrder);
+          if (Array.isArray(parsed.slots)) {
+            setSlots(
+              parsed.slots.map((s: Record<string, string>, i: number) => ({
+                id: createSlotId(),
+                label: s.label || `Agent ${i + 1}`,
+                engine: (s.engine || "claude") as EngineId,
+                model: s.model || "claude-sonnet-4-6",
+                agentId: s.agentId,
+                role: s.role === "leader" ? "leader" as const : "member" as const,
+                color: SLOT_COLORS[i % SLOT_COLORS.length],
+              })),
+            );
+          }
+          setShowAiGen(false);
+        }
+      }
+    } catch {}
+    setGenerating(false);
+  }, [aiPrompt, openclawAgents]);
 
   const handleAddSlot = useCallback(() => {
     const colorIndex = slots.length % SLOT_COLORS.length;
@@ -115,6 +184,44 @@ export const GroupConfigDialog = memo(function GroupConfigDialog({
         </div>
 
         <div className="flex-1 overflow-y-auto px-4 py-3">
+          {showAiGen && !group && (
+            <div className="mb-4 rounded-lg border border-purple-500/20 bg-purple-500/[0.04] p-3">
+              <div className="mb-2 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-purple-400">
+                <Sparkles className="h-3 w-3" />
+                AI Team Generator
+              </div>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={aiPrompt}
+                  onChange={(e) => setAiPrompt(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") handleGenerateTeam(); }}
+                  placeholder="Describe your task... e.g. 'code review for a React app'"
+                  disabled={generating}
+                  className="h-8 flex-1 rounded-md border border-foreground/10 bg-background px-2.5 text-sm text-foreground outline-none focus:border-purple-500/30 focus:ring-1 focus:ring-purple-500/20 disabled:opacity-50"
+                />
+                <Button
+                  size="sm"
+                  onClick={handleGenerateTeam}
+                  disabled={!aiPrompt.trim() || generating}
+                  className="h-8 shrink-0"
+                >
+                  {generating ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Sparkles className="h-3.5 w-3.5" />
+                  )}
+                </Button>
+              </div>
+              <button
+                onClick={() => setShowAiGen(false)}
+                className="mt-2 text-[10px] text-muted-foreground hover:text-foreground"
+              >
+                or configure manually
+              </button>
+            </div>
+          )}
+
           <div className="mb-4">
             <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
               Group Name
@@ -154,10 +261,18 @@ export const GroupConfigDialog = memo(function GroupConfigDialog({
             <label className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
               Agent Slots ({slots.length})
             </label>
-            <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={handleAddSlot}>
-              <Plus className="me-1 h-3 w-3" />
-              Add Agent
-            </Button>
+            <div className="flex items-center gap-1">
+              {!showAiGen && !group && (
+                <Button variant="ghost" size="sm" className="h-6 text-xs text-purple-400" onClick={() => setShowAiGen(true)}>
+                  <Sparkles className="me-1 h-3 w-3" />
+                  AI Generate
+                </Button>
+              )}
+              <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={handleAddSlot}>
+                <Plus className="me-1 h-3 w-3" />
+                Add Agent
+              </Button>
+            </div>
           </div>
 
           <div className="flex flex-col gap-2">
@@ -198,7 +313,7 @@ export const GroupConfigDialog = memo(function GroupConfigDialog({
                   <select
                     value={slot.engine}
                     onChange={(e) => handleSlotChange(slot.id, "engine", e.target.value)}
-                    className="h-7 flex-1 rounded border border-foreground/10 bg-background px-1.5 text-xs text-foreground outline-none focus:border-foreground/30"
+                    className="h-7 rounded border border-foreground/10 bg-background px-1.5 text-xs text-foreground outline-none focus:border-foreground/30"
                   >
                     {ENGINES.map((eng) => (
                       <option key={eng.id} value={eng.id}>
@@ -206,21 +321,36 @@ export const GroupConfigDialog = memo(function GroupConfigDialog({
                       </option>
                     ))}
                   </select>
-                  <input
-                    type="text"
-                    value={slot.model}
-                    onChange={(e) => handleSlotChange(slot.id, "model", e.target.value)}
-                    className="h-7 flex-1 rounded border border-foreground/10 bg-background px-2 text-xs text-foreground outline-none focus:border-foreground/30"
-                    placeholder="Model or agent ID"
-                  />
-                  {slot.engine === "openclaw" && (
+                  {slot.engine === "claude" ? (
+                    <select
+                      value={slot.model}
+                      onChange={(e) => handleSlotChange(slot.id, "model", e.target.value)}
+                      className="h-7 flex-1 rounded border border-foreground/10 bg-background px-1.5 text-xs text-foreground outline-none focus:border-foreground/30"
+                    >
+                      {CLAUDE_MODELS.map((m) => (
+                        <option key={m.id} value={m.id}>{m.label}</option>
+                      ))}
+                    </select>
+                  ) : (
                     <input
                       type="text"
+                      value={slot.model}
+                      onChange={(e) => handleSlotChange(slot.id, "model", e.target.value)}
+                      className="h-7 flex-1 rounded border border-foreground/10 bg-background px-2 text-xs text-foreground outline-none focus:border-foreground/30"
+                      placeholder="Model ID"
+                    />
+                  )}
+                  {slot.engine === "openclaw" && (
+                    <select
                       value={slot.agentId ?? ""}
                       onChange={(e) => handleSlotChange(slot.id, "agentId", e.target.value)}
-                      className="h-7 w-20 rounded border border-foreground/10 bg-background px-2 text-xs text-foreground outline-none focus:border-foreground/30"
-                      placeholder="Agent ID"
-                    />
+                      className="h-7 rounded border border-foreground/10 bg-background px-1.5 text-xs text-foreground outline-none focus:border-foreground/30"
+                    >
+                      <option value="">default</option>
+                      {openclawAgents.map((id) => (
+                        <option key={id} value={id}>{id}</option>
+                      ))}
+                    </select>
                   )}
                 </div>
               </div>
