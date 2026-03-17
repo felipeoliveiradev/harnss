@@ -479,7 +479,7 @@ async function ensureConnection(getMainWindow: () => BrowserWindow | null): Prom
   }
 
   const gatewayUrl = getGatewayUrl();
-  const agentId = getAgentId();
+  const agentId = getAgentId() || "default";
   const sessionKey = shared?.sessionKey || `agent:${agentId}:editor`;
 
   const ws = new WebSocket(gatewayUrl, { rejectUnauthorized: false });
@@ -840,7 +840,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     try {
       await ensureConnection(getMainWindow);
 
-      const agentId = getAgentId();
+      const agentId = getAgentId() || "default";
       const projectName = options.cwd ? path.basename(options.cwd) : sessionId.slice(0, 8);
       shared!.sessionKey = `agent:${agentId}:editor-${projectName}`;
       injectedSessions.clear();

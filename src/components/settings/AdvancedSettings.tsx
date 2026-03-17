@@ -30,6 +30,7 @@ export const AdvancedSettings = memo(function AdvancedSettings({
   const [showJiraBoard, setShowJiraBoard] = useState(false);
   const [openclawGatewayUrl, setOpenclawGatewayUrl] = useState("ws://127.0.0.1:18789");
   const [openclawDefaultModel, setOpenclawDefaultModel] = useState("");
+  const [openclawDefaultAgent, setOpenclawDefaultAgent] = useState("");
   const [openclawDefaultSkills, setOpenclawDefaultSkills] = useState("");
   const [openclawGatewayToken, setOpenclawGatewayToken] = useState("");
   const [gatewayTestStatus, setGatewayTestStatus] = useState<"idle" | "testing" | "connected" | "failed">("idle");
@@ -49,6 +50,7 @@ export const AdvancedSettings = memo(function AdvancedSettings({
       setShowJiraBoard(!!appSettings.showJiraBoard);
       setOpenclawGatewayUrl(appSettings.openclawGatewayUrl || "ws://127.0.0.1:18789");
       setOpenclawDefaultModel(appSettings.openclawDefaultModel || "");
+      setOpenclawDefaultAgent(appSettings.openclawDefaultAgent || "");
       setOpenclawDefaultSkills((appSettings.openclawDefaultSkills ?? []).join(", "));
       setOpenclawGatewayToken(appSettings.openclawGatewayToken || "");
       setIsPaired(!!appSettings.openclawDeviceToken);
@@ -130,6 +132,15 @@ export const AdvancedSettings = memo(function AdvancedSettings({
       const next = value.trim();
       setOpenclawDefaultModel(next);
       await onUpdateAppSettings({ openclawDefaultModel: next });
+    },
+    [onUpdateAppSettings],
+  );
+
+  const handleOpenclawAgentSave = useCallback(
+    async (value: string) => {
+      const next = value.trim();
+      setOpenclawDefaultAgent(next);
+      await onUpdateAppSettings({ openclawDefaultAgent: next });
     },
     [onUpdateAppSettings],
   );
@@ -479,6 +490,24 @@ export const AdvancedSettings = memo(function AdvancedSettings({
                   spellCheck={false}
                   className="h-8 w-60 rounded-md border border-foreground/10 bg-background px-2.5 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground hover:border-foreground/20 focus:border-foreground/30 focus:ring-1 focus:ring-foreground/20"
                   placeholder="e.g. gpt-4o, claude-sonnet-4-6"
+                />
+              </SettingRow>
+
+              <SettingRow
+                label="Default agent"
+                description="Agent ID to route messages to (e.g. sofi, maya, dev). Leave empty for default."
+              >
+                <input
+                  type="text"
+                  value={openclawDefaultAgent}
+                  onChange={(e) => setOpenclawDefaultAgent(e.target.value)}
+                  onBlur={(e) => handleOpenclawAgentSave(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleOpenclawAgentSave(e.currentTarget.value);
+                  }}
+                  spellCheck={false}
+                  className="h-8 w-60 rounded-md border border-foreground/10 bg-background px-2.5 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground hover:border-foreground/20 focus:border-foreground/30 focus:ring-1 focus:ring-foreground/20"
+                  placeholder="e.g. sofi, maya, dev"
                 />
               </SettingRow>
 
