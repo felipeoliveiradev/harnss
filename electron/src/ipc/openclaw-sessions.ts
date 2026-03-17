@@ -1034,9 +1034,12 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     } catch (err) {
       const raw = String((err as Error).message || err);
       let friendly: string;
-      if (raw.includes("ECONNREFUSED")) friendly = `Connection refused — Gateway is not running at ${getGatewayUrl()}`;
-      else if (raw.includes("ENOTFOUND")) friendly = `Host not found — cannot resolve ${getGatewayUrl()}`;
-      else if (raw.includes("timeout")) friendly = `Connection timed out — is the Gateway running at ${getGatewayUrl()}?`;
+      const url = getGatewayUrl();
+      const isDefaultUrl = url === "ws://127.0.0.1:18789";
+      const settingsHint = isDefaultUrl ? ". Configure your Gateway URL in Settings → Advanced" : "";
+      if (raw.includes("ECONNREFUSED")) friendly = `Connection refused — no Gateway running at ${url}${settingsHint}`;
+      else if (raw.includes("ENOTFOUND")) friendly = `Host not found — cannot resolve ${url}${settingsHint}`;
+      else if (raw.includes("timeout")) friendly = `Connection timed out — is the Gateway running at ${url}?${settingsHint}`;
       else friendly = raw;
       return { available: false, error: friendly };
     }
