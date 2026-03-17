@@ -204,11 +204,25 @@ export function useAppOrchestrator() {
     });
   }, [showSettings]);
 
+  const handleFocusPane0FromNotification = useCallback(() => handleFocusPane(0), [handleFocusPane]);
+  const handleFocusPane1FromNotification = useCallback(() => handleFocusPane(1), [handleFocusPane]);
+
   useNotifications({
     pendingPermission: manager.pendingPermission,
     notificationSettings,
     activeSessionId: manager.activeSessionId,
     isProcessing: manager.isProcessing,
+    paneLabel: settings.splitMode ? "Tab 1" : undefined,
+    onNotificationClick: settings.splitMode ? handleFocusPane0FromNotification : undefined,
+  });
+
+  useNotifications({
+    pendingPermission: pane1.pendingPermission,
+    notificationSettings,
+    activeSessionId: pane1.sessionId,
+    isProcessing: pane1.isProcessing,
+    paneLabel: settings.splitMode ? "Tab 2" : undefined,
+    onNotificationClick: settings.splitMode ? handleFocusPane1FromNotification : undefined,
   });
 
   useEffect(() => {
