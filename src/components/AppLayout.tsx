@@ -33,6 +33,8 @@ import { BrowserPanel } from "./BrowserPanel";
 import { GitPanel } from "./GitPanel";
 import { McpPanel } from "./McpPanel";
 import { ProjectFilesPanel } from "./ProjectFilesPanel";
+import { GroupPanel } from "./groups/GroupPanel";
+import { useAgentGroups } from "@/hooks/useAgentGroups";
 import { FilePreviewOverlay } from "./FilePreviewOverlay";
 import { SettingsView } from "./SettingsView";
 import { CodexAuthDialog } from "./CodexAuthDialog";
@@ -115,6 +117,8 @@ export function AppLayout() {
 
   const handleFocusPane0 = useCallback(() => handleFocusPane(0), [handleFocusPane]);
   const handleFocusPane1 = useCallback(() => handleFocusPane(1), [handleFocusPane]);
+
+  const agentGroups = useAgentGroups();
 
   const [openclawAgentId, setOpenclawAgentId] = useState("");
   useEffect(() => {
@@ -1121,6 +1125,19 @@ Link: ${issue.url}`;
                   onRefreshStatus={manager.refreshMcpStatus}
                   onReconnect={manager.reconnectMcpServer}
                   onRestartWithServers={manager.restartWithMcpServers}
+                />
+              ),
+              groups: (
+                <GroupPanel
+                  groups={agentGroups.groups}
+                  messages={agentGroups.messages}
+                  activeSessionStatus={agentGroups.activeSessionStatus}
+                  onCreateGroup={agentGroups.createGroup}
+                  onUpdateGroup={agentGroups.updateGroup}
+                  onDeleteGroup={agentGroups.deleteGroup}
+                  onStartSession={agentGroups.startSession}
+                  onStopSession={agentGroups.stopSession}
+                  projectPath={activeProjectPath}
                 />
               ),
             };

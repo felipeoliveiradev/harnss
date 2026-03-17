@@ -13,6 +13,7 @@ import type { CodexSessionEvent, CodexServerRequest, CodexExitEvent } from "./co
 import type { OpenClawSessionEvent, OpenClawExitEvent, OpenClawStartOptions, OpenClawConnectResult } from "@shared/types/openclaw";
 import type { Model as CodexModel } from "./codex-protocol/v2/Model";
 import type { CollaborationMode } from "./codex-protocol/CollaborationMode";
+import type { AgentGroup, GroupSessionEvent } from "@/types/groups";
 import type {
   JiraProjectConfig,
   JiraBoard,
@@ -398,6 +399,16 @@ declare global {
         install: () => Promise<void>;
         check: () => Promise<unknown>;
         currentVersion: () => Promise<string>;
+      };
+      groups: {
+        list: () => Promise<{ ok: boolean; groups?: AgentGroup[]; error?: string }>;
+        create: (group: AgentGroup) => Promise<{ ok: boolean; group?: AgentGroup; error?: string }>;
+        update: (group: AgentGroup) => Promise<{ ok: boolean; group?: AgentGroup; error?: string }>;
+        delete: (groupId: string) => Promise<{ ok: boolean; error?: string }>;
+        startSession: (params: { groupId: string; prompt: string; cwd?: string }) => Promise<{ ok: boolean; sessionId?: string; error?: string }>;
+        stopSession: (sessionId: string) => Promise<{ ok: boolean; error?: string }>;
+        getSession: (sessionId: string) => Promise<{ ok: boolean; session?: unknown; error?: string }>;
+        onEvent: (callback: (data: GroupSessionEvent) => void) => () => void;
       };
     };
   }
