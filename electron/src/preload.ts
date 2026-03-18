@@ -48,6 +48,10 @@ contextBridge.exposeInMainWorld("claude", {
   stop: (sessionId: string, reason?: string) =>
     ipcRenderer.invoke("claude:stop", { sessionId, reason }),
   interrupt: (sessionId: string) => ipcRenderer.invoke("claude:interrupt", sessionId),
+  stopTask: (sessionId: string, taskId: string) =>
+    ipcRenderer.invoke("claude:stop-task", { sessionId, taskId }),
+  readAgentOutput: (outputFile: string) =>
+    ipcRenderer.invoke("claude:read-agent-output", { outputFile }),
   log: (label: string, data: unknown) => ipcRenderer.send("claude:log", label, data),
   onEvent: (callback: (data: unknown) => void) => {
     const listener = (_event: IpcRendererEvent, data: unknown) => callback(data);
@@ -91,6 +95,7 @@ contextBridge.exposeInMainWorld("claude", {
   restartSession: (sessionId: string, mcpServers?: unknown[], cwd?: string, effort?: string, model?: string) =>
     ipcRenderer.invoke("claude:restart-session", { sessionId, mcpServers, cwd, effort, model }),
   readFile: (filePath: string) => ipcRenderer.invoke("file:read", filePath),
+  writeClipboardText: (text: string) => ipcRenderer.invoke("clipboard:write-text", text),
   openInEditor: (filePath: string, line?: number, editor?: string) => ipcRenderer.invoke("file:open-in-editor", { filePath, line, editor }),
   openExternal: (url: string) => ipcRenderer.invoke("shell:open-external", url),
   generateTitle: (message: string, cwd?: string, engine?: string, sessionId?: string) =>
@@ -125,7 +130,8 @@ contextBridge.exposeInMainWorld("claude", {
     listAll: (cwd: string) => ipcRenderer.invoke("files:list-all", cwd),
     watch: (cwd: string) => ipcRenderer.invoke("files:watch", cwd),
     unwatch: (cwd: string) => ipcRenderer.invoke("files:unwatch", cwd),
-    readMultiple: (cwd: string, paths: string[]) => ipcRenderer.invoke("files:read-multiple", { cwd, paths }),
+    calculateDeepSize: (cwd: string, paths: string[]) => ipcRenderer.invoke("files:calculate-deep-size", { cwd, paths }),
+    readMultiple: (cwd: string, paths: string[], deepPaths?: Set<string>) => ipcRenderer.invoke("files:read-multiple", { cwd, paths, deepPaths: deepPaths ? Array.from(deepPaths) : undefined }),
     createFile: (cwd: string, path: string, content?: string) => ipcRenderer.invoke("files:create-file", { cwd, path, content }),
     createDirectory: (cwd: string, path: string) => ipcRenderer.invoke("files:create-directory", { cwd, path }),
     writeFile: (cwd: string, path: string, content: string) => ipcRenderer.invoke("files:write-file", { cwd, path, content }),

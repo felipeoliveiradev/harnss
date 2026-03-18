@@ -503,36 +503,40 @@ export function useAppOrchestrator() {
     prevSpaceIdRef.current = next;
     if (prev === next) return;
 
-    const spaceProjectIds = new Set(
-      projectManager.projects
-        .filter((p) => (p.spaceId || "default") === next)
-        .map((p) => p.id),
-    );
-
-    if (manager.activeSession && spaceProjectIds.has(manager.activeSession.projectId)) {
-      return;
-    }
-
-    const map = readLastSessionMap();
-    const lastSessionId = map[next];
-    if (lastSessionId) {
-      const session = manager.sessions.find(
-        (s) => s.id === lastSessionId && spaceProjectIds.has(s.projectId),
+    const timer = setTimeout(() => {
+      const spaceProjectIds = new Set(
+        projectManager.projects
+          .filter((p) => (p.spaceId || "default") === next)
+          .map((p) => p.id),
       );
-      if (session) {
-        manager.switchSession(session.id);
+
+      if (manager.activeSession && spaceProjectIds.has(manager.activeSession.projectId)) {
         return;
       }
-    }
 
-    const firstProjectInSpace = projectManager.projects.find(
-      (p) => (p.spaceId || "default") === next,
-    );
-    if (firstProjectInSpace) {
-      void handleNewChat(firstProjectInSpace.id);
-    } else {
-      manager.deselectSession();
-    }
+      const map = readLastSessionMap();
+      const lastSessionId = map[next];
+      if (lastSessionId) {
+        const session = manager.sessions.find(
+          (s) => s.id === lastSessionId && spaceProjectIds.has(s.projectId),
+        );
+        if (session) {
+          manager.switchSession(session.id);
+          return;
+        }
+      }
+
+      const firstProjectInSpace = projectManager.projects.find(
+        (p) => (p.spaceId || "default") === next,
+      );
+      if (firstProjectInSpace) {
+        void handleNewChat(firstProjectInSpace.id);
+      } else {
+        manager.deselectSession();
+      }
+    }, 60);
+
+    return () => clearTimeout(timer);
   }, [spaceManager.activeSpaceId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -685,17 +689,24 @@ export function useAppOrchestrator() {
   }, [manager.activeSessionId]);
 
   useEffect(() => {
+    if (!manager.activeSessionId || manager.isDraft) return;
     const mode = manager.sessionInfo?.permissionMode;
     if (!mode) return;
-    if (mode === "plan") {
-      if (!settings.planMode) settings.setPlanMode(true);
-      manager.setActivePlanMode(true);
-      return;
+    const activePlanMode = !!manager.activeSession?.planMode;
+    const nextPlanMode = mode === "plan";
+    if (settings.planMode !== nextPlanMode) settings.setPlanMode(nextPlanMode);
+    if (activePlanMode !== nextPlanMode) {
+      manager.setActivePlanMode(nextPlanMode);
     }
-    if (settings.planMode) settings.setPlanMode(false);
-    manager.setActivePlanMode(false);
-    if (mode !== settings.permissionMode) settings.setPermissionMode(mode);
-  }, [manager.sessionInfo?.permissionMode]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [
+    manager.activeSessionId,
+    manager.activeSession?.planMode,
+    manager.isDraft,
+    manager.sessionInfo?.permissionMode,
+    manager.setActivePlanMode,
+    settings.planMode,
+    settings.setPlanMode,
+  ]);
 
   useEffect(() => {
     if (!manager.activeSessionId || manager.isDraft || !manager.activeSession) return;

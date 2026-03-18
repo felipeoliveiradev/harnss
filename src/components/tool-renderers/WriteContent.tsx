@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
@@ -7,6 +8,13 @@ import { useResolvedThemeClass } from "@/hooks/useResolvedThemeClass";
 import { parseUnifiedDiff } from "@/lib/unified-diff";
 import { UnifiedPatchViewer } from "@/components/UnifiedPatchViewer";
 import { OpenInEditorButton } from "@/components/OpenInEditorButton";
+import {
+  getStructuredPatches,
+  getPatchPath,
+  filterValidPatches,
+  isMultiFileStructuredPatch,
+  type StructuredPatchEntry,
+} from "@/lib/patch-utils";
 import { GenericContent } from "./GenericContent";
 
 // ── Stable style constants (avoid re-creating on every render) ──
@@ -27,20 +35,55 @@ const WRITE_LINE_NUMBER_STYLE: React.CSSProperties = {
   paddingRight: "1em",
 };
 
+// ── Multi-file rendering (Codex fileChange where all changes are "add") ──
+
+const PatchEntryWrite = memo(function PatchEntryWrite({ patch }: { patch: StructuredPatchEntry }) {
+  const filePath = getPatchPath(patch);
+
+  // Codex reports new-file diffs in unified format — use the patch viewer
+  if (patch.diff) {
+    return <UnifiedPatchViewer diffText={patch.diff} filePath={filePath} />;
+  }
+
+  // Fallback: show newString content if available
+  if (patch.newString) {
+    return <UnifiedPatchViewer diffText={patch.newString} filePath={filePath} />;
+  }
+
+  return null;
+});
+
+// ── Main component ──
+
 export function WriteContent({ message }: { message: UIMessage }) {
   const resolvedTheme = useResolvedThemeClass();
   const syntaxStyle = resolvedTheme === "dark" ? oneDark : oneLight;
+  const structuredPatch = getStructuredPatches(message.toolResult);
+
+  // Multi-file Codex fileChange: render each new file separately
+  if (isMultiFileStructuredPatch(structuredPatch)) {
+    const validPatches = filterValidPatches(structuredPatch);
+    if (validPatches.length === 0) return <GenericContent message={message} />;
+    return (
+      <div className="space-y-2">
+        {validPatches.map((patch, i) => (
+          <PatchEntryWrite
+            key={`${getPatchPath(patch)}-${i}`}
+            patch={patch}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  // Single-file: existing logic
   const filePath = String(
     message.toolInput?.file_path
       ?? message.toolResult?.filePath
       ?? "",
   );
   // Codex "wrote" may have a structuredPatch with a unified diff
-  const structuredPatch = Array.isArray(message.toolResult?.structuredPatch)
-    ? (message.toolResult.structuredPatch as Array<Record<string, unknown>>)
-    : [];
-  const patchDiff = structuredPatch.length > 0
-    && typeof structuredPatch[0].diff === "string"
+  const patchDiff = structuredPatch.length > 0 && structuredPatch[0].diff
     ? structuredPatch[0].diff
     : null;
   // Use UnifiedPatchViewer when the patch is a proper unified diff

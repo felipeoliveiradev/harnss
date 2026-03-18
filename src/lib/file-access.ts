@@ -5,6 +5,7 @@
 
 import { Eye, Pencil, Plus } from "lucide-react";
 import type { UIMessage } from "@/types";
+import { getStructuredPatches, getPatchPath } from "@/lib/patch-utils";
 
 export type AccessType = "read" | "modified" | "created";
 
@@ -205,6 +206,16 @@ export function extractFiles(messages: UIMessage[], cwd?: string, includeClaudeM
         const range = msg.toolName === "Read" ? extractReadRange(msg) : null;
         const totalLines = msg.toolResult?.file?.totalLines;
         recordAccess(filePath, access, msg.timestamp, range, totalLines);
+      }
+      // Multi-file Codex edits: record additional file paths from structuredPatch
+      if (access) {
+        for (const patch of getStructuredPatches(msg.toolResult)) {
+          const patchPath = getPatchPath(patch);
+          if (patchPath && patchPath !== filePath) {
+            const patchAccess: AccessType = patch.kind === "add" ? "created" : access;
+            recordAccess(patchPath, patchAccess, msg.timestamp, null);
+          }
+        }
       }
     }
 

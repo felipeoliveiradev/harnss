@@ -9,7 +9,9 @@
 import type { LucideIcon } from "lucide-react";
 
 interface PanelHeaderProps {
-  icon: LucideIcon;
+  icon?: LucideIcon;
+  /** Custom icon node — takes precedence over `icon` when provided. */
+  iconNode?: React.ReactNode;
   label: string;
   /** Optional content rendered to the right of the label (badges, counts, buttons). */
   children?: React.ReactNode;
@@ -23,6 +25,7 @@ interface PanelHeaderProps {
 
 export function PanelHeader({
   icon: Icon,
+  iconNode,
   label,
   children,
   separator = true,
@@ -33,7 +36,7 @@ export function PanelHeader({
     <>
       <div className={`flex items-center gap-2 ${className}`}>
         <div className="flex h-5 w-5 items-center justify-center rounded-md bg-foreground/[0.04]">
-          <Icon className={`h-3 w-3 shrink-0 ${iconClass}`} />
+          {iconNode ?? (Icon && <Icon className={`h-3 w-3 shrink-0 ${iconClass}`} />)}
         </div>
         <span className="text-[11px] font-semibold tracking-wide text-muted-foreground/80 uppercase">{label}</span>
         {children && <div className="ms-auto flex items-center gap-1.5">{children}</div>}

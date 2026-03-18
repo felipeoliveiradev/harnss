@@ -96,6 +96,7 @@ export function useSessionLifecycle({
     totalCostRef,
     contextUsageRef,
     isProcessingRef,
+    sessionInfoRef,
     liveSessionIdsRef,
     backgroundStoreRef,
     preStartedSessionIdRef,
@@ -756,12 +757,23 @@ export function useSessionLifecycle({
     const id = activeSessionIdRef.current;
     if (!id) return;
 
+    const livePermissionMode = !planMode
+      ? sessionInfoRef.current?.permissionMode?.trim()
+      : undefined;
+    const nextPermissionMode = livePermissionMode && livePermissionMode !== "plan"
+      ? livePermissionMode
+      : startOptionsRef.current.permissionMode;
     const nextOptions = {
       ...startOptionsRef.current,
       planMode,
+      ...(nextPermissionMode ? { permissionMode: nextPermissionMode } : {}),
     };
     const effectiveClaudeMode = getEffectiveClaudePermissionMode(nextOptions);
-    setStartOptions((prev) => ({ ...prev, planMode }));
+    setStartOptions((prev) => ({
+      ...prev,
+      planMode,
+      ...(nextPermissionMode ? { permissionMode: nextPermissionMode } : {}),
+    }));
     if (planMode) capture("plan_mode_entered");
     setSessions((prev) => prev.map((s) => (
       s.id === id ? { ...s, planMode } : s
@@ -786,7 +798,7 @@ export function useSessionLifecycle({
     if (sessionEngine === "claude") {
       engine.setPermissionMode(effectiveClaudeMode);
     }
-  }, [engine.setPermissionMode]);
+  }, [engine.setPermissionMode, sessionInfoRef, startOptionsRef]);
 
   const setActiveThinking = useCallback((thinkingEnabled: boolean) => {
     const id = activeSessionIdRef.current;
