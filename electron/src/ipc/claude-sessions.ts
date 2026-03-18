@@ -208,14 +208,28 @@ function startEventLoop(
   // Maps tool_use_id → tool name, populated from assistant events so tool_result events can
   // reference the name when capturing analytics.
   const toolNameMap = new Map<string, string>();
+  let deltaCounter = 0;
   (async () => {
     try {
       for await (const message of queryHandle) {
         session.eventCounter++;
-        const summary = summarizeEvent(message as Record<string, unknown>);
-        log("EVENT", `${logPrefix} #${session.eventCounter} ${summary}`);
         const msgObj = message as Record<string, unknown>;
-        if (msgObj.type === "assistant" || msgObj.type === "user" || msgObj.type === "result") {
+        // Throttle logging for high-frequency content_block_delta events — they arrive
+        // at ~60/sec during streaming and the deep sanitizeValue() + JSON.stringify in
+        // log() burns significant CPU. Log every 50th delta as a sample.
+        const isStreamDelta = msgObj.type === "stream_event" &&
+          (msgObj.event as Record<string, unknown> | undefined)?.type === "content_block_delta";
+        if (isStreamDelta) {
+          deltaCounter++;
+          if (deltaCounter % 50 === 1) {
+            const summary = summarizeEvent(msgObj);
+            log("EVENT", `${logPrefix} #${session.eventCounter} ${summary} (sampled, ${deltaCounter} deltas total)`);
+          }
+        } else {
+          const summary = summarizeEvent(msgObj);
+          log("EVENT", `${logPrefix} #${session.eventCounter} ${summary}`);
+        }
+        if (msgObj.type === "user" || msgObj.type === "result") {
           log("EVENT_FULL", message);
         }
         safeSend(getMainWindow, "claude:event", { ...(message as object), _sessionId: sessionId });

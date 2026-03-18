@@ -346,8 +346,15 @@ function ChatViewContent({
     return { nonQueuedMessages: nonQueued, queuedMessages: queued };
   }, [messages]);
 
-  // ── Continuation IDs (O(n) forward pass) ──
+  // ── Continuation IDs (O(n) forward pass, cached by message count) ──
+  // Roles don't change during streaming — only content/thinking updates.
+  // Cache by message count so we skip the O(n) scan during content streaming.
+  const cachedContinuationRef = useRef<{ len: number; qLen: number; ids: Set<string> }>({ len: 0, qLen: 0, ids: new Set() });
   const continuationIds = useMemo(() => {
+    const cached = cachedContinuationRef.current;
+    if (nonQueuedMessages.length === cached.len && queuedMessages.length === cached.qLen) {
+      return cached.ids;
+    }
     const ids = new Set<string>();
     let lastRole: string | null = null;
     const allMessages = queuedMessages.length > 0
@@ -367,6 +374,7 @@ function ChatViewContent({
         }
       }
     }
+    cachedContinuationRef.current = { len: nonQueuedMessages.length, qLen: queuedMessages.length, ids };
     return ids;
   }, [nonQueuedMessages, queuedMessages]);
 
@@ -479,13 +487,26 @@ function ChatViewContent({
     for (const key of finalizedGroupKeys) known.add(key);
   }, [finalizedGroupKeys]);
 
-  // ── Processing indicator (useMemo for O(n) scan) ──
+  // ── Processing indicator (O(n) scan, cached when streaming) ──
+  // Once the indicator becomes false (assistant has content/thinking or a tool is running),
+  // it stays false for the rest of the turn — streaming content only grows, never shrinks.
+  // This avoids redundant O(n) scans on every content flush during streaming.
+  const cachedProcessingRef = useRef<{ processing: boolean; value: boolean }>({ processing: false, value: false });
   const showProcessingIndicator = useMemo(() => {
-    if (!isProcessing) return false;
-    return !nonQueuedMessages.some((m) =>
+    if (!isProcessing) {
+      cachedProcessingRef.current = { processing: false, value: false };
+      return false;
+    }
+    // Once hidden during this processing turn, stay hidden
+    if (cachedProcessingRef.current.processing && !cachedProcessingRef.current.value) {
+      return false;
+    }
+    const result = !nonQueuedMessages.some((m) =>
       (m.role === "assistant" && m.isStreaming && (m.content || m.thinking)) ||
       (m.role === "tool_call" && !m.toolResult),
     );
+    cachedProcessingRef.current = { processing: true, value: result };
+    return result;
   }, [isProcessing, nonQueuedMessages]);
 
   // ── Build rows (single O(n) pass — js-combine-iterations) ──

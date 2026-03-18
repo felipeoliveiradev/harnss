@@ -12,7 +12,10 @@ export function mergeStreamingChunk(current: string, incoming: string): string {
   if (incoming.startsWith(current)) return incoming;
   if (current.endsWith(incoming)) return current;
 
-  const maxOverlap = Math.min(current.length, incoming.length);
+  // Cap at 200 chars — SDK thinking deltas are small incremental chunks, so a
+  // 200-char window is more than sufficient for overlap detection. Without the
+  // cap, this O(n*m) scan grows with accumulated thinking text length.
+  const maxOverlap = Math.min(200, current.length, incoming.length);
   for (let overlap = maxOverlap; overlap > 0; overlap -= 1) {
     if (current.endsWith(incoming.slice(0, overlap))) {
       return current + incoming.slice(overlap);

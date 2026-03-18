@@ -414,7 +414,15 @@ html.platform-win32 .drag-region {
   padding-inline-start: 8px !important;
 }
 
-/* ── Tool Call: text shimmer handled by <TextShimmer> component (motion-primitives) ── */
+/* ── Text shimmer — pure CSS animation (no JS runtime overhead) ── */
+@keyframes shimmer {
+  from { background-position: 100% center; }
+  to { background-position: 0% center; }
+}
+
+.animate-shimmer {
+  animation: shimmer var(--shimmer-duration, 2s) linear infinite;
+}
 
 /* ── Search result highlight flash ── */
 @keyframes search-flash {

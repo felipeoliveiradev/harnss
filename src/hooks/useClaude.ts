@@ -84,6 +84,8 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
   const permissionResponseInFlight = useRef(false);
   const respondingPermissionIds = useRef<Set<string>>(new Set());
   const completedPermissionIds = useRef<Set<string>>(new Set());
+  // Throttle timer for thinking-only flushes (invisible content → 250ms instead of 60fps)
+  const thinkingThrottleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Engine-specific reset — runs after base reset via the same sessionId dependency
   useEffect(() => {
@@ -93,6 +95,10 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
     permissionResponseInFlight.current = false;
     respondingPermissionIds.current.clear();
     completedPermissionIds.current.clear();
+    if (thinkingThrottleRef.current) {
+      clearTimeout(thinkingThrottleRef.current);
+      thinkingThrottleRef.current = null;
+    }
 
     // If restoring a mid-stream session, seed the buffer with existing content
     // so that new deltas are appended rather than replacing old content.
@@ -151,6 +157,24 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
   }, [setMessages]);
 
   const scheduleFlush = useCallback(() => {
+    // During the thinking-only phase (no visible text yet), throttle flushes to
+    // 250ms instead of 60fps — the ThinkingBlock is collapsed by default so
+    // updating invisible content at 60fps just burns CPU on cascading useMemo
+    // recomputations in ChatView.
+    if (!buffer.current.getAllText() && buffer.current.getAllThinking()) {
+      if (!thinkingThrottleRef.current) {
+        thinkingThrottleRef.current = setTimeout(() => {
+          thinkingThrottleRef.current = null;
+          flushStreamingToState();
+        }, 250);
+      }
+      return;
+    }
+    // Cancel any pending thinking throttle — visible text is now arriving
+    if (thinkingThrottleRef.current) {
+      clearTimeout(thinkingThrottleRef.current);
+      thinkingThrottleRef.current = null;
+    }
     scheduleRaf(flushStreamingToState);
   }, [scheduleRaf, flushStreamingToState]);
 
@@ -163,6 +187,10 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
     buffer.current.reset();
     streamingIndexRef.current = -1;
     cancelPendingFlush();
+    if (thinkingThrottleRef.current) {
+      clearTimeout(thinkingThrottleRef.current);
+      thinkingThrottleRef.current = null;
+    }
   }, [cancelPendingFlush]);
 
   const handleSubagentEvent = useCallback((event: ClaudeEvent, parentId: string) => {
