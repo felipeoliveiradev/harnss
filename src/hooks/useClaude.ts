@@ -5,8 +5,10 @@ import type {
   SystemInitEvent,
   SystemStatusEvent,
   SystemCompactBoundaryEvent,
+  TaskStartedEvent,
   TaskProgressEvent,
   TaskNotificationEvent,
+  ToolProgressEvent,
   AuthStatusEvent,
   AssistantMessageEvent,
   ToolResultEvent,
@@ -242,24 +244,32 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
       // Filter events by sessionId
       if (event._sessionId && event._sessionId !== sessionIdRef.current) return;
 
-      // Intercept task progress/notification events before parentId routing —
+      // Intercept task lifecycle + tool_progress events before parentId routing —
       // these are top-level metadata for background agents, not subagent streaming content.
-      // Note: task_started fires for ALL agents (foreground + background), so we don't
-      // register from it. Background agents are registered from the tool_result with isAsync.
       if (event.type === "system" && "subtype" in event) {
         const sub = (event as { subtype: string }).subtype;
+        if (sub === "task_started") {
+          const sid = sessionIdRef.current;
+          if (sid) bgAgentStore.handleTaskStarted(sid, event as TaskStartedEvent);
+          return;
+        }
         if (sub === "task_progress") {
           const sid = sessionIdRef.current;
-          if (!sid) return;
-          bgAgentStore.handleTaskProgress(sid, event as TaskProgressEvent);
+          if (sid) bgAgentStore.handleTaskProgress(sid, event as TaskProgressEvent);
           return;
         }
         if (sub === "task_notification") {
           const sid = sessionIdRef.current;
-          if (!sid) return;
-          bgAgentStore.handleTaskNotification(sid, event as TaskNotificationEvent);
+          if (sid) bgAgentStore.handleTaskNotification(sid, event as TaskNotificationEvent);
           return;
         }
+      }
+
+      // Route tool_progress events to background agent cards (real-time tool indicator)
+      if (event.type === "tool_progress") {
+        const sid = sessionIdRef.current;
+        if (sid) bgAgentStore.handleToolProgress(sid, event as ToolProgressEvent);
+        return;
       }
 
       const parentId = getParentId(event);
@@ -588,6 +598,9 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
                 description: String(resultMeta.description ?? "Background agent"),
                 outputFile: resultMeta.outputFile,
               });
+            } else if (!resultMeta?.isAsync && toolUseId && (toolName === "Task" || toolName === "Agent")) {
+              // Foreground agent — remove pending entry created by task_started
+              bgAgentStore.removePendingAgent(sessionIdRef.current!, toolUseId);
             }
 
             setMessages((prev) =>

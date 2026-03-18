@@ -7,8 +7,10 @@ import type {
   SystemInitEvent,
   SystemStatusEvent,
   SystemCompactBoundaryEvent,
+  TaskStartedEvent,
   TaskProgressEvent,
   TaskNotificationEvent,
+  ToolProgressEvent,
   SubagentToolStep,
 } from "../types";
 import {
@@ -162,11 +164,13 @@ export function handleClaudeEvent(
   const sessionId = event._sessionId;
   if (!sessionId) return undefined;
 
-  // Route task progress/notification events to the shared background agent store.
-  // task_started is NOT handled — it fires for all agents, not just background.
-  // Background agents are registered from the tool_result with isAsync.
+  // Route task lifecycle + tool_progress events to the shared background agent store.
   if (event.type === "system" && "subtype" in event) {
     const sub = (event as { subtype: string }).subtype;
+    if (sub === "task_started") {
+      bgAgentStore.handleTaskStarted(sessionId, event as TaskStartedEvent);
+      return undefined;
+    }
     if (sub === "task_progress") {
       bgAgentStore.handleTaskProgress(sessionId, event as TaskProgressEvent);
       return undefined;
@@ -175,6 +179,12 @@ export function handleClaudeEvent(
       bgAgentStore.handleTaskNotification(sessionId, event as TaskNotificationEvent);
       return undefined;
     }
+  }
+
+  // Route tool_progress events to background agent cards
+  if (event.type === "tool_progress") {
+    bgAgentStore.handleToolProgress(sessionId, event as ToolProgressEvent);
+    return undefined;
   }
 
   const parentId = getParentId(event);

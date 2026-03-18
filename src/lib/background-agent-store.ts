@@ -1,5 +1,5 @@
 import type { BackgroundAgent } from "@/types";
-import type { TaskProgressEvent, TaskNotificationEvent } from "@/types";
+import type { TaskStartedEvent, TaskProgressEvent, TaskNotificationEvent, ToolProgressEvent } from "@/types";
 import { capture } from "./analytics";
 
 type Listener = (sessionId: string) => void;
@@ -17,8 +17,12 @@ interface AsyncAgentInfo {
  * Only tracks BACKGROUND (async) agents — foreground agents use the
  * existing parentToolMap/subagentSteps system in useClaude.
  *
- * Registration: from tool_result with isAsync: true (definitive async signal).
- * Updates: from task_progress events (live metrics) and task-notification XML
+ * Registration: eagerly from task_started (pending), confirmed from
+ * tool_result with isAsync: true. Foreground agents cleaned up via
+ * removePendingAgent when their tool_result arrives without isAsync.
+ *
+ * Updates: from task_progress events (live metrics + AI summaries),
+ * tool_progress events (current tool), and task-notification XML
  * in user messages (completion).
  */
 class BackgroundAgentStore {
@@ -43,7 +47,10 @@ class BackgroundAgentStore {
     const cached = this.snapshotCache.get(sessionId);
     if (cached) return cached;
     const map = this.agents.get(sessionId);
-    const arr = map ? Array.from(map.values()) : [];
+    // Filter out pending agents that haven't been confirmed yet
+    const arr = map
+      ? Array.from(map.values()).filter((a) => !a.isPending)
+      : [];
     this.snapshotCache.set(sessionId, arr);
     return arr;
   }
@@ -54,10 +61,43 @@ class BackgroundAgentStore {
     this.notify(sessionId);
   }
 
+  // ── Phase 4: Early registration from task_started ──
+
+  /**
+   * Eagerly register an agent from task_started event.
+   * Creates a pending entry that will be confirmed by registerAsyncAgent
+   * or removed by removePendingAgent (for foreground agents).
+   */
+  handleTaskStarted(sessionId: string, event: TaskStartedEvent): void {
+    if (!event.tool_use_id) return;
+    let map = this.agents.get(sessionId);
+    if (!map) {
+      map = new Map();
+      this.agents.set(sessionId, map);
+    }
+    // Don't overwrite if already registered (registerAsyncAgent beat us)
+    if (map.has(event.tool_use_id)) return;
+
+    map.set(event.tool_use_id, {
+      agentId: event.task_id,
+      description: event.description,
+      prompt: "",
+      outputFile: "",
+      launchedAt: Date.now(),
+      status: "running",
+      activity: [],
+      toolUseId: event.tool_use_id,
+      taskId: event.task_id,
+      isPending: true,
+    });
+    // Notify so pending→confirmed transition is visible immediately
+    this.notify(sessionId);
+  }
+
   /**
    * Register a background agent from tool_result with isAsync: true.
-   * This is the only entry point — task_started fires for ALL agents
-   * (foreground + background), so we don't use it.
+   * If an entry already exists from handleTaskStarted, confirms it
+   * by filling in details and clearing isPending.
    */
   registerAsyncAgent(sessionId: string, info: AsyncAgentInfo): void {
     let map = this.agents.get(sessionId);
@@ -65,22 +105,47 @@ class BackgroundAgentStore {
       map = new Map();
       this.agents.set(sessionId, map);
     }
-    if (map.has(info.toolUseId)) return;
 
-    map.set(info.toolUseId, {
-      agentId: info.agentId,
-      description: info.description,
-      prompt: "",
-      outputFile: info.outputFile,
-      launchedAt: Date.now(),
-      status: "running",
-      activity: [],
-      toolUseId: info.toolUseId,
-      taskId: info.agentId,
-    });
+    const existing = map.get(info.toolUseId);
+    if (existing) {
+      // Confirm the pending entry from task_started
+      existing.agentId = info.agentId;
+      existing.description = info.description;
+      existing.outputFile = info.outputFile;
+      existing.taskId = info.agentId;
+      existing.isPending = false;
+    } else {
+      map.set(info.toolUseId, {
+        agentId: info.agentId,
+        description: info.description,
+        prompt: "",
+        outputFile: info.outputFile,
+        launchedAt: Date.now(),
+        status: "running",
+        activity: [],
+        toolUseId: info.toolUseId,
+        taskId: info.agentId,
+      });
+    }
     capture("background_agent_created");
     this.notify(sessionId);
   }
+
+  /**
+   * Remove a pending agent that turned out to be foreground (not async).
+   * Called when tool_result arrives for Task/Agent without isAsync flag.
+   */
+  removePendingAgent(sessionId: string, toolUseId: string): void {
+    const map = this.agents.get(sessionId);
+    if (!map) return;
+    const agent = map.get(toolUseId);
+    if (agent?.isPending) {
+      map.delete(toolUseId);
+      this.notify(sessionId);
+    }
+  }
+
+  // ── Phase 1: Progress summaries ──
 
   handleTaskProgress(sessionId: string, event: TaskProgressEvent): void {
     if (!event.tool_use_id) return;
@@ -94,6 +159,11 @@ class BackgroundAgentStore {
       durationMs: event.usage.duration_ms,
     };
 
+    // Capture AI-generated progress summary
+    if (event.summary) {
+      agent.progressSummary = event.summary;
+    }
+
     if (event.last_tool_name) {
       agent.activity.push({
         type: "tool_call",
@@ -106,6 +176,24 @@ class BackgroundAgentStore {
     this.notify(sessionId);
   }
 
+  // ── Phase 3: Tool progress routing ──
+
+  handleToolProgress(sessionId: string, event: ToolProgressEvent): void {
+    if (!event.task_id) return;
+    const map = this.agents.get(sessionId);
+    if (!map) return;
+    for (const agent of map.values()) {
+      if (agent.taskId === event.task_id) {
+        agent.currentTool = {
+          name: event.tool_name,
+          elapsedSeconds: event.elapsed_time_seconds,
+        };
+        this.notify(sessionId);
+        return;
+      }
+    }
+  }
+
   handleTaskNotification(sessionId: string, event: TaskNotificationEvent): void {
     if (!event.tool_use_id) return;
     const agent = this.agents.get(sessionId)?.get(event.tool_use_id);
@@ -114,6 +202,7 @@ class BackgroundAgentStore {
     agent.status = event.status === "completed" ? "completed" : "error";
     agent.result = event.summary || undefined;
     agent.outputFile = event.output_file;
+    agent.currentTool = null;
     if (event.usage) {
       agent.usage = {
         totalTokens: event.usage.total_tokens,
@@ -145,6 +234,7 @@ class BackgroundAgentStore {
     const status = extractXmlTag(content, "status");
     agent.status = status === "completed" ? "completed" : "error";
     agent.result = extractXmlTag(content, "summary") || undefined;
+    agent.currentTool = null;
 
     const tokens = extractXmlTag(content, "total_tokens");
     const tools = extractXmlTag(content, "tool_uses");
@@ -158,6 +248,21 @@ class BackgroundAgentStore {
     }
 
     this.notify(sessionId);
+  }
+
+  // ── Phase 2: Stop agent ──
+
+  /** Optimistically mark an agent as stopping before the IPC completes. */
+  setAgentStopping(sessionId: string, agentId: string): void {
+    const map = this.agents.get(sessionId);
+    if (!map) return;
+    for (const agent of map.values()) {
+      if (agent.agentId === agentId && agent.status === "running") {
+        agent.status = "stopping";
+        this.notify(sessionId);
+        return;
+      }
+    }
   }
 
   dismissAgent(sessionId: string, agentId: string): void {

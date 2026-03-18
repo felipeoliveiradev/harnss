@@ -69,6 +69,8 @@ declare global {
       ) => Promise<{ ok?: boolean; error?: string }>;
       stop: (sessionId: string, reason?: string) => Promise<{ ok: boolean }>;
       interrupt: (sessionId: string) => Promise<{ ok?: boolean; error?: string }>;
+      stopTask: (sessionId: string, taskId: string) => Promise<{ ok?: boolean; error?: string }>;
+      readAgentOutput: (outputFile: string) => Promise<{ messages?: unknown[]; error?: string }>;
       supportedModels: (sessionId: string) => Promise<{ models: ModelInfo[]; error?: string }>;
       slashCommands: (sessionId: string) => Promise<{
         commands: Array<{ name: string; description?: string; argumentHint?: string }>;

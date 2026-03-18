@@ -48,6 +48,10 @@ contextBridge.exposeInMainWorld("claude", {
   stop: (sessionId: string, reason?: string) =>
     ipcRenderer.invoke("claude:stop", { sessionId, reason }),
   interrupt: (sessionId: string) => ipcRenderer.invoke("claude:interrupt", sessionId),
+  stopTask: (sessionId: string, taskId: string) =>
+    ipcRenderer.invoke("claude:stop-task", { sessionId, taskId }),
+  readAgentOutput: (outputFile: string) =>
+    ipcRenderer.invoke("claude:read-agent-output", { outputFile }),
   log: (label: string, data: unknown) => ipcRenderer.send("claude:log", label, data),
   onEvent: (callback: (data: unknown) => void) => {
     const listener = (_event: IpcRendererEvent, data: unknown) => callback(data);

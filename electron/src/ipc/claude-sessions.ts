@@ -1,5 +1,6 @@
 import { BrowserWindow, ipcMain } from "electron";
 import crypto from "crypto";
+import fs from "fs";
 import os from "os";
 import { log } from "../lib/logger";
 import { safeSend } from "../lib/safe-send";
@@ -555,6 +556,7 @@ async function restartSession(
     canUseTool,
     settingSources: ["user", "project", "local"],
     pathToClaudeCodeExecutable: cliPath,
+    agentProgressSummaries: true,
     ...fileCheckpointOptions(),
     resume: sessionId,
     stderr: (data: string) => {
@@ -652,6 +654,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
         canUseTool,
         settingSources: ["user", "project", "local"],
         pathToClaudeCodeExecutable: cliPath,
+        agentProgressSummaries: true,
         ...fileCheckpointOptions(),
         stderr: (data: string) => {
           const trimmed = data.trim();
@@ -897,6 +900,39 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     }
 
     return { ok: true };
+  });
+
+  ipcMain.handle("claude:stop-task", async (_event, { sessionId, taskId }: { sessionId: string; taskId: string }) => {
+    const session = sessions.get(sessionId);
+    if (!session?.queryHandle?.stopTask) {
+      return { error: "No active session or stopTask not supported" };
+    }
+    try {
+      await session.queryHandle.stopTask(taskId);
+      log("STOP_TASK", `session=${sessionId.slice(0, 8)} task=${taskId}`);
+      return { ok: true };
+    } catch (err) {
+      const errMsg = reportError("STOP_TASK_ERR", err, { engine: "claude", sessionId, taskId });
+      return { error: errMsg };
+    }
+  });
+
+  ipcMain.handle("claude:read-agent-output", async (_event, { outputFile }: { outputFile: string }) => {
+    try {
+      const content = await fs.promises.readFile(outputFile, "utf-8");
+      const lines = content
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => {
+          try { return JSON.parse(line); }
+          catch { return null; }
+        })
+        .filter(Boolean);
+      return { messages: lines };
+    } catch (err) {
+      const errMsg = reportError("READ_AGENT_OUTPUT_ERR", err, { outputFile });
+      return { error: errMsg };
+    }
   });
 
   ipcMain.handle("claude:revert-files", async (_event, { sessionId, checkpointId }: { sessionId: string; checkpointId: string }) => {

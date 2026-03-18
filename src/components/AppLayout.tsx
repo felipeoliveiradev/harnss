@@ -677,7 +677,7 @@ Link: ${issue.url}`;
                             : { flex: "1 1 0%", minHeight: 0 }
                         }
                       >
-                        <BackgroundAgentsPanel agents={bgAgents.agents} onDismiss={bgAgents.dismissAgent} />
+                        <BackgroundAgentsPanel agents={bgAgents.agents} onDismiss={bgAgents.dismissAgent} onStopAgent={bgAgents.stopAgent} />
                       </div>
                     )}
                   </>
