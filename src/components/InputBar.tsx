@@ -3,6 +3,7 @@ import {
   useRef,
   useEffect,
   useCallback,
+  useMemo,
   memo,
   type KeyboardEvent,
 } from "react";
@@ -25,6 +26,7 @@ import {
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -770,6 +772,7 @@ function CodeSnippetCard({ snippet, onRemove }: { snippet: CodeSnippet; onRemove
 
 interface InputBarProps {
   onSend: (text: string, images?: ImageAttachment[], displayText?: string, codeSnippets?: CodeSnippet[]) => void;
+  onClear?: () => void | Promise<void>;
   onStop: () => void;
   isProcessing: boolean;
   model: string;
@@ -811,6 +814,38 @@ interface InputBarProps {
   groups?: Array<{ id: string; name: string; slots: Array<{ label: string; engine: string; model: string; color: string; role: string }> }>;
   selectedGroupId?: string | null;
   onGroupChange?: (groupId: string | null) => void;
+}
+
+export const LOCAL_CLEAR_COMMAND: SlashCommand = {
+  name: "clear",
+  description: "Open a new chat without sending anything to the agent",
+  argumentHint: "",
+  source: "local",
+};
+
+export function getAvailableSlashCommands(slashCommands?: SlashCommand[]): SlashCommand[] {
+  const commands = slashCommands?.filter((cmd) => cmd.name !== LOCAL_CLEAR_COMMAND.name) ?? [];
+  return [LOCAL_CLEAR_COMMAND, ...commands];
+}
+
+export function isClearCommandText(text: string): boolean {
+  return text.trim() === `/${LOCAL_CLEAR_COMMAND.name}`;
+}
+
+export function getSlashCommandReplacement(cmd: SlashCommand): string {
+  switch (cmd.source) {
+    case "claude":
+    case "acp":
+      return `/${cmd.name} `;
+    case "codex-skill":
+      return cmd.defaultPrompt
+        ? `$${cmd.name} ${cmd.defaultPrompt}`
+        : `$${cmd.name} `;
+    case "codex-app":
+      return `$${cmd.appSlug ?? cmd.name} `;
+    case "local":
+      return `/${cmd.name}`;
+  }
 }
 
 function fuzzyMatch(query: string, target: string): { match: boolean; score: number } {
@@ -868,9 +903,14 @@ function hasMeaningfulText(text: string): boolean {
   return false;
 }
 
-function extractEditableContent(el: HTMLElement): { text: string; mentionPaths: string[] } {
+function extractEditableContent(el: HTMLElement): {
+  text: string;
+  mentionPaths: string[];
+  deepMentionPaths: Set<string>;
+} {
   let text = "";
   const mentionPaths: string[] = [];
+  const deepMentionPaths = new Set<string>();
   const BLOCK_TAGS = new Set([
     "DIV",
     "P",
@@ -891,8 +931,12 @@ function extractEditableContent(el: HTMLElement): { text: string; mentionPaths: 
     } else if (node instanceof HTMLElement) {
       const mentionPath = node.dataset.mentionPath;
       if (mentionPath) {
-        text += `@${mentionPath}`;
+        const isDeep = node.dataset.mentionDeep === "true";
+        text += `@${isDeep ? "#" : ""}${mentionPath}`;
         mentionPaths.push(mentionPath);
+        if (isDeep) {
+          deepMentionPaths.add(mentionPath);
+        }
       } else if (node.tagName === "BR") {
         text += "\n";
       } else {
@@ -908,11 +952,52 @@ function extractEditableContent(el: HTMLElement): { text: string; mentionPaths: 
   return {
     text: text.replace(/\r\n/g, "\n").replace(/\u00a0/g, " "),
     mentionPaths: [...new Set(mentionPaths)],
+    deepMentionPaths,
   };
+}
+
+if (import.meta.vitest) {
+  const { it, describe, expect } = import.meta.vitest;
+
+  describe("extractEditableContent", () => {
+    it("extracts shallow mention paths from data attributes", () => {
+      const container = document.createElement("div");
+      const mention = document.createElement("span");
+      mention.dataset.mentionPath = "foo/bar";
+      container.appendChild(mention);
+
+      const result = extractEditableContent(container);
+
+      expect(result.text).toBe("@foo/bar");
+      expect(result.mentionPaths).toEqual(["foo/bar"]);
+      expect(result.deepMentionPaths.size).toBe(0);
+    });
+
+    it("extracts deep mention paths and formats text with @# prefix", () => {
+      const container = document.createElement("div");
+      const block = document.createElement("div");
+      const deepMention = document.createElement("span");
+
+      deepMention.dataset.mentionPath = "space/123";
+      deepMention.dataset.mentionDeep = "true";
+
+      block.appendChild(document.createTextNode("See "));
+      block.appendChild(deepMention);
+      container.appendChild(block);
+
+      const result = extractEditableContent(container);
+
+      // Block elements append a trailing newline.
+      expect(result.text).toBe("See @#space/123\n");
+      expect(result.mentionPaths).toEqual(["space/123"]);
+      expect(result.deepMentionPaths.has("space/123")).toBe(true);
+    });
+  });
 }
 
 export const InputBar = memo(function InputBar({
   onSend,
+  onClear,
   onStop,
   isProcessing,
   model,
@@ -971,6 +1056,15 @@ export const InputBar = memo(function InputBar({
   const [gatewayAvailable, setGatewayAvailable] = useState<boolean | null>(null);
   const [gatewayError, setGatewayError] = useState<string | null>(null);
 
+  const [showDeepFolderConfirm, setShowDeepFolderConfirm] = useState(false);
+  const [deepFolderInfo, setDeepFolderInfo] = useState<{
+    fileCount: number;
+    totalSize: number;
+    estimatedTokens: number;
+    warnings: string[];
+  } | null>(null);
+  const pendingSendRef = useRef<(() => Promise<void>) | null>(null);
+
   const speech = useSpeechRecognition({
     onResult: (text) => insertTextAtCursor(editableRef.current, text),
   });
@@ -992,6 +1086,10 @@ export const InputBar = memo(function InputBar({
   const isOpenClawAgent = selectedAgent != null && selectedAgent.engine === "openclaw";
   const isGroupAgent = selectedAgent != null && selectedAgent.engine === "group";
   const showACPConfigOptions = isACPAgent && (acpConfigOptions?.length ?? 0) > 0;
+  const availableSlashCommands = useMemo(
+    () => getAvailableSlashCommands(slashCommands),
+    [slashCommands],
+  );
   const isAwaitingAcpOptions = isACPAgent && !!acpConfigOptionsLoading;
   const modelsLoading = modelList.length === 0;
   const modelsLoadingText = isCodexAgent
@@ -1114,10 +1212,10 @@ export const InputBar = memo(function InputBar({
   const results = showMentions ? mentionResults() : [];
 
   const cmdResults = (() => {
-    if (!showCommands || !slashCommands?.length) return [];
+    if (!showCommands || availableSlashCommands.length === 0) return [];
     const q = commandQuery.toLowerCase();
-    if (!q) return slashCommands.slice(0, 15);
-    return slashCommands
+    if (!q) return availableSlashCommands.slice(0, 15);
+    return availableSlashCommands
       .filter(cmd => cmd.name.toLowerCase().includes(q) || cmd.description.toLowerCase().includes(q))
       .slice(0, 15);
   })();
@@ -1141,6 +1239,15 @@ export const InputBar = memo(function InputBar({
     mentionStartNode.current = null;
     mentionStartOffset.current = 0;
   }, []);
+
+  const clearComposer = useCallback((el: HTMLDivElement) => {
+    el.innerHTML = "";
+    hasContentRef.current = false;
+    setHasContent(false);
+    setAttachments([]);
+    closeMentions();
+    setShowCommands(false);
+  }, [closeMentions]);
 
   const addImageFiles = useCallback(async (files: FileList | globalThis.File[]) => {
     const validFiles = Array.from(files).filter(isAcceptedImage);
@@ -1168,23 +1275,7 @@ export const InputBar = memo(function InputBar({
     const el = editableRef.current;
     if (!el) return;
 
-    let replacement: string;
-    switch (cmd.source) {
-      case "claude":
-      case "acp":
-        replacement = `/${cmd.name} `;
-        break;
-      case "codex-skill":
-        replacement = cmd.defaultPrompt
-          ? `$${cmd.name} ${cmd.defaultPrompt}`
-          : `$${cmd.name} `;
-        break;
-      case "codex-app":
-        replacement = `$${cmd.appSlug ?? cmd.name} `;
-        break;
-    }
-
-    el.textContent = replacement;
+    el.textContent = getSlashCommandReplacement(cmd);
 
     const range = document.createRange();
     const sel = window.getSelection();
@@ -1212,6 +1303,12 @@ export const InputBar = memo(function InputBar({
       range.setStart(node, mentionStartOffset.current);
       const curRange = sel.getRangeAt(0);
       range.setEnd(curRange.startContainer, curRange.startOffset);
+
+      // Check if @# was used (deep folder mode)
+      const deletedText = range.toString();
+      const isDeepMode = deletedText.startsWith("@#");
+      const isDeepDir = isDeepMode && entry.isDir;
+
       range.deleteContents();
 
       const chip = document.createElement("span");
@@ -1220,7 +1317,13 @@ export const InputBar = memo(function InputBar({
         "mention-chip inline-flex items-center gap-1 rounded-md bg-accent/60 px-1.5 py-0.5 text-xs text-accent-foreground font-mono align-baseline cursor-default select-none";
       chip.setAttribute("data-mention-path", entry.path);
       chip.setAttribute("data-mention-dir", String(entry.isDir));
-      chip.innerHTML = `${entry.isDir ? FOLDER_ICON_SVG : FILE_ICON_SVG}<span>${entry.path}</span>`;
+      if (isDeepDir) {
+        chip.setAttribute("data-mention-deep", "true");
+        // Add visual distinction for deep mode with a different background
+        chip.className =
+          "mention-chip inline-flex items-center gap-1 rounded-md bg-primary/60 px-1.5 py-0.5 text-xs text-primary-foreground font-mono align-baseline cursor-default select-none";
+      }
+      chip.innerHTML = `${entry.isDir ? FOLDER_ICON_SVG : FILE_ICON_SVG}<span>${isDeepDir ? "#" : ""}${entry.path}</span>`;
 
       range.insertNode(chip);
 
@@ -1244,12 +1347,55 @@ export const InputBar = memo(function InputBar({
     const el = editableRef.current;
     if (!el) return;
 
-    const { text: fullText, mentionPaths } = extractEditableContent(el);
+    const { text: fullText, mentionPaths, deepMentionPaths } = extractEditableContent(el);
     const trimmed = fullText.trim();
     const hasGrabs = grabbedElements && grabbedElements.length > 0;
     const hasSnippets = codeSnippets && codeSnippets.length > 0;
     if (isAwaitingAcpOptions || (!trimmed && attachments.length === 0 && !hasGrabs && !hasSnippets) || isSending) return;
 
+    if (isClearCommandText(trimmed)) {
+      try {
+        await onClear?.();
+      } finally {
+        clearComposer(el);
+      }
+      return;
+    }
+
+    // Check if we need to warn about deep folder size
+    if (deepMentionPaths.size > 0 && projectPath) {
+      try {
+        const sizeInfo = await window.claude.files.calculateDeepSize(projectPath, Array.from(deepMentionPaths));
+
+        // Warn if estimated tokens > 50k (half the limit)
+        if (sizeInfo.estimatedTokens > 50_000) {
+          setDeepFolderInfo(sizeInfo);
+          setShowDeepFolderConfirm(true);
+
+          // Store the send logic to be called after confirmation
+          pendingSendRef.current = async () => {
+            await performSend(el, fullText, mentionPaths, deepMentionPaths, hasGrabs);
+          };
+          return;
+        }
+      } catch (err) {
+        console.error("Failed to calculate deep folder size:", err);
+        // Continue with send anyway if size check fails
+      }
+    }
+
+    // No warning needed, send immediately
+    await performSend(el, fullText, mentionPaths, deepMentionPaths, hasGrabs);
+  }, [attachments, isAwaitingAcpOptions, isSending, projectPath, onClear, grabbedElements]);
+
+  const performSend = useCallback(async (
+    el: HTMLDivElement,
+    fullText: string,
+    mentionPaths: string[],
+    deepMentionPaths: Set<string>,
+    hasGrabs: boolean,
+  ) => {
+    const trimmed = fullText.trim();
     const currentImages = attachments.length > 0 ? [...attachments] : undefined;
     const contextParts: string[] = [];
     const grabbedElementDisplayTokens: string[] = [];
@@ -1258,7 +1404,7 @@ export const InputBar = memo(function InputBar({
     if (mentionPaths.length > 0 && projectPath) {
       setIsSending(true);
       try {
-        const fileResults = await window.claude.files.readMultiple(projectPath, mentionPaths);
+        const fileResults = await window.claude.files.readMultiple(projectPath, mentionPaths, deepMentionPaths);
 
         for (const result of fileResults) {
           if (result.error) {
@@ -1275,7 +1421,7 @@ export const InputBar = memo(function InputBar({
       }
     }
 
-    if (hasGrabs) {
+    if (hasGrabs && grabbedElements) {
       const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
       const compact = (s: string) => s.trim().replace(/\s+/g, " ");
 
@@ -1328,12 +1474,17 @@ export const InputBar = memo(function InputBar({
       onSend(trimmed, currentImages);
     }
 
-    el.innerHTML = "";
-    hasContentRef.current = false;
-    setHasContent(false);
-    setAttachments([]);
-    closeMentions();
-  }, [attachments, isAwaitingAcpOptions, isSending, projectPath, onSend, closeMentions, grabbedElements, codeSnippets]);
+    clearComposer(el);
+  }, [attachments, projectPath, onSend, clearComposer, grabbedElements, codeSnippets]);
+
+  const handleDeepFolderConfirm = useCallback(async () => {
+    if (pendingSendRef.current) {
+      await pendingSendRef.current();
+      pendingSendRef.current = null;
+    }
+    setShowDeepFolderConfirm(false);
+    setDeepFolderInfo(null);
+  }, []);
 
   const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (showCommands && cmdResults.length > 0) {
@@ -1448,12 +1599,12 @@ export const InputBar = memo(function InputBar({
     const offset = range.startOffset;
     const scanStart = Math.max(0, offset - 256);
     const textBefore = nodeText.slice(scanStart, offset);
-    const atMatch = textBefore.match(/(^|[\s])@([^\s]*)$/);
+    const atMatch = textBefore.match(/(^|[\s])@(#?)([^\s]*)$/);
 
     if (atMatch && projectPath) {
       mentionStartNode.current = node;
       mentionStartOffset.current = scanStart + textBefore.lastIndexOf("@");
-      setMentionQuery(atMatch[2]);
+      setMentionQuery(atMatch[3]);
       setShowMentions(true);
       setMentionIndex(0);
     } else {
@@ -1462,14 +1613,14 @@ export const InputBar = memo(function InputBar({
 
     const fullText = (el.textContent ?? "").trimStart();
     const slashMatch = fullText.match(/^\/(\S*)$/);
-    if (slashMatch && slashCommands?.length) {
+    if (slashMatch && availableSlashCommands.length > 0) {
       setShowCommands(true);
       setCommandQuery(slashMatch[1]);
       setCommandIndex(0);
     } else if (showCommands) {
       setShowCommands(false);
     }
-  }, [showMentions, showCommands, closeMentions, projectPath, slashCommands]);
+  }, [showMentions, showCommands, closeMentions, projectPath, availableSlashCommands]);
 
   const handlePaste = useCallback(
     (e: React.ClipboardEvent<HTMLDivElement>) => {
@@ -1682,7 +1833,7 @@ export const InputBar = memo(function InputBar({
                   ? "Loading agent options..."
                 : isProcessing
                   ? `${selectedAgent?.name ?? "Claude"} is responding... (messages will be queued)`
-                  : slashCommands?.length
+                  : availableSlashCommands.length > 0
                     ? "Ask anything, @ to tag files, / for commands"
                     : "Ask anything, @ to tag files"}
             </div>
@@ -2061,6 +2212,45 @@ export const InputBar = memo(function InputBar({
           </div>
         </div>
       </div>
+
+      {/* Deep folder confirmation dialog */}
+      <ConfirmDialog
+        open={showDeepFolderConfirm}
+        onOpenChange={setShowDeepFolderConfirm}
+        onConfirm={handleDeepFolderConfirm}
+        title="Large Context Warning"
+        confirmLabel="Send Anyway"
+        cancelLabel="Cancel"
+        confirmVariant="default"
+        description={
+          deepFolderInfo && (
+            <div className="space-y-2 text-sm">
+              <p>
+                This deep folder includes <strong>{deepFolderInfo.fileCount} files</strong> totaling{" "}
+                <strong>{Math.round(deepFolderInfo.totalSize / 1024)}KB</strong> (~
+                <strong>{deepFolderInfo.estimatedTokens.toLocaleString()} tokens</strong>).
+              </p>
+              <p className="text-muted-foreground">
+                Sending this much content will consume a significant portion of the context window and may impact
+                response quality.
+              </p>
+              {deepFolderInfo.warnings.length > 0 && (
+                <div className="mt-2 text-xs text-muted-foreground">
+                  <p className="font-medium">Note: Some files will be skipped:</p>
+                  <ul className="ms-4 list-disc">
+                    {deepFolderInfo.warnings.slice(0, 3).map((warning, i) => (
+                      <li key={i}>{warning}</li>
+                    ))}
+                    {deepFolderInfo.warnings.length > 3 && (
+                      <li>... and {deepFolderInfo.warnings.length - 3} more</li>
+                    )}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )
+        }
+      />
     </div>
   );
 });

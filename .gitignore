@@ -6,6 +6,7 @@ logs/
 .DS_Store
 docs/
 /release/
-.claude/
-CLAUDE.md
+.claude/agent-memory/
 frontend/
+cli
+.idea/

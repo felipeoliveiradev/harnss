@@ -19,6 +19,7 @@ export type {
   TaskStartedEvent,
   TaskProgressEvent,
   TaskNotificationEvent,
+  ToolProgressEvent,
   ClaudeEvent,
   AuthStatusEvent,
 } from "./protocol";

@@ -1,11 +1,14 @@
 import { useState, useCallback, useEffect, useRef } from "react";
+import { toast } from "sonner";
 import type {
   ClaudeEvent,
   SystemInitEvent,
   SystemStatusEvent,
   SystemCompactBoundaryEvent,
+  TaskStartedEvent,
   TaskProgressEvent,
   TaskNotificationEvent,
+  ToolProgressEvent,
   AuthStatusEvent,
   AssistantMessageEvent,
   ToolResultEvent,
@@ -85,6 +88,8 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
   const permissionResponseInFlight = useRef(false);
   const respondingPermissionIds = useRef<Set<string>>(new Set());
   const completedPermissionIds = useRef<Set<string>>(new Set());
+  // Throttle timer for thinking-only flushes (invisible content → 250ms instead of 60fps)
+  const thinkingThrottleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     buffer.current.reset();
@@ -93,6 +98,10 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
     permissionResponseInFlight.current = false;
     respondingPermissionIds.current.clear();
     completedPermissionIds.current.clear();
+    if (thinkingThrottleRef.current) {
+      clearTimeout(thinkingThrottleRef.current);
+      thinkingThrottleRef.current = null;
+    }
 
     const msgs = initialMessages ?? [];
     const streamingMsg = msgs.findLast(
@@ -142,6 +151,24 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
   }, [setMessages]);
 
   const scheduleFlush = useCallback(() => {
+    // During the thinking-only phase (no visible text yet), throttle flushes to
+    // 250ms instead of 60fps — the ThinkingBlock is collapsed by default so
+    // updating invisible content at 60fps just burns CPU on cascading useMemo
+    // recomputations in ChatView.
+    if (!buffer.current.getAllText() && buffer.current.getAllThinking()) {
+      if (!thinkingThrottleRef.current) {
+        thinkingThrottleRef.current = setTimeout(() => {
+          thinkingThrottleRef.current = null;
+          flushStreamingToState();
+        }, 250);
+      }
+      return;
+    }
+    // Cancel any pending thinking throttle — visible text is now arriving
+    if (thinkingThrottleRef.current) {
+      clearTimeout(thinkingThrottleRef.current);
+      thinkingThrottleRef.current = null;
+    }
     scheduleRaf(flushStreamingToState);
   }, [scheduleRaf, flushStreamingToState]);
 
@@ -154,6 +181,10 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
     buffer.current.reset();
     streamingIndexRef.current = -1;
     cancelPendingFlush();
+    if (thinkingThrottleRef.current) {
+      clearTimeout(thinkingThrottleRef.current);
+      thinkingThrottleRef.current = null;
+    }
   }, [cancelPendingFlush]);
 
   const handleSubagentEvent = useCallback((event: ClaudeEvent, parentId: string) => {
@@ -208,18 +239,28 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
 
       if (event.type === "system" && "subtype" in event) {
         const sub = (event as { subtype: string }).subtype;
+        if (sub === "task_started") {
+          const sid = sessionIdRef.current;
+          if (sid) bgAgentStore.handleTaskStarted(sid, event as TaskStartedEvent);
+          return;
+        }
         if (sub === "task_progress") {
           const sid = sessionIdRef.current;
-          if (!sid) return;
-          bgAgentStore.handleTaskProgress(sid, event as TaskProgressEvent);
+          if (sid) bgAgentStore.handleTaskProgress(sid, event as TaskProgressEvent);
           return;
         }
         if (sub === "task_notification") {
           const sid = sessionIdRef.current;
-          if (!sid) return;
-          bgAgentStore.handleTaskNotification(sid, event as TaskNotificationEvent);
+          if (sid) bgAgentStore.handleTaskNotification(sid, event as TaskNotificationEvent);
           return;
         }
+      }
+
+      // Route tool_progress events to background agent cards (real-time tool indicator)
+      if (event.type === "tool_progress") {
+        const sid = sessionIdRef.current;
+        if (sid) bgAgentStore.handleToolProgress(sid, event as ToolProgressEvent);
+        return;
       }
 
       const parentId = getParentId(event);
@@ -435,15 +476,18 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
           const textContent = extractTextContent(event.message.content);
           const thinkingContent = extractThinkingContent(event.message.content);
 
-          setMessages((prev) => {
-            const streamId = buffer.current.messageId;
-            const idx = streamId
-              ? prev.findIndex((m) => m.id === streamId)
-              : prev.findLastIndex((m) => m.role === "assistant" && m.isStreaming);
+          // Capture messageId NOW — message_stop may call resetStreaming() and
+          // clear buffer.current.messageId before React processes this updater.
+          // (Same pattern as message_delta at line 416.)
+          const capturedStreamId = buffer.current.messageId;
 
-            if (idx >= 0) {
-              const target = prev[idx];
-              if (!streamId) buffer.current.messageId = target.id;
+          setMessages((prev) => {
+            const target = capturedStreamId
+              ? prev.find((m) => m.id === capturedStreamId)
+              : prev.findLast((m) => m.role === "assistant" && m.isStreaming);
+
+            if (target) {
+              if (!capturedStreamId) buffer.current.messageId = target.id;
               const merged = {
                 ...target,
                 content: textContent || target.content,
@@ -533,6 +577,9 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
                 description: String(resultMeta.description ?? "Background agent"),
                 outputFile: resultMeta.outputFile,
               });
+            } else if (!resultMeta?.isAsync && toolUseId && (toolName === "Task" || toolName === "Agent")) {
+              // Foreground agent — remove pending entry created by task_started
+              bgAgentStore.removePendingAgent(sessionIdRef.current!, toolUseId);
             }
 
             setMessages((prev) => {
@@ -804,6 +851,10 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
           });
           permissionQueue.current = nextState.queue;
           setPendingPermission(nextState.current);
+        } else {
+          toast.error("Failed to respond to permission prompt", {
+            description: result.error,
+          });
         }
         return;
       }

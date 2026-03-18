@@ -11,7 +11,7 @@ export function mergeStreamingChunk(current: string, incoming: string): string {
   if (incoming.startsWith(current)) return incoming;
   if (current.endsWith(incoming)) return current;
 
-  const maxOverlap = Math.min(current.length, incoming.length, 200);
+  const maxOverlap = Math.min(200, current.length, incoming.length);
   for (let overlap = maxOverlap; overlap > 0; overlap -= 1) {
     if (current.endsWith(incoming.slice(0, overlap))) {
       return current + incoming.slice(overlap);
@@ -32,7 +32,7 @@ export class SimpleStreamingBuffer {
   thinkingComplete = false;
 
   appendText(text: string): void {
-    this.textValue = mergeStreamingChunk(this.textValue, text);
+    this.textValue += text;
   }
 
   appendThinking(text: string): void {
@@ -93,14 +93,19 @@ export class StreamingBuffer {
   /** Append a delta to the appropriate block buffer. Returns true if text/thinking changed (flush needed). */
   appendDelta(index: number, delta: ContentBlockDeltaEvent["delta"]): boolean {
     if (delta.type === "text_delta") {
+      // SDK text deltas are always pure incremental chunks — simple concatenation
+      // is correct and avoids false-positive overlap detection that can eat
+      // markdown-significant characters (|, `, \n, -) at token boundaries.
       const current = this.text.get(index) ?? "";
-      this.text.set(index, mergeStreamingChunk(current, delta.text));
+      this.text.set(index, current + delta.text);
       return true;
     } else if (delta.type === "input_json_delta") {
       const current = this.toolInput.get(index) ?? "";
       this.toolInput.set(index, current + delta.partial_json);
       return false;
     } else if (delta.type === "thinking_delta") {
+      // Thinking deltas may arrive as cumulative snapshots from the SDK,
+      // so overlap detection is still needed here.
       const current = this.thinking.get(index) ?? "";
       this.thinking.set(index, mergeStreamingChunk(current, delta.thinking));
       return true;

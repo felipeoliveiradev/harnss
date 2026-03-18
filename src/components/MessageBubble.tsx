@@ -18,11 +18,17 @@ import type { UIMessage, ImageAttachment } from "@/types";
 import { ThinkingBlock } from "./ThinkingBlock";
 import { CopyButton } from "./CopyButton";
 import { ImageLightbox } from "./ImageLightbox";
+import { MermaidDiagram } from "./MermaidDiagram";
 
 const REMARK_PLUGINS = [remarkGfm];
 import type { Components } from "react-markdown";
 
 const IsBlockCodeContext = createContext(false);
+const IsStreamingMarkdownContext = createContext(false);
+
+function containsMermaidFence(text: string): boolean {
+  return /(^|\n)```mermaid(?:\s|$)/i.test(text);
+}
 
 function parseFileHref(href: string): { filePath: string; line?: number } | null {
   if (!href) return null;
@@ -325,34 +331,16 @@ export const MessageBubble = memo(function MessageBubble({
     );
   }
 
-  const sentinelRef = useRef<HTMLDivElement>(null);
-  const [isVisible, setIsVisible] = useState(!!message.isStreaming);
-
-  useEffect(() => {
-    if (message.isStreaming) {
-      setIsVisible(true);
-      return;
-    }
-    const el = sentinelRef.current;
-    if (!el) return;
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) {
-          setIsVisible(true);
-          observer.disconnect();
-        }
-      },
-      { rootMargin: "200px" },
-    );
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [message.isStreaming]);
+  const hasRenderableAssistantContent = !!message.content || (showThinking && !!message.thinking);
+  if (!hasRenderableAssistantContent) {
+    return null;
+  }
 
   return (
-    <div ref={sentinelRef} className={`flex justify-start px-4 ${isContinuation ? "py-0.5" : message.groupSlot ? "pt-5 pb-1" : "py-1.5"}`}>
+    <div className={`flex justify-start px-4 ${isContinuation ? "py-0.5" : message.groupSlot ? "pt-5 pb-1" : "py-1.5"}`}>
       <Tooltip>
         <TooltipTrigger asChild>
-          <div className={`min-w-0 max-w-[85%] wrap-break-word ${message.groupSlot ? "flex items-start gap-2" : ""}`}>
+          <div className={`flow-root min-w-0 max-w-[85%] wrap-break-word ${message.groupSlot ? "flex items-start gap-2" : ""}`}>
             {message.groupSlot && (
               <div
                 className="mt-5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white"
@@ -376,34 +364,30 @@ export const MessageBubble = memo(function MessageBubble({
               className={message.groupSlot ? "rounded-2xl rounded-tl-sm px-3.5 py-2" : undefined}
               style={message.groupSlot ? { backgroundColor: `${message.groupSlot.color}30` } : undefined}
             >
-              {showThinking && message.thinking && (
-                <div className={message.content ? "mb-2" : undefined}>
-                  <ThinkingBlock
-                    thinking={message.thinking}
-                    isStreaming={message.isStreaming}
-                    thinkingComplete={message.thinkingComplete}
-                  />
-                </div>
-              )}
-              {displayContent ? (
-                isVisible ? (
-                  <div
-                    ref={proseRef}
-                    className="prose dark:prose-invert prose-sm max-w-none text-foreground [&_li::marker]:text-foreground dark:[&_li::marker]:text-foreground/70"
+            {showThinking && message.thinking && (
+              <div className={message.content ? "mb-2" : undefined}>
+                <ThinkingBlock
+                  thinking={message.thinking}
+                  isStreaming={message.isStreaming}
+                  thinkingComplete={message.thinkingComplete}
+                />
+              </div>
+            )}
+            {message.content ? (
+              <div
+                ref={proseRef}
+                className="flow-root prose dark:prose-invert prose-sm max-w-none text-foreground [&_li::marker]:text-foreground dark:[&_li::marker]:text-foreground/70"
+              >
+                <IsStreamingMarkdownContext.Provider value={!!message.isStreaming}>
+                  <ReactMarkdown
+                    remarkPlugins={REMARK_PLUGINS}
+                    components={MD_COMPONENTS}
                   >
-                    <ReactMarkdown
-                      remarkPlugins={REMARK_PLUGINS}
-                      components={MD_COMPONENTS}
-                    >
-                      {displayContent}
-                    </ReactMarkdown>
-                  </div>
-                ) : (
-                  <div className="prose dark:prose-invert prose-sm max-w-none text-foreground whitespace-pre-wrap">
-                    {displayContent}
-                  </div>
-                )
-              ) : null}
+                    {message.content}
+                  </ReactMarkdown>
+                </IsStreamingMarkdownContext.Provider>
+              </div>
+            ) : null}
             </div>
             </div>
           </div>
@@ -436,19 +420,27 @@ export const MessageBubble = memo(function MessageBubble({
 function CodeBlock(props: React.HTMLAttributes<HTMLElement> & { node?: unknown }) {
   const { className, children } = props;
   const isBlock = useContext(IsBlockCodeContext);
+  const isStreaming = useContext(IsStreamingMarkdownContext);
   const match = /language-(\w+)/.exec(String(className ?? ""));
   const code = String(children).replace(/\n$/, "");
 
   if (isBlock && match) {
+    const language = match[1];
+
+    // Render mermaid diagrams with MermaidDiagram component
+    if (language === "mermaid") {
+      return <MermaidDiagram code={code} isStreaming={isStreaming} />;
+    }
+
     return (
       <div className="not-prose group/code relative my-2 rounded-lg bg-foreground/[0.03] overflow-hidden">
         <div className="flex items-center justify-between bg-foreground/[0.04] px-3 py-1">
-          <span className="text-[11px] text-muted-foreground">{match[1]}</span>
+          <span className="text-[11px] text-muted-foreground">{language}</span>
           <CopyButton text={code} className="opacity-0 transition-opacity group-hover/code:opacity-100" />
         </div>
         <SyntaxHighlighter
           style={oneDark}
-          language={match[1]}
+          language={language}
           PreTag="div"
           customStyle={SYNTAX_STYLE}
           codeTagProps={CODE_TAG_PROPS}

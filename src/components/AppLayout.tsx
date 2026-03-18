@@ -289,7 +289,7 @@ export function AppLayout() {
     [],
   );
 
-  const handleSidebarNewChat = useCallback(
+  const handleOpenNewChat = useCallback(
     async (projectId: string) => {
       const project = projectManager.projects.find((item) => item.id === projectId);
       if (project) {
@@ -298,6 +298,16 @@ export function AppLayout() {
       await handleNewChat(projectId);
     },
     [handleNewChat, projectManager.projects, setJiraBoardProjectForSpace],
+  );
+
+  const handleComposerClear = useCallback(
+    async () => {
+      const projectId = activeProjectId ?? activeSpaceProject?.id;
+      if (!projectId) return;
+      setGrabbedElements([]);
+      await handleOpenNewChat(projectId);
+    },
+    [activeProjectId, activeSpaceProject, handleOpenNewChat, setGrabbedElements],
   );
 
   const handleSidebarSelectSession = useCallback(
@@ -592,7 +602,7 @@ Link: ${issue.url}`;
         activeSessionId={sidebarActiveSessionId}
         jiraBoardProjectId={jiraBoardProjectId}
         jiraBoardEnabled={jiraBoardEnabled}
-        onNewChat={handleSidebarNewChat}
+        onNewChat={handleOpenNewChat}
         onToggleProjectJiraBoard={handleToggleProjectJiraBoard}
         onSelectSession={handleSidebarSelectSession}
         onDeleteSession={manager.deleteSession}
@@ -776,13 +786,14 @@ Link: ${issue.url}`;
                   pendingPermission={manager.pendingPermission}
                   onRespondPermission={manager.respondPermission}
                   onSend={wrappedHandleSend}
+                  onClear={handleComposerClear}
                   onStop={handleStop}
                   isProcessing={manager.isProcessing}
                   queuedCount={manager.queuedCount}
                   model={settings.model}
                   claudeEffort={settings.claudeEffort}
                   planMode={settings.planMode}
-                  permissionMode={settings.permissionMode}
+                  permissionMode={manager.sessionInfo?.permissionMode ?? settings.permissionMode}
                   onModelChange={handleModelChange}
                   onClaudeModelEffortChange={handleClaudeModelEffortChange}
                   onPlanModeChange={handlePlanModeChange}
@@ -1118,7 +1129,7 @@ Link: ${issue.url}`;
                             : { flex: "1 1 0%", minHeight: 0 }
                         }
                       >
-                        <BackgroundAgentsPanel agents={bgAgents.agents} onDismiss={bgAgents.dismissAgent} />
+                        <BackgroundAgentsPanel agents={bgAgents.agents} onDismiss={bgAgents.dismissAgent} onStopAgent={bgAgents.stopAgent} />
                       </div>
                     )}
                   </>

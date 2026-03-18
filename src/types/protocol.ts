@@ -214,6 +214,19 @@ export interface TaskProgressEvent {
   description: string;
   usage: { total_tokens: number; tool_uses: number; duration_ms: number };
   last_tool_name?: string;
+  /** AI-generated progress summary (requires agentProgressSummaries: true) */
+  summary?: string;
+  session_id?: string;
+}
+
+export interface ToolProgressEvent {
+  type: "tool_progress";
+  tool_use_id: string;
+  tool_name: string;
+  parent_tool_use_id: string | null;
+  elapsed_time_seconds: number;
+  /** Present when event originates from a background agent */
+  task_id?: string;
   session_id?: string;
 }
 
@@ -236,6 +249,7 @@ export type ClaudeEvent =
   | TaskStartedEvent
   | TaskProgressEvent
   | TaskNotificationEvent
+  | ToolProgressEvent
   | StreamEvent
   | AssistantMessageEvent
   | ToolResultEvent

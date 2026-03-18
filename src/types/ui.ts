@@ -246,12 +246,15 @@ export interface BackgroundAgent {
   prompt: string;
   outputFile: string;
   launchedAt: number;
-  status: "running" | "completed" | "error";
+  status: "running" | "stopping" | "completed" | "error";
   activity: BackgroundAgentActivity[];
   toolUseId: string;
   result?: string;
-    taskId?: string;
-    usage?: BackgroundAgentUsage;
+  taskId?: string;
+  usage?: BackgroundAgentUsage;
+  progressSummary?: string;
+  currentTool?: { name: string; elapsedSeconds: number } | null;
+  isPending?: boolean;
 }
 
 export interface BackgroundAgentActivity {
