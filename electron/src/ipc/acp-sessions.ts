@@ -255,6 +255,7 @@ async function createAcpConnection(
   const proc = spawn(agentDef.binary, agentDef.args ?? [], {
     stdio: ["pipe", "pipe", "pipe"],
     env: { ...process.env, ...agentDef.env },
+    shell: process.platform === "win32",
   });
 
   // Process lifecycle handlers
