@@ -225,11 +225,25 @@ declare global {
         cherryPick: (cwd: string, hash: string) => Promise<{ success?: boolean; error?: string }>;
         blame: (cwd: string, file: string) => Promise<{ lines?: Array<{ hash: string; author: string; date: string; lineNumber: number; content: string }>; error?: string }>;
         log: (cwd: string, count?: number) => Promise<GitLogEntry[] | { error: string }>;
+        commitFiles: (cwd: string, hash: string) => Promise<{ files: Array<{ status: string; path: string }>; error?: string }>;
+        commitFileDiff: (cwd: string, hash: string, file: string) => Promise<{ diff: string; error?: string }>;
+        graph: (cwd: string, count?: number) => Promise<{ entries: Array<{ hash: string; shortHash: string; parents: string[]; refs: string[]; message: string; author: string; date: string }>; graph: string; error?: string }>;
         generateCommitMessage: (
           cwd: string,
           engine?: EngineId,
           sessionId?: string,
         ) => Promise<{ message?: string; error?: string }>;
+      };
+      executions: {
+        detectRunners: (cwd: string) => Promise<{ runners: Array<{ source: string; scripts: Record<string, string> }>; error?: string }>;
+        run: (options: { cwd: string; command: string; label?: string }) => Promise<{ executionId?: string; error?: string }>;
+        stop: (executionId: string) => Promise<{ ok?: boolean; error?: string }>;
+        onData: (callback: (data: { executionId: string; data: string }) => void) => () => void;
+        onExit: (callback: (data: { executionId: string; exitCode: number }) => void) => () => void;
+      };
+      search: {
+        files: (options: { cwd: string; query: string; maxResults?: number }) => Promise<{ results: Array<{ path: string; name: string; dir: string; score: number }>; error?: string }>;
+        content: (options: { cwd: string; pattern: string; isRegex?: boolean; caseSensitive?: boolean; maxResults?: number; include?: string; exclude?: string }) => Promise<{ results: Array<{ file: string; line: number; column: number; match: string; preview: string }>; totalCount: number; error?: string }>;
       };
       terminal: {
         create: (options: { cwd?: string; cols?: number; rows?: number; spaceId?: string }) => Promise<{ terminalId?: string; error?: string }>;

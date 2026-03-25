@@ -28,6 +28,7 @@ import { useGitStatus } from "@/hooks/useGitStatus";
 import { RepoSection } from "./RepoSection";
 import { InlineSelector } from "./InlineSelector";
 import { formatWorktreeLabel } from "./git-panel-utils";
+import { GitGraphSection } from "./GitGraphSection";
 import type { EngineId } from "@/types";
 
 interface GitPanelProps {
@@ -38,6 +39,7 @@ interface GitPanelProps {
   onSelectWorktreePath?: (path: string | null) => void;
   activeEngine?: EngineId;
   activeSessionId?: string | null;
+  onOpenFileInWorkspace?: (filePath: string, line?: number) => void;
 }
 
 export const GitPanel = memo(function GitPanel({
@@ -48,6 +50,7 @@ export const GitPanel = memo(function GitPanel({
   onSelectWorktreePath,
   activeEngine,
   activeSessionId,
+  onOpenFileInWorkspace,
 }: GitPanelProps) {
   const git = useGitStatus({ projectPath: cwd });
 
@@ -67,6 +70,7 @@ export const GitPanel = memo(function GitPanel({
   const [isRemovingWorktree, setIsRemovingWorktree] = useState(false);
   const [isPruningWorktrees, setIsPruningWorktrees] = useState(false);
 
+  const [graphExpanded, setGraphExpanded] = useState(false);
   const [stashExpanded, setStashExpanded] = useState(false);
   const [stashes, setStashes] = useState<Array<{ ref: string; message: string; date: string }>>([]);
   const [stashLoading, setStashLoading] = useState(false);
@@ -444,6 +448,15 @@ export const GitPanel = memo(function GitPanel({
           </div>
         )}
       </div>
+
+      {cwd && (
+        <GitGraphSection
+          cwd={cwd}
+          expanded={graphExpanded}
+          onToggle={() => setGraphExpanded((p) => !p)}
+          onOpenFile={(filePath) => onOpenFileInWorkspace?.(`${cwd}/${filePath}`)}
+        />
+      )}
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {git.repoStates.length === 0 && git.isLoading && (
