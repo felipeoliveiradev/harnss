@@ -629,4 +629,78 @@ export function register(): void {
       return { error: reportError("GIT_LOG_ERR", err) };
     }
   });
+
+  ipcMain.handle("git:commit-files", async (_event, { cwd, hash }: { cwd: string; hash: string }) => {
+    try {
+      validateRef(hash);
+      const raw = await gitExec(["diff-tree", "--no-commit-id", "-r", "-m", "--first-parent", "--name-status", hash], cwd);
+      const files: Array<{ status: string; path: string }> = [];
+      for (const line of raw.split("\n")) {
+        if (!line.trim()) continue;
+        const tab = line.indexOf("\t");
+        if (tab === -1) continue;
+        files.push({ status: line.slice(0, tab), path: line.slice(tab + 1) });
+      }
+      return { files };
+    } catch (err) {
+      return { files: [], error: reportError("GIT_COMMIT_FILES", err) };
+    }
+  });
+
+  ipcMain.handle("git:show-commit-file-diff", async (_event, { cwd, hash, file }: { cwd: string; hash: string; file: string }) => {
+    try {
+      validateRef(hash);
+      let diff: string;
+      try {
+        diff = await gitExec(["diff", `${hash}~1`, hash, "--", file], cwd);
+      } catch {
+        diff = await gitExec(["show", hash, "--format=", "--", file], cwd);
+      }
+      return { diff };
+    } catch (err) {
+      return { diff: "", error: reportError("GIT_COMMIT_DIFF", err) };
+    }
+  });
+
+  ipcMain.handle("git:graph", async (_event, { cwd, count }: { cwd: string; count?: number }) => {
+    try {
+      const limit = count || 100;
+      const SEP = "\x1f";
+      const [graphRaw, structuredRaw] = await Promise.all([
+        gitExec(["log", "--all", "--oneline", "--graph", "--decorate", "--color=never", `-n${limit}`], cwd),
+        gitExec(["log", "--all", `--format=%H${SEP}%h${SEP}%P${SEP}%D${SEP}%s${SEP}%an${SEP}%ai`, `-n${limit}`], cwd),
+      ]);
+
+      const entries: Array<{
+        hash: string;
+        shortHash: string;
+        parents: string[];
+        refs: string[];
+        message: string;
+        author: string;
+        date: string;
+      }> = [];
+
+      for (const line of structuredRaw.split("\n")) {
+        if (!line.trim()) continue;
+        const parts = line.split(SEP);
+        if (parts.length < 7) continue;
+
+        const [hash, shortHash, parentsRaw, refsRaw, message, author, date] = parts;
+        const parents = parentsRaw.trim() ? parentsRaw.trim().split(" ").filter(Boolean) : [];
+        const refs = refsRaw.trim()
+          ? refsRaw
+              .split(",")
+              .map((r) => r.trim())
+              .filter((r) => r && r !== "")
+          : [];
+
+        entries.push({ hash, shortHash, parents, refs, message, author, date });
+      }
+
+      return { entries, graph: graphRaw };
+    } catch (err) {
+      return { entries: [], graph: "", error: reportError("GIT_GRAPH_ERR", err) };
+    }
+  });
 }

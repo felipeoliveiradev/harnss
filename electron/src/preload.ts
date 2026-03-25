@@ -175,8 +175,30 @@ contextBridge.exposeInMainWorld("claude", {
     cherryPick: (cwd: string, hash: string) => ipcRenderer.invoke("git:cherry-pick", { cwd, hash }),
     blame: (cwd: string, file: string) => ipcRenderer.invoke("git:blame", { cwd, file }),
     log: (cwd: string, count?: number) => ipcRenderer.invoke("git:log", { cwd, count }),
+    commitFiles: (cwd: string, hash: string) => ipcRenderer.invoke("git:commit-files", { cwd, hash }),
+    commitFileDiff: (cwd: string, hash: string, file: string) => ipcRenderer.invoke("git:show-commit-file-diff", { cwd, hash, file }),
+    graph: (cwd: string, count?: number) => ipcRenderer.invoke("git:graph", { cwd, count }),
     generateCommitMessage: (cwd: string, engine?: string, sessionId?: string) =>
       ipcRenderer.invoke("git:generate-commit-message", { cwd, engine, sessionId }),
+  },
+  executions: {
+    detectRunners: (cwd: string) => ipcRenderer.invoke("executions:detect-runners", cwd),
+    run: (options: { cwd: string; command: string; label?: string }) => ipcRenderer.invoke("executions:run", options),
+    stop: (executionId: string) => ipcRenderer.invoke("executions:stop", executionId),
+    onData: (callback: (data: unknown) => void) => {
+      const listener = (_event: IpcRendererEvent, data: unknown) => callback(data);
+      ipcRenderer.on("executions:data", listener);
+      return () => ipcRenderer.removeListener("executions:data", listener);
+    },
+    onExit: (callback: (data: unknown) => void) => {
+      const listener = (_event: IpcRendererEvent, data: unknown) => callback(data);
+      ipcRenderer.on("executions:exit", listener);
+      return () => ipcRenderer.removeListener("executions:exit", listener);
+    },
+  },
+  search: {
+    files: (options: { cwd: string; query: string; maxResults?: number }) => ipcRenderer.invoke("search:files", options),
+    content: (options: { cwd: string; pattern: string; isRegex?: boolean; caseSensitive?: boolean; maxResults?: number; include?: string; exclude?: string }) => ipcRenderer.invoke("search:content", options),
   },
   terminal: {
     create: (options: { cwd?: string; cols?: number; rows?: number; spaceId?: string }) => ipcRenderer.invoke("terminal:create", options),

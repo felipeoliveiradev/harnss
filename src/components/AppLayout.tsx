@@ -35,6 +35,8 @@ import { GitPanel } from "./GitPanel";
 import { McpPanel } from "./McpPanel";
 import { ProjectFilesPanel } from "./ProjectFilesPanel";
 import { GroupPanel } from "./groups/GroupPanel";
+import { ExecutionsPanel } from "./ExecutionsPanel";
+import { SearchPanel } from "./SearchPanel";
 import { useAgentGroups } from "@/hooks/useAgentGroups";
 import { FilePreviewOverlay } from "./FilePreviewOverlay";
 import { SettingsView } from "./SettingsView";
@@ -1164,6 +1166,7 @@ Link: ${issue.url}`;
                   onSelectWorktreePath={handleAgentWorktreeChange}
                   activeEngine={manager.activeSession?.engine}
                   activeSessionId={manager.activeSessionId}
+                  onOpenFileInWorkspace={openInCodeWorkspace}
                 />
               ),
               browser: <BrowserPanel onElementGrab={handleElementGrab} />,
@@ -1201,6 +1204,19 @@ Link: ${issue.url}`;
                   onStartSession={handleGroupSend}
                   onStopSession={() => { if (manager.activeSession?.engine === "group") manager.stop(); }}
                   projectPath={activeProjectPath}
+                />
+              ),
+              executions: (
+                <ExecutionsPanel
+                  cwd={activeProjectPath}
+                  enabled={activeTools.has("executions")}
+                />
+              ),
+              search: (
+                <SearchPanel
+                  cwd={activeProjectPath}
+                  enabled={activeTools.has("search")}
+                  onOpenFile={handlePreviewFile}
                 />
               ),
             };
