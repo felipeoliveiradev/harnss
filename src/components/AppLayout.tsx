@@ -1,5 +1,5 @@
 import { useCallback, useRef, useEffect, useLayoutEffect, useState, useMemo } from "react";
-import { PanelLeft, MessageSquare } from "lucide-react";
+import { PanelLeft, MessageSquare, Maximize2, Minimize2, Pin, PinOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { normalizeRatios, type WorkspaceMode } from "@/hooks/useSettings";
@@ -194,6 +194,7 @@ export function AppLayout() {
   const [editorOpenRequest, setEditorOpenRequest] = useState<CodeOpenRequest | null>(null);
   const [forceOpenFloatingToken, setForceOpenFloatingToken] = useState(0);
   const [workspaceActiveFilePath, setWorkspaceActiveFilePath] = useState<string | null>(null);
+  const [maximizedToolId, setMaximizedToolId] = useState<string | null>(null);
   const [codeSnippets0, setCodeSnippets0] = useState<CodeSnippet[]>([]);
   const [codeSnippets1, setCodeSnippets1] = useState<CodeSnippet[]>([]);
   const handleAddToChat = useCallback((code: string, filePath: string, lineStart: number, lineEnd: number, targetPane?: number) => {
@@ -1248,18 +1249,39 @@ Link: ${issue.url}`;
               <div
                 ref={hasToolsColumn ? toolsColumnRef : null}
                 className={`flex shrink-0 flex-col gap-0 overflow-hidden ${!hasToolsColumn ? "hidden" : ""}`}
-                style={{ width: settings.toolsPanelWidth }}
+                style={{ width: maximizedToolId ? "60vw" : settings.toolsPanelWidth }}
               >
                 {sideToolIds.map((id) => {
                   const isActive = activeTools.has(id);
                   const activeIdx = isActive ? activeSideIds.indexOf(id) : -1;
+                  const isPinned = settings.suppressedPanels.has(id);
+                  const isMaximized = maximizedToolId === id;
+                  const isHiddenByMaximize = maximizedToolId && maximizedToolId !== id;
 
                   return (
-                    <div key={id} className={isActive ? "contents" : "hidden"}>
+                    <div key={id} className={isActive && !isHiddenByMaximize ? "contents" : "hidden"}>
                       <div
-                        className="island flex flex-col overflow-hidden rounded-[var(--island-radius)] bg-background"
-                        style={isActive ? { flex: `${sideRatios[activeIdx]} 1 0%`, minHeight: 0 } : undefined}
+                        className="island group/panel relative flex flex-col overflow-hidden rounded-[var(--island-radius)] bg-background"
+                        style={isActive ? { flex: isMaximized ? "1 1 100%" : `${sideRatios[activeIdx]} 1 0%`, minHeight: 0 } : undefined}
                       >
+                        <div className="absolute end-2 top-2.5 z-10 flex items-center gap-0.5 opacity-0 transition-opacity group-hover/panel:opacity-100">
+                          <button
+                            type="button"
+                            className={`flex h-5 w-5 items-center justify-center rounded-md transition-colors cursor-pointer ${isPinned ? "bg-foreground/[0.08] text-foreground/70" : "text-foreground/30 hover:bg-foreground/[0.06] hover:text-foreground/60"}`}
+                            onClick={() => isPinned ? settings.unsuppressPanel(id) : settings.suppressPanel(id)}
+                            title={isPinned ? "Unpin" : "Pin"}
+                          >
+                            {isPinned ? <PinOff className="h-2.5 w-2.5" /> : <Pin className="h-2.5 w-2.5" />}
+                          </button>
+                          <button
+                            type="button"
+                            className="flex h-5 w-5 items-center justify-center rounded-md text-foreground/30 hover:bg-foreground/[0.06] hover:text-foreground/60 transition-colors cursor-pointer"
+                            onClick={() => setMaximizedToolId(isMaximized ? null : id)}
+                            title={isMaximized ? "Restore" : "Maximize"}
+                          >
+                            {isMaximized ? <Minimize2 className="h-2.5 w-2.5" /> : <Maximize2 className="h-2.5 w-2.5" />}
+                          </button>
+                        </div>
                         {toolComponents[id]}
                       </div>
                       {isActive && activeIdx < sideCount - 1 && (

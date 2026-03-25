@@ -14,7 +14,7 @@ import {
 const MIN_PANEL_WIDTH = MIN_RIGHT_PANEL_WIDTH;
 const MAX_PANEL_WIDTH = 500;
 const MIN_TOOLS_WIDTH = MIN_TOOLS_PANEL_WIDTH;
-const MAX_TOOLS_WIDTH = 800;
+const MAX_TOOLS_WIDTH = 1400;
 
 // Min width per pane in split-chat mode
 const MIN_PANE_WIDTH = 320;
