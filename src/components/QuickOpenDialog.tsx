@@ -164,7 +164,7 @@ export const QuickOpenDialog = memo(function QuickOpenDialog({
       e.preventDefault();
       onOpenChange(false);
     }
-  }, [handlePick, handlePickFile, fileMatches, folderMatches, textResults, mode, onOpenChange, selectedIndex, totalItems]);
+  }, [handlePick, handlePickFile, fileMatches, folderFiles, textResults, mode, onOpenChange, selectedIndex, totalItems]);
 
   const placeholder = mode === "file" ? "Go to file... (ex: src/App.tsx:42)"
     : mode === "text" ? "Search file contents..."
