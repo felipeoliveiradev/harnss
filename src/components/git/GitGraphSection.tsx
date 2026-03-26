@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useState } from "react";
-import { Loader2, GitBranch, Tag, FileText, FilePlus, FileX, FileEdit } from "lucide-react";
+import { Loader2, GitBranch, Tag, FileText, FilePlus, FileX, FileEdit, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface GraphEntry {
@@ -42,8 +42,8 @@ function formatRelativeDate(dateStr: string): string {
 }
 
 const GRAPH_COLORS = [
-  "text-emerald-400", "text-sky-400", "text-violet-400", "text-amber-400",
-  "text-rose-400", "text-cyan-400", "text-pink-400", "text-lime-400",
+  "text-emerald-400/80", "text-sky-400/80", "text-violet-400/80", "text-amber-400/80",
+  "text-rose-400/80", "text-cyan-400/80", "text-pink-400/80", "text-lime-400/80",
 ];
 
 function colorizeGraphLine(line: string): Array<{ text: string; colorClass: string }> {
@@ -53,7 +53,7 @@ function colorizeGraphLine(line: string): Array<{ text: string; colorClass: stri
     const ch = line[i];
     if (ch === "|" || ch === "*" || ch === "/" || ch === "\\") {
       const color = GRAPH_COLORS[currentCol % GRAPH_COLORS.length];
-      segments.push({ text: ch === "*" ? "●" : ch, colorClass: ch === "*" ? "text-foreground/90 font-bold" : color });
+      segments.push({ text: ch === "*" ? "●" : ch, colorClass: ch === "*" ? "text-foreground/85 font-bold" : color });
       if (ch === "|" || ch === "*") currentCol++;
     } else if (ch === " ") {
       segments.push({ text: " ", colorClass: "" });
@@ -86,7 +86,7 @@ function RefBadge({ name }: { name: string }) {
     : "bg-emerald-500/20 text-emerald-700 dark:text-emerald-300";
   const Icon = isTag ? Tag : GitBranch;
   return (
-    <span className={`inline-flex items-center gap-0.5 rounded px-1 py-px text-[8px] font-medium leading-none ${colorClass}`}>
+    <span className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[8px] font-medium leading-none ${colorClass}`}>
       <Icon className="h-2 w-2" />
       {cleanName}
     </span>
@@ -106,7 +106,7 @@ function CommitFileRow({ file, cwd, hash, onOpenFile }: { file: CommitFile; cwd:
   const [showDiff, setShowDiff] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  const config = STATUS_CONFIG[file.status[0]] || STATUS_CONFIG.M;
+  const config = STATUS_CONFIG[file.status[0]] ?? STATUS_CONFIG.M;
   const Icon = config.icon;
 
   const handleClick = useCallback(async () => {
@@ -125,7 +125,7 @@ function CommitFileRow({ file, cwd, hash, onOpenFile }: { file: CommitFile; cwd:
   return (
     <div>
       <div className="group flex w-full items-center gap-1.5 px-3 ps-8 py-[2px] text-[10px] transition-colors hover:bg-foreground/[0.03]">
-        <Icon className={`h-3 w-3 shrink-0 ${config.color}`} />
+        <Icon className={`h-3.5 w-3.5 shrink-0 ${config.color}`} />
         <button
           type="button"
           className="min-w-0 truncate font-mono text-foreground/65 hover:text-foreground/90 hover:underline cursor-pointer"
@@ -138,13 +138,13 @@ function CommitFileRow({ file, cwd, hash, onOpenFile }: { file: CommitFile; cwd:
         <button
           type="button"
           onClick={handleClick}
-          className="ms-auto hidden shrink-0 rounded px-1 py-px text-[9px] text-foreground/40 hover:bg-foreground/[0.06] hover:text-foreground/70 group-hover:block cursor-pointer"
+          className="ms-auto hidden shrink-0 rounded border border-foreground/[0.12] bg-foreground/[0.04] px-1.5 py-px text-[9px] font-medium text-foreground/50 hover:border-foreground/[0.22] hover:bg-foreground/[0.08] hover:text-foreground/80 group-hover:block cursor-pointer transition-colors"
         >
-          {showDiff ? "hide diff" : "diff"}
+          {showDiff ? "hide" : "diff"}
         </button>
       </div>
       {showDiff && diffContent !== null && (
-        <pre className="mx-3 ms-8 mb-1 max-h-[200px] overflow-auto rounded border border-foreground/[0.06] bg-foreground/[0.02] p-1.5 font-mono text-[9px] leading-relaxed">
+        <pre className="mx-3 ms-8 mb-1 max-h-[200px] overflow-auto rounded border border-foreground/[0.06] bg-foreground/[0.02] font-mono text-[9px] leading-relaxed">
           {diffContent.split("\n").map((line, i) => {
             const color = line.startsWith("+") && !line.startsWith("+++")
               ? "text-emerald-500"
@@ -153,7 +153,12 @@ function CommitFileRow({ file, cwd, hash, onOpenFile }: { file: CommitFile; cwd:
               : line.startsWith("@@")
               ? "text-cyan-500"
               : "text-foreground/50";
-            return <div key={i} className={color}>{line || " "}</div>;
+            return (
+              <div key={i} className={`flex ${color}`}>
+                <span className="w-7 shrink-0 select-none border-e border-foreground/[0.06] pe-1 text-end text-foreground/25 tabular-nums">{i + 1}</span>
+                <span className="px-1.5">{line || " "}</span>
+              </div>
+            );
           })}
         </pre>
       )}
@@ -259,13 +264,16 @@ export const GitGraphSection = memo(function GitGraphSection({
       {expanded && (
         <div className="max-h-[500px] overflow-y-auto pb-1">
           <div className="px-2 pb-1.5 pt-0.5">
-            <input
-              type="text"
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-              placeholder="Filter by message, author, hash..."
-              className="h-6 w-full rounded border border-input bg-background px-2 text-[10px] text-foreground/85 outline-none focus-visible:ring-1 focus-visible:ring-ring"
-            />
+            <div className="relative flex items-center">
+              <Search className="pointer-events-none absolute start-1.5 h-2.5 w-2.5 text-foreground/35" />
+              <input
+                type="text"
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                placeholder="Filter by message, author, hash..."
+                className="h-6 w-full rounded border border-input bg-background ps-5 pe-2 text-[10px] text-foreground/85 outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              />
+            </div>
           </div>
           {graphLines.map((line, i) => {
             const isCommitLine = line.includes("*");
@@ -294,6 +302,9 @@ export const GitGraphSection = memo(function GitGraphSection({
                   <GraphLine graphPart={graphPart} />
                   {entry ? (
                     <div className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
+                      <span className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full bg-foreground/10 text-[7px] font-semibold uppercase text-foreground/60">
+                        {entry.author.charAt(0)}
+                      </span>
                       <span className="shrink-0 font-mono text-foreground/45 tabular-nums">{entry.shortHash}</span>
                       {entry.refs.filter((r) => r && r !== "HEAD").map((ref) => (
                         <RefBadge key={ref} name={ref} />
@@ -307,8 +318,8 @@ export const GitGraphSection = memo(function GitGraphSection({
                   )}
                 </div>
                 {isExpanded && files && (
-                  <div className="border-b border-foreground/[0.04] pb-1">
-                    <div className="px-3 ps-8 py-0.5 text-[9px] text-foreground/40">
+                  <div className="animate-in fade-in slide-in-from-top-1 border-b border-foreground/[0.04] border-s-2 border-s-foreground/[0.12] ms-3 pb-1 duration-150">
+                    <div className="px-3 ps-5 py-0.5 text-[9px] text-foreground/40">
                       {entry!.author} · {files.length} file{files.length !== 1 ? "s" : ""} changed
                     </div>
                     {files.map((file) => (
@@ -328,7 +339,7 @@ export const GitGraphSection = memo(function GitGraphSection({
                 onClick={handleLoadMore}
                 disabled={loading}
               >
-                Load More
+                Load {50} more commits
               </Button>
             </div>
           )}
