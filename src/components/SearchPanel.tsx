@@ -297,17 +297,30 @@ export const SearchPanel = memo(function SearchPanel({
 
         {search.mode === "folders" && search.fileResults.length > 0 && (
           <div className="py-1">
-            {search.fileResults.map((r, i) => (
-              <button
-                key={r.dir || r.path}
-                type="button"
-                className={`flex w-full items-center gap-1.5 px-3 py-[3px] text-[10px] transition-colors hover:bg-foreground/[0.05] cursor-pointer ${i % 2 === 1 ? "bg-foreground/[0.015]" : ""}`}
-                onClick={() => onOpenFile?.(r.dir || r.path)}
-              >
-                <Folder className="h-3 w-3 shrink-0 text-amber-400/60" />
-                <span className="min-w-0 truncate font-medium text-foreground/70">{r.dir || "."}</span>
-              </button>
-            ))}
+            {search.fileResults.map((r, i) => {
+              const fullPath = r.dir || ".";
+              const segments = fullPath.split("/");
+              const folderName = segments.pop() ?? fullPath;
+              const parentPath = segments.join("/");
+              return (
+                <Tooltip key={fullPath}>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      className={`flex w-full items-center gap-1.5 px-3 py-[3px] text-[10px] transition-colors hover:bg-foreground/[0.05] cursor-pointer ${i % 2 === 1 ? "bg-foreground/[0.015]" : ""}`}
+                      onClick={() => onOpenFile?.(fullPath)}
+                    >
+                      <Folder className="h-3 w-3 shrink-0 text-amber-400/60" />
+                      <span className="shrink-0 font-medium text-foreground/70">{folderName}</span>
+                      {parentPath && <span className="min-w-0 truncate text-foreground/35">{parentPath}</span>}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="left" sideOffset={4}>
+                    <p className="font-mono text-[10px]">{fullPath}</p>
+                  </TooltipContent>
+                </Tooltip>
+              );
+            })}
           </div>
         )}
 
