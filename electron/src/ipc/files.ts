@@ -103,8 +103,7 @@ async function listProjectFiles(cwd: string): Promise<string[]> {
   }
 }
 
-/** Dirs to skip in the full filesystem walk (VCS internals + massive dependency dirs). */
-const EXPLORER_SKIP = new Set([".git", ".hg", ".svn", "node_modules"]);
+// EXPLORER_DEEP_SKIP is defined inside listAllFiles below
 
 // ── Recursive file watcher ──
 // Uses a single fs.watch(cwd, { recursive: true }) per project root.
@@ -170,18 +169,32 @@ function stopProjectWatcher(cwd: string): void {
 }
 
 /**
- * Walk the filesystem including gitignored files.
- * Only skips VCS internals and node_modules (too massive).
- * Used by the "Project Files" explorer panel.
+ * Directories whose children are never pre-loaded (too large to scan upfront).
+ * They still appear in the tree as expandable nodes.
+ * Mirrors VS Code's behavior with node_modules and common dependency dirs.
  */
-async function listAllFiles(cwd: string, maxFiles = 10000): Promise<string[]> {
-  const files: string[] = [];
-  const queue: string[] = [""];
-  let visitedDirs = 0;
+const EXPLORER_DEEP_SKIP = new Set([
+  "node_modules",
+  "vendor",       // PHP / Composer
+  ".git", ".hg", ".svn",
+]);
 
-  while (queue.length > 0 && files.length < maxFiles) {
+/**
+ * Walk the filesystem including gitignored files.
+ * Directory structure is always fully discovered (no depth/count limit on dirs).
+ * Files inside EXPLORER_DEEP_SKIP dirs are not pre-loaded (dirs still appear in tree).
+ * Matches VS Code explorer behavior: shows all files + empty directories + symlinked files.
+ */
+async function listAllFiles(cwd: string, maxFiles = 50000): Promise<{ files: string[]; emptyDirs: string[] }> {
+  const files: string[] = [];
+  const visitedDirSet = new Set<string>(); // all non-root dirs we entered
+  const queue: string[] = [""];
+  let visited = 0;
+
+  while (queue.length > 0) {
     const rel = queue.shift()!;
     const abs = rel ? path.join(cwd, rel) : cwd;
+    if (rel) visitedDirSet.add(rel);
 
     let entries: fs.Dirent[];
     try {
@@ -194,20 +207,42 @@ async function listAllFiles(cwd: string, maxFiles = 10000): Promise<string[]> {
       const entryRel = rel ? `${rel}/${entry.name}` : entry.name;
 
       if (entry.isDirectory()) {
-        if (EXPLORER_SKIP.has(entry.name)) continue;
+        if (EXPLORER_DEEP_SKIP.has(entry.name)) {
+          // Show the dir in the tree but don't recurse into it
+          visitedDirSet.add(entryRel);
+          continue;
+        }
         queue.push(entryRel);
       } else if (entry.isFile()) {
-        files.push(entryRel);
+        if (files.length < maxFiles) files.push(entryRel);
+      } else if (entry.isSymbolicLink()) {
+        // Follow file symlinks only (skip dir symlinks to avoid infinite loops)
+        try {
+          const stat = await fsPromises.stat(path.join(abs, entry.name));
+          if (stat.isFile() && files.length < maxFiles) files.push(entryRel);
+        } catch {
+          // Broken symlink — skip silently
+        }
       }
     }
 
-    visitedDirs += 1;
-    if (visitedDirs % 25 === 0) {
+    visited += 1;
+    if (visited % 25 === 0) {
       await yieldToEventLoop();
     }
   }
 
-  return files.sort();
+  // Find dirs that have NO files inside them at any depth (empty dirs)
+  const dirsWithFiles = new Set<string>();
+  for (const f of files) {
+    const parts = f.split("/");
+    for (let i = 1; i < parts.length; i++) {
+      dirsWithFiles.add(parts.slice(0, i).join("/"));
+    }
+  }
+  const emptyDirs = [...visitedDirSet].filter((d) => !dirsWithFiles.has(d)).sort();
+
+  return { files: files.sort(), emptyDirs };
 }
 
 interface TreeNode {
@@ -304,16 +339,8 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
 
   ipcMain.handle("files:list-all", async (_event, cwd: string) => {
     try {
-      const files = await listAllFiles(cwd);
-      const dirSet = new Set<string>();
-      for (const file of files) {
-        const parts = file.split("/");
-        for (let i = 1; i < parts.length; i++) {
-          dirSet.add(parts.slice(0, i).join("/") + "/");
-        }
-      }
-      const dirs = Array.from(dirSet).sort();
-      return { files, dirs };
+      const { files, emptyDirs } = await listAllFiles(cwd);
+      return { files, dirs: emptyDirs };
     } catch (err) {
       reportError("FILES:LIST_ALL_ERR", err);
       return { files: [], dirs: [] };

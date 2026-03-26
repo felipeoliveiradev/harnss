@@ -1457,21 +1457,12 @@ export function useSessionLifecycle({
       trackMessageSent();
 
       if (activeSessionEngine === "ollama") {
-        if (liveSessionIdsRef.current.has(activeId)) {
-          await ollama.send(text, images, displayText);
-          return;
+        // Ollama backend sessions persist until explicitly stopped — re-register if tracking was lost
+        if (!liveSessionIdsRef.current.has(activeId)) {
+          liveSessionIdsRef.current.add(activeId);
+          ollama.setIsConnected(true);
         }
-        // Ollama sessions don't support revival — show error
-        ollama.setMessages((prev) => [
-          ...prev,
-          {
-            id: `system-send-error-${Date.now()}`,
-            role: "system" as const,
-            content: "Ollama session ended. Please start a new chat.",
-            timestamp: Date.now(),
-            isError: true,
-          },
-        ]);
+        await ollama.send(text, images, displayText);
         return;
       }
 
