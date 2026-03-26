@@ -26,6 +26,7 @@ export function useSearch(cwd?: string) {
   const [contentResults, setContentResults] = useState<ContentSearchResult[]>([]);
   const [totalContentCount, setTotalContentCount] = useState(0);
   const [isSearching, setIsSearching] = useState(false);
+  const [searchTimeMs, setSearchTimeMs] = useState<number | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const queryRef = useRef(query);
   queryRef.current = query;
@@ -39,6 +40,7 @@ export function useSearch(cwd?: string) {
     }
     if (!window.claude?.search) return;
     setIsSearching(true);
+    const t0 = Date.now();
     try {
       if (mode === "files" || mode === "folders") {
         const result = await window.claude.search.files({ cwd: dir, query: q });
@@ -70,6 +72,7 @@ export function useSearch(cwd?: string) {
       }
     } finally {
       setIsSearching(false);
+      setSearchTimeMs(Date.now() - t0);
     }
   }, [mode, isRegex, caseSensitive, include, exclude]);
 
@@ -98,5 +101,6 @@ export function useSearch(cwd?: string) {
     contentResults,
     totalContentCount,
     isSearching,
+    searchTimeMs,
   };
 }

@@ -24,7 +24,7 @@ import { ChatView } from "./ChatView";
 import { BottomComposer } from "./BottomComposer";
 import { TodoPanel } from "./TodoPanel";
 import { BackgroundAgentsPanel } from "./BackgroundAgentsPanel";
-import { ToolPicker } from "./ToolPicker";
+import { ToolPicker, PANEL_TOOLS_MAP } from "./ToolPicker";
 import { WelcomeScreen } from "./WelcomeScreen";
 import { WelcomeWizard } from "./welcome/WelcomeWizard";
 import { WELCOME_COMPLETED_KEY } from "./welcome/shared";
@@ -196,6 +196,11 @@ export function AppLayout() {
   const [workspaceActiveFilePath, setWorkspaceActiveFilePath] = useState<string | null>(null);
   const [maximizedToolId, setMaximizedToolId] = useState<string | null>(null);
   const [pinnedToolId, setPinnedToolId] = useState<string | null>(null);
+  const backdropCloseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleBackdropClick = useCallback(() => {
+    if (backdropCloseTimeoutRef.current) clearTimeout(backdropCloseTimeoutRef.current);
+    backdropCloseTimeoutRef.current = setTimeout(() => setMaximizedToolId(null), 120);
+  }, []);
   const [codeSnippets0, setCodeSnippets0] = useState<CodeSnippet[]>([]);
   const [codeSnippets1, setCodeSnippets1] = useState<CodeSnippet[]>([]);
   const handleAddToChat = useCallback((code: string, filePath: string, lineStart: number, lineEnd: number, targetPane?: number) => {
@@ -1265,10 +1270,10 @@ Link: ${issue.url}`;
                         className="island group/panel relative flex flex-col overflow-hidden rounded-[var(--island-radius)] bg-background"
                         style={isActive ? { flex: `${sideRatios[activeIdx]} 1 0%`, minHeight: 0 } : undefined}
                       >
-                        <div className="absolute end-2 top-2.5 z-10 flex items-center gap-0.5 opacity-0 transition-opacity group-hover/panel:opacity-100">
+                        <div className="absolute end-2 top-2.5 z-10 flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover/panel:opacity-100">
                           <button
                             type="button"
-                            className="flex h-5 w-5 items-center justify-center rounded-md text-foreground/30 hover:bg-foreground/[0.06] hover:text-foreground/60 transition-colors cursor-pointer"
+                            className="flex h-5 w-5 items-center justify-center rounded-md text-foreground/30 hover:bg-foreground/[0.06] hover:text-foreground/60 transition-all duration-150 cursor-pointer"
                             onClick={() => setPinnedToolId(isPinned ? null : id)}
                             title="Pin to side"
                           >
@@ -1276,7 +1281,7 @@ Link: ${issue.url}`;
                           </button>
                           <button
                             type="button"
-                            className="flex h-5 w-5 items-center justify-center rounded-md text-foreground/30 hover:bg-foreground/[0.06] hover:text-foreground/60 transition-colors cursor-pointer"
+                            className="flex h-5 w-5 items-center justify-center rounded-md text-foreground/30 hover:bg-foreground/[0.06] hover:text-foreground/60 transition-all duration-150 cursor-pointer"
                             onClick={() => setMaximizedToolId(id)}
                             title="Maximize"
                           >
@@ -1313,25 +1318,30 @@ Link: ${issue.url}`;
                   >
                     <div className="h-10 w-0.5 rounded-full transition-colors duration-150 bg-transparent group-hover:bg-foreground/25" />
                   </div>
-                  <div className="flex w-[320px] shrink-0 flex-col overflow-hidden">
+                  <div className="flex w-[320px] shrink-0 flex-col overflow-hidden border-s border-foreground/[0.06]">
                     <div className="island group/panel relative flex flex-1 flex-col overflow-hidden rounded-[var(--island-radius)] bg-background" style={{ minHeight: 0 }}>
-                      <div className="absolute end-2 top-2.5 z-10 flex items-center gap-0.5 opacity-0 transition-opacity group-hover/panel:opacity-100">
-                        <button
-                          type="button"
-                          className="flex h-5 w-5 items-center justify-center rounded-md bg-foreground/[0.08] text-foreground/70 transition-colors cursor-pointer"
-                          onClick={() => setPinnedToolId(null)}
-                          title="Unpin"
-                        >
-                          <PinOff className="h-2.5 w-2.5" />
-                        </button>
-                        <button
-                          type="button"
-                          className="flex h-5 w-5 items-center justify-center rounded-md text-foreground/30 hover:bg-foreground/[0.06] hover:text-foreground/60 transition-colors cursor-pointer"
-                          onClick={() => { setMaximizedToolId(pinnedToolId); setPinnedToolId(null); }}
-                          title="Maximize"
-                        >
-                          <Maximize2 className="h-2.5 w-2.5" />
-                        </button>
+                      <div className="flex h-8 shrink-0 items-center justify-between border-b border-foreground/[0.06] px-3">
+                        <span className="text-[11px] font-medium text-foreground/40 uppercase tracking-wider select-none">
+                          {(PANEL_TOOLS_MAP as Record<string, { label: string }>)[pinnedToolId]?.label ?? pinnedToolId}
+                        </span>
+                        <div className="flex items-center gap-0.5">
+                          <button
+                            type="button"
+                            className="flex h-5 w-5 items-center justify-center rounded-md text-foreground/40 hover:bg-foreground/[0.08] hover:text-foreground/70 transition-all duration-150 cursor-pointer"
+                            onClick={() => { setMaximizedToolId(pinnedToolId); setPinnedToolId(null); }}
+                            title="Maximize"
+                          >
+                            <Maximize2 className="h-2.5 w-2.5" />
+                          </button>
+                          <button
+                            type="button"
+                            className="flex h-5 w-5 items-center justify-center rounded-md text-foreground/40 hover:bg-foreground/[0.08] hover:text-foreground/70 transition-all duration-150 cursor-pointer"
+                            onClick={() => setPinnedToolId(null)}
+                            title="Unpin"
+                          >
+                            <PinOff className="h-2.5 w-2.5" />
+                          </button>
+                        </div>
                       </div>
                       {toolComponents[pinnedToolId]}
                     </div>
@@ -1340,15 +1350,20 @@ Link: ${issue.url}`;
               )}
 
               {maximizedToolId && maximizedToolId in toolComponents && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setMaximizedToolId(null)}>
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 backdrop-blur-sm animate-in fade-in duration-200" onClick={handleBackdropClick}>
                   <div
-                    className="island relative flex h-[85vh] w-[80vw] flex-col overflow-hidden rounded-2xl bg-background shadow-2xl"
+                    className="island relative flex h-[85vh] w-[80vw] flex-col overflow-hidden rounded-2xl bg-background shadow-2xl animate-in zoom-in-95 fade-in duration-200"
                     onClick={(e) => e.stopPropagation()}
                   >
+                    <div className="absolute start-3 top-3 z-10">
+                      <span className="text-[11px] font-medium text-foreground/35 uppercase tracking-wider select-none">
+                        {(PANEL_TOOLS_MAP as Record<string, { label: string }>)[maximizedToolId]?.label ?? maximizedToolId}
+                      </span>
+                    </div>
                     <div className="absolute end-3 top-3 z-10 flex items-center gap-1">
                       <button
                         type="button"
-                        className="flex h-6 w-6 items-center justify-center rounded-md text-foreground/40 hover:bg-foreground/[0.08] hover:text-foreground/70 transition-colors cursor-pointer"
+                        className="flex h-6 w-6 items-center justify-center rounded-md text-foreground/40 hover:bg-foreground/[0.08] hover:text-foreground/70 transition-all duration-150 cursor-pointer"
                         onClick={() => { setPinnedToolId(maximizedToolId); setMaximizedToolId(null); }}
                         title="Pin to side"
                       >
@@ -1356,7 +1371,7 @@ Link: ${issue.url}`;
                       </button>
                       <button
                         type="button"
-                        className="flex h-6 w-6 items-center justify-center rounded-md text-foreground/40 hover:bg-foreground/[0.08] hover:text-foreground/70 transition-colors cursor-pointer"
+                        className="flex h-6 w-6 items-center justify-center rounded-md text-foreground/40 hover:bg-foreground/[0.08] hover:text-foreground/70 transition-all duration-150 cursor-pointer"
                         onClick={() => setMaximizedToolId(null)}
                         title="Close"
                       >

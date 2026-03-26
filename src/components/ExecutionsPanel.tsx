@@ -15,6 +15,10 @@ import {
   Save,
   Maximize2,
   Minimize2,
+  Package,
+  Boxes,
+  Coffee,
+  Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -50,6 +54,14 @@ interface ExecutionsPanelProps {
   enabled?: boolean;
 }
 
+function runnerIcon(source: string) {
+  const s = source.toLowerCase();
+  if (s.includes("cargo") || s.includes("rust")) return Zap;
+  if (s.includes("maven") || s.includes("gradle") || s.includes("java")) return Coffee;
+  if (s.includes("composer") || s.includes("php")) return Boxes;
+  return Package;
+}
+
 function RunnerSection({
   runner,
   expanded,
@@ -62,6 +74,7 @@ function RunnerSection({
   onRun: (command: string, label: string) => void;
 }) {
   const entries = Object.entries(runner.scripts);
+  const Icon = runnerIcon(runner.source);
   return (
     <div className="border-b border-foreground/[0.06]">
       <button
@@ -74,6 +87,7 @@ function RunnerSection({
         ) : (
           <ChevronRight className="h-3 w-3 shrink-0 text-foreground/45" />
         )}
+        <Icon className="h-3 w-3 shrink-0 text-foreground/40" />
         <span className="text-[11px] font-semibold text-foreground/60">{runner.source}</span>
         <span className="rounded-full bg-foreground/[0.07] px-1.5 py-px text-[10px] font-medium tabular-nums text-foreground/45">
           {entries.length}
@@ -253,20 +267,20 @@ export const ExecutionsPanel = memo(function ExecutionsPanel({
           {savedExpanded && (
             <div className="pb-1.5">
               {showAddForm && (
-                <div className="mx-3 mb-1.5 space-y-1 rounded border border-foreground/[0.08] bg-foreground/[0.02] p-2">
+                <div className="mx-3 mb-2 mt-1 space-y-1.5 rounded-md border border-foreground/[0.12] bg-foreground/[0.03] p-2.5">
                   <input
                     type="text"
                     value={customLabel}
                     onChange={(e) => setCustomLabel(e.target.value)}
                     placeholder="Label (e.g. Dev Server)"
-                    className="h-6 w-full rounded border border-input bg-background px-2 text-[10px] text-foreground/85 outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    className="h-6 w-full rounded border border-input bg-background px-2 text-[10px] text-foreground/85 outline-none placeholder:text-foreground/40 focus-visible:ring-1 focus-visible:ring-ring"
                   />
                   <input
                     type="text"
                     value={customCommand}
                     onChange={(e) => setCustomCommand(e.target.value)}
                     placeholder="Command (e.g. npm run dev)"
-                    className="h-6 w-full rounded border border-input bg-background px-2 font-mono text-[10px] text-foreground/85 outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    className="h-6 w-full rounded border border-input bg-background px-2 font-mono text-[10px] text-foreground/85 outline-none placeholder:text-foreground/40 focus-visible:ring-1 focus-visible:ring-ring"
                     onKeyDown={(e) => { if (e.key === "Enter") handleSaveRun(); }}
                   />
                   <div className="flex justify-end gap-1">
@@ -292,7 +306,10 @@ export const ExecutionsPanel = memo(function ExecutionsPanel({
                 </div>
               )}
               {savedRuns.length === 0 && !showAddForm && (
-                <p className="px-3 text-[10px] text-foreground/40">No custom runs — click + to add</p>
+                <div className="flex items-center gap-1.5 px-3 py-1">
+                  <Save className="h-3 w-3 shrink-0 text-foreground/25" />
+                  <p className="text-[10px] text-foreground/35">No saved runs yet — click + to add one</p>
+                </div>
               )}
               {savedRuns.map((run) => (
                 <div
@@ -335,13 +352,13 @@ export const ExecutionsPanel = memo(function ExecutionsPanel({
           />
         ))}
 
-        <div className="flex items-center gap-1 border-b border-foreground/[0.06] px-3 py-1.5">
+        <div className="flex items-center gap-1 border-b border-foreground/[0.06] px-3 py-2">
           <input
             type="text"
             value={customCommand}
             onChange={(e) => setCustomCommand(e.target.value)}
-            placeholder="Quick run..."
-            className="h-6 min-w-0 flex-1 rounded border border-input bg-background px-2 font-mono text-[10px] text-foreground/85 outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            placeholder="Quick run a command..."
+            className="h-6 min-w-0 flex-1 rounded border border-input bg-background px-2 font-mono text-[10px] text-foreground/85 outline-none placeholder:text-foreground/40 focus-visible:ring-1 focus-visible:ring-ring"
             onKeyDown={(e) => { if (e.key === "Enter") handleRunCustom(); }}
           />
           <Button
@@ -367,7 +384,7 @@ export const ExecutionsPanel = memo(function ExecutionsPanel({
                   onClick={() => exec.setActiveExecutionId(entry.id)}
                   className={`group/tab flex max-w-[160px] items-center gap-1 rounded-t-md px-2 py-1 text-[10px] transition-colors cursor-pointer ${
                     exec.activeExecutionId === entry.id
-                      ? "bg-background text-foreground/80"
+                      ? "bg-background text-foreground/80 shadow-[inset_0_-2px_0_0] shadow-foreground/20"
                       : "text-foreground/45 hover:text-foreground/65 hover:bg-foreground/[0.03]"
                   }`}
                 >
@@ -398,7 +415,7 @@ export const ExecutionsPanel = memo(function ExecutionsPanel({
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-6 w-6 shrink-0 text-red-500 hover:bg-red-500/10 hover:text-red-600"
+                      className="h-6 w-6 shrink-0 bg-red-500/10 text-red-500 hover:bg-red-500/20 hover:text-red-600"
                       onClick={() => { if (exec.activeExecutionId) exec.stopExecution(exec.activeExecutionId); }}
                     >
                       <Square className="h-3 w-3 fill-current" />
@@ -439,7 +456,7 @@ export const ExecutionsPanel = memo(function ExecutionsPanel({
           {!logsCollapsed && (
             <pre
               ref={outputRef}
-              className={`overflow-auto bg-background p-2 font-mono text-[10px] leading-relaxed whitespace-pre-wrap break-all ${logsMaximized ? "fixed inset-4 z-50 rounded-xl border border-foreground/[0.1] shadow-2xl" : "min-h-0 flex-1"}`}
+              className={`select-text overflow-auto bg-background p-2 font-mono text-[10px] leading-relaxed whitespace-pre-wrap break-all ${logsMaximized ? "fixed inset-4 z-50 rounded-xl border border-foreground/[0.1] bg-background shadow-2xl" : "min-h-0 flex-1"}`}
             >
               {logsMaximized && (
                 <button
@@ -463,11 +480,14 @@ export const ExecutionsPanel = memo(function ExecutionsPanel({
       )}
 
       {executionEntries.length === 0 && exec.runners.length === 0 && (
-        <div className="flex flex-1 flex-col items-center justify-center gap-1.5">
-          <div className="flex h-7 w-7 items-center justify-center rounded-md bg-foreground/[0.05]">
-            <Terminal className="h-3.5 w-3.5 text-foreground/25" />
+        <div className="flex flex-1 flex-col items-center justify-center gap-2">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-foreground/[0.05]">
+            <Terminal className="h-4 w-4 text-foreground/25" />
           </div>
-          <p className="text-[11px] text-foreground/40">No runners detected</p>
+          <div className="flex flex-col items-center gap-0.5">
+            <p className="text-[11px] font-medium text-foreground/40">No runners detected</p>
+            <p className="text-[10px] text-foreground/25">Use Quick Run above to execute a command</p>
+          </div>
         </div>
       )}
     </div>

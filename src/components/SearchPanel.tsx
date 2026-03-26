@@ -1,4 +1,4 @@
-import { memo, useMemo } from "react";
+import { memo, useMemo, type ReactNode } from "react";
 import {
   Search,
   FileText,
@@ -6,7 +6,7 @@ import {
   Regex,
   File,
   AlignLeft,
-  FolderSearch,
+  Folder,
   ChevronDown,
   ChevronRight,
   Loader2,
@@ -22,6 +22,33 @@ interface SearchPanelProps {
   cwd?: string;
   enabled?: boolean;
   onOpenFile?: (filePath: string) => void;
+}
+
+function extColor(name: string): string {
+  const ext = name.split(".").pop()?.toLowerCase() ?? "";
+  if (ext === "tsx" || ext === "ts") return "text-blue-400/70";
+  if (ext === "js" || ext === "jsx" || ext === "mjs" || ext === "cjs") return "text-yellow-400/70";
+  if (ext === "json") return "text-amber-400/70";
+  if (ext === "css" || ext === "scss" || ext === "sass") return "text-purple-400/70";
+  if (ext === "md" || ext === "mdx") return "text-green-400/70";
+  if (ext === "html") return "text-orange-400/70";
+  if (ext === "py") return "text-blue-500/70";
+  if (ext === "rs") return "text-orange-500/70";
+  if (ext === "go") return "text-cyan-400/70";
+  return "text-foreground/30";
+}
+
+function highlightMatch(preview: string, match: string): ReactNode {
+  if (!match) return preview;
+  const idx = preview.indexOf(match);
+  if (idx === -1) return preview;
+  return (
+    <>
+      {preview.slice(0, idx)}
+      <span className="rounded-sm bg-amber-500/20 text-amber-200/90">{preview.slice(idx, idx + match.length)}</span>
+      {preview.slice(idx + match.length)}
+    </>
+  );
 }
 
 function groupByFile(results: ContentSearchResult[]): Map<string, ContentSearchResult[]> {
@@ -78,56 +105,42 @@ export const SearchPanel = memo(function SearchPanel({
       </PanelHeader>
 
       <div className="space-y-1.5 border-b border-foreground/[0.06] px-3 py-2">
-        <div className="flex items-center gap-1">
+        <div className="relative flex items-center">
+          <Search className="pointer-events-none absolute start-2 h-3 w-3 text-foreground/35" />
           <input
             type="text"
             value={search.query}
             onChange={(e) => search.setQuery(e.target.value)}
             placeholder={search.mode === "files" ? "Search files..." : search.mode === "folders" ? "Search folders..." : "Search in files..."}
-            className="h-7 min-w-0 flex-1 rounded border border-input bg-background px-2 text-[11px] text-foreground/85 outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            className="h-7 w-full rounded border border-input bg-background ps-6 pe-2 text-[11px] text-foreground/85 outline-none focus-visible:ring-1 focus-visible:ring-ring"
           />
         </div>
 
         <div className="flex items-center gap-0.5">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className={`h-6 w-6 ${search.mode === "files" ? "bg-foreground/[0.08] text-foreground/80" : "text-foreground/40"}`}
-                onClick={() => search.setMode("files")}
-              >
-                <File className="h-3 w-3" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom"><p className="text-xs">File Search</p></TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className={`h-6 w-6 ${search.mode === "content" ? "bg-foreground/[0.08] text-foreground/80" : "text-foreground/40"}`}
-                onClick={() => search.setMode("content")}
-              >
-                <AlignLeft className="h-3 w-3" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom"><p className="text-xs">Content Search</p></TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className={`h-6 w-6 ${search.mode === "folders" ? "bg-foreground/[0.08] text-foreground/80" : "text-foreground/40"}`}
-                onClick={() => search.setMode("folders")}
-              >
-                <FolderSearch className="h-3 w-3" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom"><p className="text-xs">Folder Search</p></TooltipContent>
-          </Tooltip>
+          <Button
+            variant="ghost"
+            className={`h-6 gap-1 px-1.5 text-[10px] ${search.mode === "files" ? "bg-foreground/[0.08] text-foreground/80" : "text-foreground/40"}`}
+            onClick={() => search.setMode("files")}
+          >
+            <File className="h-3 w-3" />
+            Files
+          </Button>
+          <Button
+            variant="ghost"
+            className={`h-6 gap-1 px-1.5 text-[10px] ${search.mode === "content" ? "bg-foreground/[0.08] text-foreground/80" : "text-foreground/40"}`}
+            onClick={() => search.setMode("content")}
+          >
+            <AlignLeft className="h-3 w-3" />
+            Text
+          </Button>
+          <Button
+            variant="ghost"
+            className={`h-6 gap-1 px-1.5 text-[10px] ${search.mode === "folders" ? "bg-foreground/[0.08] text-foreground/80" : "text-foreground/40"}`}
+            onClick={() => search.setMode("folders")}
+          >
+            <Folder className="h-3 w-3" />
+            Folders
+          </Button>
 
           <div className="mx-1 h-3 w-px bg-foreground/[0.08]" />
 
@@ -163,10 +176,10 @@ export const SearchPanel = memo(function SearchPanel({
           <div className="flex-1" />
           <Button
             variant="ghost"
-            size="icon"
-            className={`h-6 w-6 ${showFilters ? "bg-foreground/[0.08] text-foreground/70" : "text-foreground/40"}`}
+            className={`h-6 gap-1 px-1.5 text-[10px] ${showFilters ? "bg-foreground/[0.08] text-foreground/70" : "text-foreground/40"}`}
             onClick={() => setShowFilters((p) => !p)}
           >
+            Filters
             {showFilters ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
           </Button>
         </div>
@@ -174,22 +187,22 @@ export const SearchPanel = memo(function SearchPanel({
         {showFilters && (
           <div className="space-y-1">
             <div className="flex items-center gap-1">
-              <span className="shrink-0 text-[9px] font-medium text-foreground/40 w-10">Include</span>
+              <span className="shrink-0 text-[9px] uppercase tracking-wide text-foreground/30 w-9">incl</span>
               <input
                 type="text"
                 value={search.include}
                 onChange={(e) => search.setInclude(e.target.value)}
-                placeholder="*.tsx, *.ts, src/**"
+                placeholder="*.tsx, src/**"
                 className="h-5 min-w-0 flex-1 rounded border border-input bg-background px-1.5 text-[10px] text-foreground/85 outline-none focus-visible:ring-1 focus-visible:ring-ring"
               />
             </div>
             <div className="flex items-center gap-1">
-              <span className="shrink-0 text-[9px] font-medium text-foreground/40 w-10">Exclude</span>
+              <span className="shrink-0 text-[9px] uppercase tracking-wide text-foreground/30 w-9">excl</span>
               <input
                 type="text"
                 value={search.exclude}
                 onChange={(e) => search.setExclude(e.target.value)}
-                placeholder="node_modules, dist, *.test.*"
+                placeholder="node_modules, dist"
                 className="h-5 min-w-0 flex-1 rounded border border-input bg-background px-1.5 text-[10px] text-foreground/85 outline-none focus-visible:ring-1 focus-visible:ring-ring"
               />
             </div>
@@ -200,14 +213,14 @@ export const SearchPanel = memo(function SearchPanel({
       <ScrollArea className="min-h-0 flex-1">
         {search.mode === "files" && search.fileResults.length > 0 && (
           <div className="py-1">
-            {search.fileResults.map((r) => (
+            {search.fileResults.map((r, i) => (
               <button
                 key={r.path}
                 type="button"
-                className="flex w-full items-center gap-1.5 px-3 py-[3px] text-[10px] transition-colors hover:bg-foreground/[0.03] cursor-pointer"
+                className={`flex w-full items-center gap-1.5 px-3 py-[3px] text-[10px] transition-colors hover:bg-foreground/[0.05] cursor-pointer ${i % 2 === 1 ? "bg-foreground/[0.015]" : ""}`}
                 onClick={() => onOpenFile?.(r.path)}
               >
-                <FileText className="h-3 w-3 shrink-0 text-foreground/30" />
+                <FileText className={`h-3 w-3 shrink-0 ${extColor(r.name)}`} />
                 <span className="shrink-0 font-medium text-foreground/80">{r.name}</span>
                 {r.dir && (
                   <span className="min-w-0 truncate text-foreground/40">{r.dir}</span>
@@ -219,14 +232,14 @@ export const SearchPanel = memo(function SearchPanel({
 
         {search.mode === "folders" && search.fileResults.length > 0 && (
           <div className="py-1">
-            {search.fileResults.map((r) => (
+            {search.fileResults.map((r, i) => (
               <button
                 key={r.dir || r.path}
                 type="button"
-                className="flex w-full items-center gap-1.5 px-3 py-[3px] text-[10px] transition-colors hover:bg-foreground/[0.03] cursor-pointer"
+                className={`flex w-full items-center gap-1.5 px-3 py-[3px] text-[10px] transition-colors hover:bg-foreground/[0.05] cursor-pointer ${i % 2 === 1 ? "bg-foreground/[0.015]" : ""}`}
                 onClick={() => onOpenFile?.(r.dir || r.path)}
               >
-                <FolderSearch className="h-3 w-3 shrink-0 text-foreground/30" />
+                <Folder className="h-3 w-3 shrink-0 text-amber-400/60" />
                 <span className="min-w-0 truncate font-medium text-foreground/70">{r.dir || "."}</span>
               </button>
             ))}
@@ -235,11 +248,11 @@ export const SearchPanel = memo(function SearchPanel({
 
         {search.mode === "content" && groupedContent.size > 0 && (
           <div className="py-1">
-            {Array.from(groupedContent.entries()).map(([file, matches]) => (
+            {Array.from(groupedContent.entries()).map(([file, matches], fileIdx) => (
               <div key={file}>
                 <button
                   type="button"
-                  className="flex w-full items-center gap-1.5 px-3 py-[3px] transition-colors hover:bg-foreground/[0.03] cursor-pointer"
+                  className={`flex w-full items-center gap-1.5 px-3 py-[3px] transition-colors hover:bg-foreground/[0.05] cursor-pointer ${fileIdx % 2 === 1 ? "bg-foreground/[0.015]" : ""}`}
                   onClick={() => toggleFileCollapse(file)}
                 >
                   {collapsedFiles.has(file) ? (
@@ -247,7 +260,7 @@ export const SearchPanel = memo(function SearchPanel({
                   ) : (
                     <ChevronDown className="h-3 w-3 shrink-0 text-foreground/40" />
                   )}
-                  <FileText className="h-3 w-3 shrink-0 text-foreground/30" />
+                  <FileText className={`h-3 w-3 shrink-0 ${extColor(file)}`} />
                   <span className="min-w-0 truncate text-[10px] font-medium text-foreground/70">{file}</span>
                   <span className="shrink-0 rounded-full bg-foreground/[0.07] px-1.5 py-px text-[9px] font-medium tabular-nums text-foreground/45">
                     {matches.length}
@@ -258,14 +271,14 @@ export const SearchPanel = memo(function SearchPanel({
                     <button
                       key={`${file}-${m.line}-${i}`}
                       type="button"
-                      className="flex w-full items-center gap-1.5 pe-3 ps-8 py-[2px] text-[10px] transition-colors hover:bg-foreground/[0.03] cursor-pointer"
+                      className={`flex w-full items-center gap-1.5 pe-3 ps-8 py-[2px] text-[10px] transition-colors hover:bg-foreground/[0.05] cursor-pointer ${i % 2 === 1 ? "bg-foreground/[0.015]" : ""}`}
                       onClick={() => onOpenFile?.(file)}
                     >
                       <span className="shrink-0 w-8 text-end font-mono text-foreground/35 tabular-nums">
                         {m.line}
                       </span>
                       <span className="min-w-0 truncate font-mono text-foreground/65">
-                        {m.preview}
+                        {highlightMatch(m.preview, m.match)}
                       </span>
                     </button>
                   ))}
@@ -275,19 +288,28 @@ export const SearchPanel = memo(function SearchPanel({
         )}
 
         {search.query && !search.isSearching && search.fileResults.length === 0 && search.contentResults.length === 0 && (
-          <div className="flex flex-col items-center justify-center gap-1.5 py-8">
-            <p className="text-[11px] text-foreground/40">No results found</p>
+          <div className="flex flex-col items-center justify-center gap-2 px-4 py-8 text-center">
+            <div className="flex h-7 w-7 items-center justify-center rounded-md bg-foreground/[0.05]">
+              <Search className="h-3.5 w-3.5 text-foreground/25" />
+            </div>
+            <p className="text-[11px] font-medium text-foreground/50">No results for "{search.query}"</p>
+            <p className="text-[10px] text-foreground/30">Try a shorter term, different spelling, or switch search mode</p>
           </div>
         )}
       </ScrollArea>
 
       {search.query && (
-        <div className="border-t border-foreground/[0.06] px-3 py-1 text-[10px] text-foreground/40">
-          {search.mode === "files"
-            ? `${search.fileResults.length} files found`
-            : search.mode === "folders"
-            ? `${search.fileResults.length} folders found`
-            : `${search.totalContentCount} results in ${groupedContent.size} files`}
+        <div className="flex items-center justify-between border-t border-foreground/[0.06] px-3 py-1 text-[10px] text-foreground/40">
+          <span>
+            {search.mode === "files"
+              ? `${search.fileResults.length} files`
+              : search.mode === "folders"
+              ? `${search.fileResults.length} folders`
+              : `${search.totalContentCount} results in ${groupedContent.size} files`}
+          </span>
+          {search.searchTimeMs !== null && !search.isSearching && (
+            <span className="text-foreground/25">{search.searchTimeMs}ms</span>
+          )}
         </div>
       )}
     </div>
