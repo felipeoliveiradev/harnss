@@ -39,7 +39,7 @@ export const QuickOpenDialog = memo(function QuickOpenDialog({
   const [error, setError] = useState<string | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [fileMatches, setFileMatches] = useState<Array<{ path: string; name: string; dir: string; score: number }>>([]);
-  const [folderMatches, setFolderMatches] = useState<Array<{ path: string }>>([]);
+  const [folderFiles, setFolderFiles] = useState<Array<{ path: string; name: string; dir: string }>>([]);
   const [textResults, setTextResults] = useState<Array<{ file: string; line: number; preview: string }>>([]);
   const [treeView, setTreeView] = useState(false);
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
@@ -57,7 +57,7 @@ export const QuickOpenDialog = memo(function QuickOpenDialog({
     setQuery("");
     setSelectedIndex(0);
     setFileMatches([]);
-    setFolderMatches([]);
+    setFolderFiles([]);
     setTextResults([]);
   }, [open]);
 
@@ -71,7 +71,7 @@ export const QuickOpenDialog = memo(function QuickOpenDialog({
     if (!cwd || !open || !window.claude?.search) return;
     if (!cleanQuery || cleanQuery.length < 1) {
       setFileMatches([]);
-      setFolderMatches([]);
+      setFolderFiles([]);
       setTextResults([]);
       return;
     }
@@ -85,14 +85,15 @@ export const QuickOpenDialog = memo(function QuickOpenDialog({
           const result = await window.claude.search.files({ cwd, query: cleanQuery, maxResults: 100 });
           if (queryRef.current === query) setFileMatches(result.results || []);
         } else if (mode === "folder") {
-          const result = await window.claude.search.files({ cwd, query: cleanQuery, maxResults: 200 });
+          const result = await window.claude.search.files({ cwd, query: cleanQuery, maxResults: 300 });
           if (queryRef.current === query) {
-            const seen = new Set<string>();
-            const dirs: Array<{ path: string }> = [];
+            setFolderFiles(result.results || []);
+            const allDirs = new Set<string>();
             for (const r of (result.results || [])) {
-              if (r.dir && !seen.has(r.dir)) { seen.add(r.dir); dirs.push({ path: r.dir }); }
+              const parts = (r.dir || "").split("/").filter(Boolean);
+              for (let j = 1; j <= parts.length; j++) allDirs.add(parts.slice(0, j).join("/"));
             }
-            setFolderMatches(dirs);
+            setExpandedDirs(allDirs);
           }
         } else {
           const result = await window.claude.search.content({
@@ -114,7 +115,7 @@ export const QuickOpenDialog = memo(function QuickOpenDialog({
   }, [cwd, open, query, mode, cleanQuery]);
 
   const totalItems = mode === "file" ? fileMatches.length
-    : mode === "folder" ? folderMatches.length
+    : mode === "folder" ? folderFiles.length
     : textResults.length;
 
   useEffect(() => {
@@ -151,7 +152,7 @@ export const QuickOpenDialog = memo(function QuickOpenDialog({
         const item = fileMatches[selectedIndex];
         if (item) handlePickFile(item.path);
       } else if (mode === "folder") {
-        const item = folderMatches[selectedIndex];
+        const item = folderFiles[selectedIndex];
         if (item) handlePick(item.path);
       } else {
         const item = textResults[selectedIndex];
@@ -241,7 +242,7 @@ export const QuickOpenDialog = memo(function QuickOpenDialog({
             </div>
           )}
 
-          {!isSearching && !error && (mode === "file" || mode === "folder") && cleanQuery && (mode === "file" ? fileMatches.length : folderMatches.length) === 0 && (
+          {!isSearching && !error && (mode === "file" || mode === "folder") && cleanQuery && (mode === "file" ? fileMatches.length : folderFiles.length) === 0 && (
             <p className="px-4 py-6 text-xs text-muted-foreground/70">No matching {mode === "file" ? "files" : "folders"}</p>
           )}
 
@@ -264,7 +265,7 @@ export const QuickOpenDialog = memo(function QuickOpenDialog({
                     <span className="truncate text-xs text-muted-foreground/60">{dir}</span>
                   </button>
                 </TooltipTrigger>
-                <TooltipContent side="right" sideOffset={8}>
+                <TooltipContent side="top" sideOffset={4}>
                   <p className="font-mono text-xs">{item.path}</p>
                 </TooltipContent>
               </Tooltip>
@@ -311,32 +312,95 @@ export const QuickOpenDialog = memo(function QuickOpenDialog({
             ));
           })()}
 
-          {!isSearching && !error && mode === "folder" && folderMatches.map((item, index) => {
-            const isSelected = index === selectedIndex;
-            const segments = item.path.split("/");
-            const folderName = segments.pop() ?? item.path;
-            const parentPath = segments.join("/");
-            return (
-              <Tooltip key={item.path}>
-                <TooltipTrigger asChild>
+          {!isSearching && !error && mode === "folder" && folderFiles.length > 0 && (() => {
+            interface TreeNode { name: string; fullPath: string; children: Map<string, TreeNode>; files: Array<{ path: string; name: string }> }
+            const root: TreeNode = { name: "", fullPath: "", children: new Map(), files: [] };
+            for (const f of folderFiles) {
+              const parts = f.path.split("/");
+              const fileName = parts.pop()!;
+              let node = root;
+              for (let j = 0; j < parts.length; j++) {
+                const seg = parts[j];
+                const childPath = parts.slice(0, j + 1).join("/");
+                if (!node.children.has(seg)) {
+                  node.children.set(seg, { name: seg, fullPath: childPath, children: new Map(), files: [] });
+                }
+                node = node.children.get(seg)!;
+              }
+              node.files.push({ path: f.path, name: fileName });
+            }
+            const toggleDir = (dir: string) => setExpandedDirs((prev) => {
+              const next = new Set(prev);
+              if (next.has(dir)) next.delete(dir);
+              else next.add(dir);
+              return next;
+            });
+            const renderNode = (node: TreeNode, depth: number): React.ReactNode[] => {
+              const items: React.ReactNode[] = [];
+              const sorted = Array.from(node.children.values()).sort((a, b) => a.name.localeCompare(b.name));
+              for (const child of sorted) {
+                const isOpen = expandedDirs.has(child.fullPath);
+                items.push(
                   <button
+                    key={`d-${child.fullPath}`}
                     type="button"
-                    onClick={() => handlePick(item.path)}
-                    className={`flex w-full items-center gap-2 px-4 py-2 text-left transition-colors ${
-                      isSelected ? "bg-foreground/[0.08]" : "hover:bg-foreground/[0.04]"
-                    }`}
+                    className="flex w-full items-center gap-1.5 py-1 text-left transition-colors hover:bg-foreground/[0.04]"
+                    style={{ paddingLeft: `${depth * 16 + 16}px` }}
+                    onClick={() => toggleDir(child.fullPath)}
                   >
+                    {isOpen ? <ChevronDown className="h-3 w-3 shrink-0 text-foreground/40" /> : <ChevronRight className="h-3 w-3 shrink-0 text-foreground/40" />}
                     <Folder className="h-3.5 w-3.5 shrink-0 text-amber-400/60" />
-                    <span className="shrink-0 text-sm font-medium text-foreground/90">{folderName}</span>
-                    {parentPath && <span className="min-w-0 truncate text-xs text-muted-foreground/50">{parentPath}</span>}
+                    <span className="text-sm text-foreground/80">{child.name}</span>
                   </button>
-                </TooltipTrigger>
-                <TooltipContent side="right" sideOffset={8}>
-                  <p className="font-mono text-xs">{item.path}</p>
-                </TooltipContent>
-              </Tooltip>
-            );
-          })}
+                );
+                if (isOpen) {
+                  items.push(...renderNode(child, depth + 1));
+                  for (const f of child.files.sort((a, b) => a.name.localeCompare(b.name))) {
+                    items.push(
+                      <Tooltip key={`f-${f.path}`}>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            className="flex w-full items-center gap-1.5 py-1 text-left transition-colors hover:bg-foreground/[0.04]"
+                            style={{ paddingLeft: `${(depth + 1) * 16 + 28}px` }}
+                            onClick={() => handlePickFile(f.path)}
+                          >
+                            <File className="h-3 w-3 shrink-0 text-foreground/30" />
+                            <span className="text-sm text-foreground/90">{f.name}</span>
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" sideOffset={4}>
+                          <p className="font-mono text-xs">{f.path}</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    );
+                  }
+                }
+              }
+              for (const f of node.files.sort((a, b) => a.name.localeCompare(b.name))) {
+                items.push(
+                  <Tooltip key={`f-${f.path}`}>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        className="flex w-full items-center gap-1.5 py-1 text-left transition-colors hover:bg-foreground/[0.04]"
+                        style={{ paddingLeft: `${depth * 16 + 28}px` }}
+                        onClick={() => handlePickFile(f.path)}
+                      >
+                        <File className="h-3 w-3 shrink-0 text-foreground/30" />
+                        <span className="text-sm text-foreground/90">{f.name}</span>
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" sideOffset={4}>
+                      <p className="font-mono text-xs">{f.path}</p>
+                    </TooltipContent>
+                  </Tooltip>
+                );
+              }
+              return items;
+            };
+            return renderNode(root, 0);
+          })()}
 
           {!loading && (mode === "text" || mode === "regex") && cleanQuery.length >= 2 && textResults.length === 0 && (
             <p className="px-4 py-6 text-xs text-muted-foreground/70">No matches found</p>
