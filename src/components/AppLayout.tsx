@@ -1,5 +1,6 @@
 import { useCallback, useRef, useEffect, useLayoutEffect, useState, useMemo } from "react";
-import { PanelLeft, MessageSquare, Maximize2, Minimize2, Pin, PinOff } from "lucide-react";
+import { PanelLeft, MessageSquare, Maximize2, PinOff } from "lucide-react";
+import { PanelActionsContext } from "./PanelHeader";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { normalizeRatios, type WorkspaceMode } from "@/hooks/useSettings";
@@ -1229,7 +1230,7 @@ Link: ${issue.url}`;
             };
 
             const sideToolIds = settings.toolOrder.filter((id) => id in toolComponents && !settings.bottomTools.has(id));
-            const activeSideIds = sideToolIds.filter((id) => activeTools.has(id));
+            const activeSideIds = sideToolIds.filter((id) => activeTools.has(id) && id !== pinnedToolId);
             const sideCount = activeSideIds.length;
             const sideRatios = normalizeRatios(settings.toolsSplitRatios, sideCount);
             normalizedToolRatiosRef.current = sideRatios;
@@ -1268,28 +1269,17 @@ Link: ${issue.url}`;
                   return (
                     <div key={id} className={isActive ? "contents" : "hidden"}>
                       <div
-                        className="island group/panel relative flex flex-col overflow-hidden rounded-[var(--island-radius)] bg-background"
+                        className="island flex flex-col overflow-hidden rounded-[var(--island-radius)] bg-background"
                         style={isActive ? { flex: `${sideRatios[activeIdx]} 1 0%`, minHeight: 0 } : undefined}
                       >
-                        <div className="absolute end-2 top-2.5 z-10 flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover/panel:opacity-100">
-                          <button
-                            type="button"
-                            className="flex h-5 w-5 items-center justify-center rounded-md text-foreground/30 hover:bg-foreground/[0.06] hover:text-foreground/60 transition-all duration-150 cursor-pointer"
-                            onClick={() => setPinnedToolId(isPinned ? null : id)}
-                            title="Pin to side"
-                          >
-                            <Pin className="h-2.5 w-2.5" />
-                          </button>
-                          <button
-                            type="button"
-                            className="flex h-5 w-5 items-center justify-center rounded-md text-foreground/30 hover:bg-foreground/[0.06] hover:text-foreground/60 transition-all duration-150 cursor-pointer"
-                            onClick={() => setMaximizedToolId((prev) => prev === id ? null : id)}
-                            title={maximizedToolId === id ? "Restore" : "Maximize"}
-                          >
-                            {maximizedToolId === id ? <Minimize2 className="h-2.5 w-2.5" /> : <Maximize2 className="h-2.5 w-2.5" />}
-                          </button>
-                        </div>
-                        {toolComponents[id]}
+                        <PanelActionsContext.Provider value={{
+                          onPin: () => setPinnedToolId(isPinned ? null : id),
+                          isPinned,
+                          onMaximize: () => setMaximizedToolId((prev) => prev === id ? null : id),
+                          isMaximized: maximizedToolId === id,
+                        }}>
+                          {toolComponents[id]}
+                        </PanelActionsContext.Provider>
                       </div>
                       {isActive && activeIdx < sideCount - 1 && (
                         <div
