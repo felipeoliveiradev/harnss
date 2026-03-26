@@ -1,7 +1,10 @@
 import { BrowserWindow, ipcMain } from "electron";
 import crypto from "crypto";
+import path from "path";
+import fs from "fs";
 import { safeSend } from "../lib/safe-send";
 import { getAppSetting } from "../lib/app-settings";
+import { log } from "../lib/logger";
 
 interface OllamaMessage {
   role: "user" | "assistant" | "system";
@@ -15,6 +18,9 @@ interface OllamaSession {
 }
 
 const sessions = new Map<string, OllamaSession>();
+
+const MAX_FILE_READ_BYTES = 200_000; // 200 KB
+const MAX_TOOL_LOOPS = 6; // prevent infinite loops
 
 function getBaseUrl(): string {
   return (getAppSetting("ollamaBaseUrl") || "http://localhost:11434").replace(/\/$/, "");
@@ -33,77 +39,359 @@ function emit(
   safeSend(getMainWindow, "ollama:event", { _sessionId: sessionId, type, payload, _seq: 0 });
 }
 
+// ── System prompt ──────────────────────────────────────────────────────────────
+
 function buildSystemPrompt(cwd: string): string {
-  return `You are a senior software engineer working as a coding assistant inside Harnss.
+  return `You are a senior software engineer working as an autonomous coding assistant inside Harnss.
 Working directory: ${cwd}
 
-## Your role: think, then instruct
+## You have built-in tools. Use them directly — do NOT ask the user to share files.
 
-You are the BRAIN. The application and the user are the HANDS.
-- You reason, plan, and decide what needs to be done.
-- You do NOT write code by yourself and hand it over — instead you INSTRUCT the user to use the app's built-in tools to read files, make changes, run commands, etc.
-- Treat every task as: (1) understand the problem, (2) gather information by requesting files, (3) produce precise instructions.
+The application intercepts specific XML tags you write in your responses and executes them automatically. The results are fed back to you so you can continue working.
 
-## How to read files
+---
 
-You cannot access the filesystem directly. To read a file, say:
-> "Please share @path/to/file"
+## Tool: read_file
 
-The app will automatically inline the full file content into your context. You can request multiple files in one message.
+Read the contents of a file.
 
-Examples:
-- "Please share @package.json and @src/index.ts so I can understand the structure."
-- "I need to see @tsconfig.json before proceeding."
+\`\`\`
+<read_file path="relative/path/to/file.ts"/>
+\`\`\`
 
-## How to edit files
+You will receive the full file content in the next message.
 
-After reading the content, instruct the user with surgical precision:
+---
 
-**For small changes**, describe the exact diff:
-> In @src/server.ts, find the line \`const port = 3000;\` and change it to \`const port = process.env.PORT ?? 3000;\`
+## Tool: write_file
 
-**For larger changes**, provide the complete new content of the relevant block:
-> Replace the \`scripts\` section in @package.json with:
-> \`\`\`json
-> "scripts": {
->   "build": "tsc",
->   "adan": "npm run build"
-> }
-> \`\`\`
+Create or fully overwrite a file.
 
-## How to create files
+\`\`\`
+<write_file path="relative/path/to/newfile.ts">
+// full file content here
+</write_file>
+\`\`\`
 
-Specify the path and provide the complete content for the user to create.
+---
 
-## How to run commands
+## Tool: edit_file
 
-Tell the user to run a terminal command:
-> Run in terminal: \`npm install && npm run build\`
+Modify specific sections of an existing file using SEARCH/REPLACE blocks.
 
-## Workflow example
+\`\`\`
+<edit_file path="relative/path/to/file.ts">
+<<<<<<< SEARCH
+const old = "value";
+=======
+const old = "newvalue";
+>>>>>>> REPLACE
+</edit_file>
+\`\`\`
 
-User: "Add a health check endpoint"
-You: "Please share @src/app.ts so I can see the current routes."
-[User shares file]
-You: "In @src/app.ts, after the last route definition, add:
-\`\`\`ts
-app.get('/health', (_req, res) => res.json({ status: 'ok' }));
-\`\`\`"
+The SEARCH block must match the file content exactly (whitespace included).
+You can have multiple SEARCH/REPLACE blocks in a single edit_file call.
+
+---
+
+## Tool: delete_file
+
+Delete a file.
+
+\`\`\`
+<delete_file path="relative/path/to/file.ts"/>
+\`\`\`
+
+---
+
+## Workflow
+
+1. When you need to read a file: use \`<read_file path="..."/>\`. Results come back automatically.
+2. When you need to modify a file: use \`<edit_file>\` (prefer this for changes) or \`<write_file>\` (for new files or full rewrites).
+3. You can use multiple tool tags in a single response.
+4. After tool results are returned, continue reasoning and acting until the task is complete.
+5. Only respond with a final summary when there is nothing left to do.
 
 ## Rules
 
-- NEVER say "I edited the file" or "I created the file" — you can't, the user must do it.
-- ALWAYS request files before making recommendations about them.
-- Be precise: include file paths, line references, and exact code when instructing changes.
-- If unsure what files exist, ask the user to describe the project structure or share a directory listing.`;
+- Always read a file before editing it (so the SEARCH blocks match exactly).
+- All paths are relative to the working directory: ${cwd}
+- Never invent file contents — always read first.
+- Be autonomous: chain tool calls until the task is fully done.`;
 }
+
+// ── Tool execution ─────────────────────────────────────────────────────────────
+
+function safePath(cwd: string, relPath: string): string | null {
+  const abs = path.resolve(cwd, relPath);
+  if (!abs.startsWith(cwd + path.sep) && abs !== cwd) return null;
+  return abs;
+}
+
+interface ToolResult {
+  toolName: string;
+  input: Record<string, unknown>;
+  result: string;
+  attachment?: { path: string; content: string };
+}
+
+function executeToolTags(
+  fullText: string,
+  cwd: string,
+  getMainWindow: () => BrowserWindow | null,
+  sessionId: string,
+): { results: ToolResult[]; cleanedText: string } {
+  const results: ToolResult[] = [];
+  const processed = new Set<string>();
+  let ops = 0;
+
+  function emitToolStart(toolUseId: string, toolName: string, input: Record<string, unknown>) {
+    safeSend(getMainWindow, "ollama:event", {
+      _sessionId: sessionId, type: "tool:start",
+      payload: { toolUseId, toolName, input }, _seq: 0,
+    });
+  }
+  function emitToolResult(toolUseId: string, toolName: string, result: Record<string, unknown>) {
+    safeSend(getMainWindow, "ollama:event", {
+      _sessionId: sessionId, type: "tool:result",
+      payload: { toolUseId, toolName, result }, _seq: 0,
+    });
+  }
+
+  // read_file
+  const readRe = /<read_file\s+path="([^"]+)"\s*\/>/g;
+  let m: RegExpExecArray | null;
+  while ((m = readRe.exec(fullText)) !== null) {
+    const rel = m[1];
+    const key = `read:${rel}`;
+    if (processed.has(key) || ops >= MAX_TOOL_LOOPS * 2) continue;
+    processed.add(key); ops++;
+    const id = `ollama-read-${crypto.randomUUID().slice(0, 8)}`;
+    emitToolStart(id, "Read", { file_path: rel });
+    const abs = safePath(cwd, rel);
+    if (!abs) {
+      const r = "Error: path outside project";
+      results.push({ toolName: "Read", input: { file_path: rel }, result: `Read ${rel}: ${r}` });
+      emitToolResult(id, "Read", { error: r });
+      continue;
+    }
+    try {
+      const stat = fs.statSync(abs);
+      if (stat.size > MAX_FILE_READ_BYTES) {
+        const r = `file too large (${stat.size} bytes, max ${MAX_FILE_READ_BYTES})`;
+        results.push({ toolName: "Read", input: { file_path: rel }, result: `Read ${rel}: ${r}` });
+        emitToolResult(id, "Read", { error: r });
+        continue;
+      }
+      const content = fs.readFileSync(abs, "utf-8");
+      log("OLLAMA_TOOL", `read_file ${rel} (${stat.size} bytes)`);
+      results.push({
+        toolName: "Read", input: { file_path: rel },
+        result: `Read ${rel}: OK (${stat.size} bytes)`,
+        attachment: { path: rel, content },
+      });
+      emitToolResult(id, "Read", { content: content.slice(0, 300) + (content.length > 300 ? "\n..." : "") });
+    } catch {
+      const r = "file not found";
+      results.push({ toolName: "Read", input: { file_path: rel }, result: `Read ${rel}: ${r}` });
+      emitToolResult(id, "Read", { error: r });
+    }
+  }
+
+  // write_file
+  const writeRe = /<write_file\s+path="([^"]+)">([\s\S]*?)<\/write_file>/g;
+  while ((m = writeRe.exec(fullText)) !== null) {
+    const rel = m[1];
+    const key = `write:${rel}`;
+    if (processed.has(key) || ops >= MAX_TOOL_LOOPS * 2) continue;
+    processed.add(key); ops++;
+    const content = m[2].replace(/^\n/, "");
+    const id = `ollama-write-${crypto.randomUUID().slice(0, 8)}`;
+    emitToolStart(id, "Write", { file_path: rel });
+    const abs = safePath(cwd, rel);
+    if (!abs) {
+      const r = "path outside project";
+      results.push({ toolName: "Write", input: { file_path: rel }, result: `Write ${rel}: ${r}` });
+      emitToolResult(id, "Write", { error: r });
+      continue;
+    }
+    try {
+      const dir = path.dirname(abs);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(abs, content, "utf-8");
+      log("OLLAMA_TOOL", `write_file ${rel} (${content.length} chars)`);
+      results.push({ toolName: "Write", input: { file_path: rel }, result: `Write ${rel}: OK (${content.length} bytes)` });
+      emitToolResult(id, "Write", { status: "ok", bytesWritten: content.length });
+    } catch (err) {
+      const r = (err as Error).message;
+      results.push({ toolName: "Write", input: { file_path: rel }, result: `Write ${rel}: ${r}` });
+      emitToolResult(id, "Write", { error: r });
+    }
+  }
+
+  // edit_file
+  const editRe = /<edit_file\s+path="([^"]+)">([\s\S]*?)<\/edit_file>/g;
+  while ((m = editRe.exec(fullText)) !== null) {
+    const rel = m[1];
+    const key = `edit:${rel}`;
+    if (processed.has(key) || ops >= MAX_TOOL_LOOPS * 2) continue;
+    processed.add(key); ops++;
+    const body = m[2];
+    const id = `ollama-edit-${crypto.randomUUID().slice(0, 8)}`;
+    const abs = safePath(cwd, rel);
+    if (!abs) {
+      emitToolStart(id, "Edit", { file_path: rel });
+      const r = "path outside project";
+      results.push({ toolName: "Edit", input: { file_path: rel }, result: `Edit ${rel}: ${r}` });
+      emitToolResult(id, "Edit", { error: r });
+      continue;
+    }
+    try {
+      let fileContent = fs.readFileSync(abs, "utf-8");
+      const blockRe = /<<<<<<< SEARCH\n([\s\S]*?)\n=======\n([\s\S]*?)\n>>>>>>> REPLACE/g;
+      let bm: RegExpExecArray | null;
+      let replacements = 0;
+      const oldParts: string[] = [];
+      const newParts: string[] = [];
+      while ((bm = blockRe.exec(body)) !== null) {
+        const search = bm[1];
+        const replace = bm[2];
+        if (fileContent.includes(search)) {
+          fileContent = fileContent.replace(search, replace);
+          oldParts.push(search);
+          newParts.push(replace);
+          replacements++;
+        }
+      }
+      if (replacements > 0) {
+        fs.writeFileSync(abs, fileContent, "utf-8");
+        const oldStr = oldParts.join("\n...\n");
+        const newStr = newParts.join("\n...\n");
+        emitToolStart(id, "Edit", { file_path: rel, old_string: oldStr, new_string: newStr });
+        log("OLLAMA_TOOL", `edit_file ${rel} (${replacements} replacements)`);
+        results.push({ toolName: "Edit", input: { file_path: rel }, result: `Edit ${rel}: OK (${replacements} replacement${replacements > 1 ? "s" : ""})` });
+        emitToolResult(id, "Edit", { status: "ok", replacements, oldString: oldStr, newString: newStr, filePath: rel });
+      } else {
+        emitToolStart(id, "Edit", { file_path: rel });
+        results.push({ toolName: "Edit", input: { file_path: rel }, result: `Edit ${rel}: no matching SEARCH blocks found — read the file first to get exact content` });
+        emitToolResult(id, "Edit", { error: "no matching blocks" });
+      }
+    } catch (err) {
+      emitToolStart(id, "Edit", { file_path: rel });
+      const r = (err as Error).message;
+      results.push({ toolName: "Edit", input: { file_path: rel }, result: `Edit ${rel}: ${r}` });
+      emitToolResult(id, "Edit", { error: r });
+    }
+  }
+
+  // delete_file
+  const deleteRe = /<delete_file\s+path="([^"]+)"\s*\/>/g;
+  while ((m = deleteRe.exec(fullText)) !== null) {
+    const rel = m[1];
+    const key = `delete:${rel}`;
+    if (processed.has(key) || ops >= MAX_TOOL_LOOPS * 2) continue;
+    processed.add(key); ops++;
+    const id = `ollama-delete-${crypto.randomUUID().slice(0, 8)}`;
+    emitToolStart(id, "Delete", { file_path: rel });
+    const abs = safePath(cwd, rel);
+    if (!abs) {
+      const r = "path outside project";
+      results.push({ toolName: "Delete", input: { file_path: rel }, result: `Delete ${rel}: ${r}` });
+      emitToolResult(id, "Delete", { error: r });
+      continue;
+    }
+    try {
+      fs.unlinkSync(abs);
+      log("OLLAMA_TOOL", `delete_file ${rel}`);
+      results.push({ toolName: "Delete", input: { file_path: rel }, result: `Delete ${rel}: OK` });
+      emitToolResult(id, "Delete", { status: "ok" });
+    } catch (err) {
+      const r = (err as Error).message;
+      results.push({ toolName: "Delete", input: { file_path: rel }, result: `Delete ${rel}: ${r}` });
+      emitToolResult(id, "Delete", { error: r });
+    }
+  }
+
+  // Strip tool tags from displayed text
+  let cleanedText = fullText
+    .replace(/<read_file\s+path="[^"]+"\s*\/>/g, "")
+    .replace(/<write_file\s+path="[^"]+">([\s\S]*?)<\/write_file>/g, "")
+    .replace(/<edit_file\s+path="[^"]+">([\s\S]*?)<\/edit_file>/g, "")
+    .replace(/<delete_file\s+path="[^"]+"\s*\/>/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  return { results, cleanedText };
+}
+
+// ── Streaming helper ───────────────────────────────────────────────────────────
+
+async function streamOllamaResponse(
+  session: OllamaSession,
+  controller: AbortController,
+  getMainWindow: () => BrowserWindow | null,
+  sessionId: string,
+): Promise<string> {
+  const response = await fetch(`${getBaseUrl()}/v1/chat/completions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: getDefaultModel(),
+      messages: session.messages,
+      stream: true,
+    }),
+    signal: controller.signal,
+  });
+
+  if (!response.ok) {
+    const errText = await response.text().catch(() => `HTTP ${response.status}`);
+    throw new Error(errText);
+  }
+  if (!response.body) throw new Error("No response body from Ollama");
+
+  const reader = (response.body as unknown as ReadableStream<Uint8Array>).getReader();
+  const decoder = new TextDecoder();
+  let fullText = "";
+  let sseBuffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    sseBuffer += decoder.decode(value, { stream: true });
+    const lines = sseBuffer.split("\n");
+    sseBuffer = lines.pop() ?? "";
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("data: ")) continue;
+      const data = trimmed.slice(6).trim();
+      if (data === "[DONE]") continue;
+      try {
+        const parsed = JSON.parse(data) as {
+          choices?: Array<{ delta?: { content?: string }; finish_reason?: string | null }>;
+        };
+        const delta = parsed.choices?.[0]?.delta?.content;
+        if (delta) {
+          fullText += delta;
+          emit(getMainWindow, sessionId, "chat:delta", { text: fullText });
+        }
+      } catch {
+        // ignore malformed SSE lines
+      }
+    }
+  }
+
+  return fullText;
+}
+
+// ── IPC registration ───────────────────────────────────────────────────────────
 
 export function register(getMainWindow: () => BrowserWindow | null): void {
   ipcMain.handle("ollama:start", async (_event, { cwd }: { cwd: string }) => {
     const sessionId = crypto.randomUUID();
-    const systemPrompt = buildSystemPrompt(cwd);
     sessions.set(sessionId, {
-      messages: [{ role: "system", content: systemPrompt }],
+      messages: [{ role: "system", content: buildSystemPrompt(cwd) }],
       cwd,
       abortController: null,
     });
@@ -122,70 +410,49 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     emit(getMainWindow, sessionId, "lifecycle:start", {});
 
     try {
-      const response = await fetch(`${getBaseUrl()}/v1/chat/completions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: getDefaultModel(),
-          messages: session.messages,
-          stream: true,
-        }),
-        signal: controller.signal,
-      });
+      let loopCount = 0;
 
-      if (!response.ok) {
-        const errText = await response.text().catch(() => `HTTP ${response.status}`);
-        emit(getMainWindow, sessionId, "chat:error", { message: errText });
-        return { ok: true };
-      }
+      while (loopCount < MAX_TOOL_LOOPS) {
+        loopCount++;
 
-      if (!response.body) {
-        emit(getMainWindow, sessionId, "chat:error", { message: "No response body from Ollama" });
-        return { ok: true };
-      }
+        const fullText = await streamOllamaResponse(session, controller, getMainWindow, sessionId);
 
-      const reader = (response.body as unknown as ReadableStream<Uint8Array>).getReader();
-      const decoder = new TextDecoder();
-      let fullText = "";
-      let buffer = "";
+        // Parse and execute any tool tags in the response
+        const { results, cleanedText } = executeToolTags(fullText, session.cwd, getMainWindow, sessionId);
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+        if (results.length === 0) {
+          // No tool calls — this is the final response
+          session.messages.push({ role: "assistant", content: fullText });
+          emit(getMainWindow, sessionId, "chat:final", { message: fullText });
+          break;
+        }
 
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
+        // Tool calls were made — store cleaned text and feed results back
+        session.messages.push({ role: "assistant", content: fullText });
+        emit(getMainWindow, sessionId, "chat:final", { message: cleanedText });
 
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed.startsWith("data: ")) continue;
-          const data = trimmed.slice(6).trim();
-          if (data === "[DONE]") continue;
-
-          try {
-            const parsed = JSON.parse(data) as {
-              choices?: Array<{ delta?: { content?: string }; finish_reason?: string | null }>;
-            };
-            const delta = parsed.choices?.[0]?.delta?.content;
-            if (delta) {
-              fullText += delta;
-              emit(getMainWindow, sessionId, "chat:delta", { text: fullText });
-            }
-          } catch {
-            // ignore malformed SSE lines
+        // Build feedback message with file contents for reads
+        const feedbackParts: string[] = ["Tool results:"];
+        for (const r of results) {
+          feedbackParts.push(r.result);
+          if (r.attachment) {
+            feedbackParts.push(`\nContents of ${r.attachment.path}:\n\`\`\`\n${r.attachment.content}\n\`\`\``);
           }
         }
+
+        session.messages.push({ role: "user", content: feedbackParts.join("\n") });
+
+        // Emit lifecycle:start for the next iteration (continuation turn)
+        emit(getMainWindow, sessionId, "lifecycle:start", {});
       }
 
-      session.messages.push({ role: "assistant", content: fullText });
-      emit(getMainWindow, sessionId, "chat:final", { message: fullText });
+      if (loopCount >= MAX_TOOL_LOOPS) {
+        emit(getMainWindow, sessionId, "chat:error", { message: "Maximum tool loop depth reached" });
+      }
     } catch (err) {
       if ((err as Error).name === "AbortError") {
-        // User interrupted — emit final with whatever we got
-        const last = session.messages.at(-1);
-        const partial = last?.role === "assistant" ? last.content : "";
-        emit(getMainWindow, sessionId, "chat:final", { message: partial });
+        const last = session.messages.findLast((m) => m.role === "assistant");
+        emit(getMainWindow, sessionId, "chat:final", { message: last?.content ?? "" });
       } else {
         emit(getMainWindow, sessionId, "chat:error", {
           message: (err as Error).message || "Ollama request failed",
