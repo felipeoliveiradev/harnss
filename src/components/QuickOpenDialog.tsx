@@ -168,7 +168,7 @@ export const QuickOpenDialog = memo(function QuickOpenDialog({
     : "Regex pattern...";
 
   const showHints = query === "" && !loading;
-  const isSearching = loading || textSearching;
+  const isSearching = loading;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -276,11 +276,11 @@ export const QuickOpenDialog = memo(function QuickOpenDialog({
             );
           })}
 
-          {!textSearching && (mode === "text" || mode === "regex") && cleanQuery.length >= 2 && textResults.length === 0 && (
+          {!loading && (mode === "text" || mode === "regex") && cleanQuery.length >= 2 && textResults.length === 0 && (
             <p className="px-4 py-6 text-xs text-muted-foreground/70">No matches found</p>
           )}
 
-          {!textSearching && (mode === "text" || mode === "regex") && textResults.map((item, index) => {
+          {!loading && (mode === "text" || mode === "regex") && textResults.map((item, index) => {
             const isSelected = index === selectedIndex;
             const fileName = item.file.split("/").pop() ?? item.file;
             return (
