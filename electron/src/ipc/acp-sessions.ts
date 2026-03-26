@@ -268,9 +268,11 @@ async function createAcpConnection(
   agentDef: { binary: string; args?: string[]; env?: Record<string, string>; name: string },
   getMainWindow: () => BrowserWindow | null,
   logLabel: string,
+  /** Reuse an existing session ID (for transparent respawn — preserves renderer subscriptions). */
+  overrideInternalId?: string,
 ): Promise<AcpConnectionResult> {
   const acp = await getACP();
-  const internalId = crypto.randomUUID();
+  const internalId = overrideInternalId ?? crypto.randomUUID();
 
   // For npx-based agents: prefer the local npm cache to avoid re-downloading on
   // every startup. Falls back to network only if not cached.
@@ -760,21 +762,26 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
 
     // Auto-respawn: Gemini CLI v0.35.1 only processes the FIRST session/prompt
     // call per process — subsequent calls are silently ignored. To support
-    // multi-turn, we kill the old process, spawn a new one, and use loadSession
-    // to restore the conversation context before sending the next prompt.
+    // multi-turn, we kill the old process, spawn a new one using the SAME
+    // internalId (passed as overrideInternalId so all event closures use the
+    // correct ID), then call loadSession to restore the conversation context.
     if (session.completedTurns > 0 && session.supportsLoadSession) {
       log("ACP_RESPAWN", `session=${sessionId.slice(0, 8)} respawning for turn ${session.completedTurns + 1}`);
       const prevAcpSessionId = session.acpSessionId;
       const agentDef = getAgent(session.agentId);
       if (agentDef?.engine === "acp" && agentDef.binary) {
         try {
-          // Kill old process
+          // Remove stale entry so the old process's exit handler fires silently
+          acpSessions.delete(sessionId);
           try { session.process.kill(); } catch { /* already dead */ }
-          // Spawn fresh process + restore session context
+
+          // Spawn fresh process reusing the same internalId so all event
+          // closures inside createAcpConnection route to the correct sessionId
           const connResult = await createAcpConnection(
             agentDef as { binary: string; args?: string[]; env?: Record<string, string>; name: string },
             getMainWindow,
             "ACP_RESPAWN",
+            sessionId, // ← overrideInternalId: events from new process use old sessionId
           );
           const acpMcpServers = await buildAcpMcpServers(session.mcpServers);
           const loadResult = await connResult.connection.loadSession({
@@ -782,18 +789,22 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
             cwd: session.cwd,
             mcpServers: acpMcpServers,
           });
-          // Update the session entry in-place so the existing sessionId key is preserved
+          // Re-register the updated entry
           session.process = connResult.proc;
           session.connection = connResult.connection;
           session.acpSessionId = prevAcpSessionId;
           session.supportsLoadSession = connResult.supportsLoadSession;
+          session.pendingPermissions = connResult.pendingPermissions;
           session.eventCounter = 0;
           session.isReloading = false;
           session.lastStderrError = undefined;
+          acpSessions.set(sessionId, session);
           if (loadResult.configOptions) configBuffer.set(sessionId, loadResult.configOptions as unknown[]);
           log("ACP_RESPAWN", `session=${sessionId.slice(0, 8)} respawn OK, acpSessionId=${prevAcpSessionId.slice(0, 12)}`);
         } catch (err) {
-          log("ACP_RESPAWN", `session=${sessionId.slice(0, 8)} respawn failed (non-fatal, continuing with old connection): ${(err as Error).message}`);
+          // Respawn failed — re-register whatever we have so the session isn't orphaned
+          acpSessions.set(sessionId, session);
+          log("ACP_RESPAWN", `session=${sessionId.slice(0, 8)} respawn failed (continuing with current connection): ${(err as Error).message}`);
         }
       }
     }
