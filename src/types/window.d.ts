@@ -10,8 +10,10 @@ import type {
 import type { ACPSessionEvent, ACPPermissionEvent, ACPTurnCompleteEvent, ACPConfigOption } from "./acp";
 import type { EngineId, AppPermissionBehavior } from "./engine";
 import type { CodexSessionEvent, CodexServerRequest, CodexExitEvent } from "./codex";
+import type { OpenClawSessionEvent, OpenClawExitEvent, OpenClawStartOptions, OpenClawConnectResult } from "@shared/types/openclaw";
 import type { Model as CodexModel } from "./codex-protocol/v2/Model";
 import type { CollaborationMode } from "./codex-protocol/CollaborationMode";
+import type { AgentGroup, GroupSessionEvent } from "@/types/groups";
 import type {
   JiraProjectConfig,
   JiraBoard,
@@ -34,7 +36,6 @@ interface SessionListItem {
   projectId: string;
   title: string;
   createdAt: number;
-  /** Timestamp of the most recent message — used for sidebar sort order */
   lastMessageAt: number;
   model?: string;
   planMode?: boolean;
@@ -57,9 +58,7 @@ declare global {
         thinkingEnabled?: boolean;
         effort?: ClaudeEffort;
         resume?: string;
-        /** Fork to a new session ID when resuming (model forgets messages after resumeSessionAt) */
         forkSession?: boolean;
-        /** Resume at a specific message UUID — used with forkSession to truncate history */
         resumeSessionAt?: string;
         mcpServers?: McpServerConfig[];
       }) => Promise<{ sessionId: string; pid: number; error?: string }>;
@@ -69,6 +68,8 @@ declare global {
       ) => Promise<{ ok?: boolean; error?: string }>;
       stop: (sessionId: string, reason?: string) => Promise<{ ok: boolean }>;
       interrupt: (sessionId: string) => Promise<{ ok?: boolean; error?: string }>;
+      stopTask: (sessionId: string, taskId: string) => Promise<{ ok?: boolean; error?: string }>;
+      readAgentOutput: (outputFile: string) => Promise<{ messages?: unknown[]; error?: string }>;
       supportedModels: (sessionId: string) => Promise<{ models: ModelInfo[]; error?: string }>;
       slashCommands: (sessionId: string) => Promise<{
         commands: Array<{ name: string; description?: string; argumentHint?: string }>;
@@ -81,6 +82,7 @@ declare global {
       revertFiles: (sessionId: string, checkpointId: string) => Promise<{ ok?: boolean; error?: string }>;
       restartSession: (sessionId: string, mcpServers?: McpServerConfig[], cwd?: string, effort?: ClaudeEffort, model?: string) => Promise<{ ok?: boolean; error?: string; restarted?: boolean }>;
       readFile: (filePath: string) => Promise<{ content?: string; error?: string }>;
+      writeClipboardText: (text: string) => Promise<{ ok?: boolean; error?: string }>;
       openInEditor: (filePath: string, line?: number, editor?: string) => Promise<{ ok?: boolean; editor?: string; error?: string }>;
       openExternal: (url: string) => Promise<{ ok?: boolean; error?: string }>;
       generateTitle: (
@@ -164,9 +166,19 @@ declare global {
         listAll: (cwd: string) => Promise<{ files: string[]; dirs: string[] }>;
         watch: (cwd: string) => Promise<{ ok?: boolean; error?: string }>;
         unwatch: (cwd: string) => Promise<{ ok?: boolean; error?: string }>;
+        calculateDeepSize: (
+          cwd: string,
+          paths: string[],
+        ) => Promise<{
+          totalSize: number;
+          fileCount: number;
+          estimatedTokens: number;
+          warnings: string[];
+        }>;
         readMultiple: (
           cwd: string,
           paths: string[],
+          deepPaths?: Set<string>,
         ) => Promise<
           Array<
             | { path: string; content: string; isDir?: false; error?: undefined }
@@ -174,6 +186,12 @@ declare global {
             | { path: string; error: string; content?: undefined; isDir?: undefined }
           >
         >;
+        createFile: (cwd: string, path: string, content?: string) => Promise<{ ok?: boolean; error?: string }>;
+        createDirectory: (cwd: string, path: string) => Promise<{ ok?: boolean; error?: string }>;
+        writeFile: (cwd: string, path: string, content: string) => Promise<{ ok?: boolean; error?: string }>;
+        rename: (cwd: string, fromPath: string, toPath: string) => Promise<{ ok?: boolean; error?: string }>;
+        copy: (cwd: string, fromPath: string, toPath: string) => Promise<{ ok?: boolean; error?: string }>;
+        delete: (cwd: string, path: string) => Promise<{ ok?: boolean; error?: string }>;
         onChanged: (callback: (data: { cwd: string }) => void) => () => void;
       };
       git: {
@@ -196,12 +214,36 @@ declare global {
         fetch: (cwd: string) => Promise<{ ok?: boolean; output?: string; error?: string }>;
         diffFile: (cwd: string, file: string, staged: boolean) => Promise<{ diff?: string; error?: string }>;
         diffStat: (cwd: string) => Promise<{ additions: number; deletions: number }>;
+        showFileAtHead: (cwd: string, file: string) => Promise<{ content?: string; error?: string }>;
+        reflog: (cwd: string, count?: number) => Promise<{ entries: Array<{ hash: string; ref: string; subject: string; date: string }>; error?: string }>;
+        undo: (cwd: string) => Promise<{ success?: boolean; hash?: string; error?: string }>;
+        stashList: (cwd: string) => Promise<{ stashes: Array<{ ref: string; message: string; date: string }> }>;
+        stashSave: (cwd: string, message?: string) => Promise<{ success?: boolean; error?: string }>;
+        stashPop: (cwd: string, ref?: string) => Promise<{ success?: boolean; error?: string }>;
+        stashApply: (cwd: string, ref?: string) => Promise<{ success?: boolean; error?: string }>;
+        stashDrop: (cwd: string, ref?: string) => Promise<{ success?: boolean; error?: string }>;
+        cherryPick: (cwd: string, hash: string) => Promise<{ success?: boolean; error?: string }>;
+        blame: (cwd: string, file: string) => Promise<{ lines?: Array<{ hash: string; author: string; date: string; lineNumber: number; content: string }>; error?: string }>;
         log: (cwd: string, count?: number) => Promise<GitLogEntry[] | { error: string }>;
+        commitFiles: (cwd: string, hash: string) => Promise<{ files: Array<{ status: string; path: string }>; error?: string }>;
+        commitFileDiff: (cwd: string, hash: string, file: string) => Promise<{ diff: string; error?: string }>;
+        graph: (cwd: string, count?: number) => Promise<{ entries: Array<{ hash: string; shortHash: string; parents: string[]; refs: string[]; message: string; author: string; date: string }>; graph: string; error?: string }>;
         generateCommitMessage: (
           cwd: string,
           engine?: EngineId,
           sessionId?: string,
         ) => Promise<{ message?: string; error?: string }>;
+      };
+      executions: {
+        detectRunners: (cwd: string) => Promise<{ runners: Array<{ source: string; scripts: Record<string, string> }>; error?: string }>;
+        run: (options: { cwd: string; command: string; label?: string }) => Promise<{ executionId?: string; error?: string }>;
+        stop: (executionId: string) => Promise<{ ok?: boolean; error?: string }>;
+        onData: (callback: (data: { executionId: string; data: string }) => void) => () => void;
+        onExit: (callback: (data: { executionId: string; exitCode: number }) => void) => () => void;
+      };
+      search: {
+        files: (options: { cwd: string; query: string; maxResults?: number }) => Promise<{ results: Array<{ path: string; name: string; dir: string; score: number }>; error?: string }>;
+        content: (options: { cwd: string; pattern: string; isRegex?: boolean; caseSensitive?: boolean; maxResults?: number; include?: string; exclude?: string }) => Promise<{ results: Array<{ file: string; line: number; column: number; match: string; preview: string }>; totalCount: number; error?: string }>;
       };
       terminal: {
         create: (options: { cwd?: string; cols?: number; rows?: number; spaceId?: string }) => Promise<{ terminalId?: string; error?: string }>;
@@ -272,18 +314,18 @@ declare global {
         stop: (sessionId: string) => Promise<void>;
         interrupt: (sessionId: string) => Promise<{ error?: string }>;
         respondApproval: (sessionId: string, rpcId: string | number, decision: string, acceptSettings?: unknown) =>
-          Promise<void>;
+          Promise<{ ok?: boolean; error?: string }>;
         respondUserInput: (
           sessionId: string,
           rpcId: string | number,
           answers: Record<string, { answers: string[] }>,
-        ) => Promise<void>;
+        ) => Promise<{ ok?: boolean; error?: string }>;
         respondServerRequestError: (
           sessionId: string,
           rpcId: string | number,
           code: number,
           message: string,
-        ) => Promise<void>;
+        ) => Promise<{ ok?: boolean; error?: string }>;
         compact: (sessionId: string) => Promise<{ error?: string }>;
         listSkills: (sessionId: string) => Promise<{
           skills: Array<import("./codex-protocol/v2/SkillsListEntry").SkillsListEntry>;
@@ -315,6 +357,18 @@ declare global {
         onEvent: (callback: (data: { _sessionId: string; type: string; payload: Record<string, unknown> }) => void) => () => void;
         onExit: (callback: (data: { _sessionId: string }) => void) => () => void;
       };
+      openclaw: {
+        start: (options: OpenClawStartOptions) => Promise<OpenClawConnectResult>;
+        send: (sessionId: string, text: string) => Promise<{ ok?: boolean; error?: string }>;
+        stop: (sessionId: string) => Promise<{ ok?: boolean; error?: string }>;
+        interrupt: (sessionId: string) => Promise<{ ok?: boolean; error?: string }>;
+        status: () => Promise<{ available: boolean; error?: string }>;
+        pair: () => Promise<{ ok: boolean; paired?: boolean; version?: string; error?: string }>;
+        spawnAgent: (sessionId: string, agentName: string, prompt: string, skills?: string[]) => Promise<{ ok?: boolean; agentId?: string; error?: string }>;
+        listAgents: (sessionId?: string) => Promise<{ ok?: boolean; agents?: unknown; error?: string }>;
+        onEvent: (callback: (data: OpenClawSessionEvent) => void) => () => void;
+        onExit: (callback: (data: OpenClawExitEvent) => void) => () => void;
+      };
       mcp: {
         list: (projectId: string) => Promise<McpServerConfig[]>;
         add: (projectId: string, server: McpServerConfig) => Promise<{ ok?: boolean; error?: string }>;
@@ -328,7 +382,6 @@ declare global {
         save: (agent: InstalledAgent) => Promise<{ ok?: boolean; error?: string }>;
         delete: (id: string) => Promise<{ ok?: boolean; error?: string }>;
         updateCachedConfig: (agentId: string, configOptions: ACPConfigOption[]) => Promise<{ ok?: boolean }>;
-        /** Batch-check if binary-only agents are installed on the system PATH. */
         checkBinaries: (
           agents: Array<{ id: string; binary: Record<string, { cmd: string; args?: string[] }> }>,
         ) => Promise<Record<string, { path: string; args?: string[] } | null>>;
@@ -359,15 +412,11 @@ declare global {
         transitionIssue: (params: JiraTransitionIssueParams) => Promise<{ ok: true }>;
       };
       analytics: {
-        /** Fire-and-forget analytics event via the main process PostHog client. */
         capture: (event: string, properties?: Record<string, unknown>) => void;
       };
       speech: {
-        /** Triggers macOS native dictation (Cocoa startDictation: selector). Returns { ok: false } on non-macOS. */
         startNativeDictation: () => Promise<{ ok: boolean; reason?: string }>;
-        /** Returns the OS platform string (darwin, win32, linux) */
         getPlatform: () => Promise<string>;
-        /** Requests microphone permission (macOS system dialog). Returns { granted } on all platforms. */
         requestMicPermission: () => Promise<{ granted: boolean }>;
       };
       updater: {
@@ -379,6 +428,23 @@ declare global {
         install: () => Promise<void>;
         check: () => Promise<unknown>;
         currentVersion: () => Promise<string>;
+      };
+      groups: {
+        list: () => Promise<{ ok: boolean; groups?: AgentGroup[]; error?: string }>;
+        create: (group: AgentGroup) => Promise<{ ok: boolean; group?: AgentGroup; error?: string }>;
+        update: (group: AgentGroup) => Promise<{ ok: boolean; group?: AgentGroup; error?: string }>;
+        delete: (groupId: string) => Promise<{ ok: boolean; error?: string }>;
+        startSession: (params: { groupId: string; prompt: string; cwd?: string; projectId?: string }) => Promise<{ ok: boolean; sessionId?: string; error?: string }>;
+        stopSession: (sessionId: string) => Promise<{ ok: boolean; error?: string }>;
+        generateTeam: (params: { prompt: string; cwd?: string }) => Promise<{ ok: boolean; result?: string; error?: string }>;
+        getSession: (sessionId: string) => Promise<{ ok: boolean; session?: unknown; error?: string }>;
+        resumeSession: (sessionId: string, projectId?: string) => Promise<{ ok: boolean; error?: string }>;
+        sendMessage: (sessionId: string, message: unknown, projectId?: string) => Promise<{ ok?: boolean; error?: string }>;
+        interrupt: (sessionId: string) => Promise<{ ok?: boolean; error?: string }>;
+        onSlotEvent: (callback: (data: unknown) => void) => () => void;
+        respondPermission: (sessionId: string, slotId: string, requestId: string, behavior: string) => Promise<{ ok?: boolean; error?: string }>;
+        onPermissionRequest: (callback: (data: unknown) => void) => () => void;
+        onEvent: (callback: (data: GroupSessionEvent) => void) => () => void;
       };
     };
   }

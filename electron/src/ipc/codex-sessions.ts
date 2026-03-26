@@ -43,18 +43,15 @@ interface CodexSession {
   eventCounter: number;
   cwd: string;
   model?: string;
+  /** Approval policy for the session — passed to turn/start and lazy thread/start */
+  approvalPolicy?: string;
+  /** Sandbox policy for the session — passed to lazy thread/start */
+  sandbox?: string;
 }
+
+import { SUPPORTED_SERVER_REQUESTS, isSupportedServerRequestMethod, pickModelId } from "@shared/lib/codex-helpers";
 
 const codexSessions = new Map<string, CodexSession>();
-const SUPPORTED_SERVER_REQUESTS = new Set([
-  "item/commandExecution/requestApproval",
-  "item/fileChange/requestApproval",
-  "item/tool/requestUserInput",
-]);
-
-function isSupportedServerRequestMethod(method: string): boolean {
-  return SUPPORTED_SERVER_REQUESTS.has(method);
-}
 
 /** Expose the currently selected model for utility prompts (title/commit generation). */
 export function getCodexSessionModel(internalId: string): string | undefined {
@@ -70,23 +67,7 @@ function getAppServerClientInfo(): { name: string; title: string; version: strin
   };
 }
 
-/** Pick a valid model id from model/list, preferring the requested id when available. */
-function pickModelId(
-  requestedModel: string | undefined,
-  models: Array<CodexModel>,
-): string | undefined {
-  const requested = typeof requestedModel === "string" ? requestedModel.trim() : "";
-  if (requested.length > 0) {
-    const hasRequested = models.some((m) => m.id === requested);
-    if (hasRequested) return requested;
-  }
-
-  const defaultModel = models.find((m) => m.isDefault === true);
-  if (defaultModel) return defaultModel.id;
-
-  const first = models[0];
-  return first?.id;
-}
+// pickModelId imported from @shared/lib/codex-helpers
 
 function shortId(value: unknown, length = 8): string {
   return typeof value === "string" ? value.slice(0, length) : "n/a";
@@ -281,6 +262,8 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
           eventCounter: 0,
           cwd: options.cwd,
           model: undefined,
+          approvalPolicy: options.approvalPolicy,
+          sandbox: options.sandbox,
         };
         codexSessions.set(internalId, session);
         setupCodexHandlers(rpc, session, internalId, getMainWindow);
@@ -397,6 +380,8 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
             persistExtendedHistory: false,
           };
           if (session.model) threadParams.model = session.model;
+          if (session.approvalPolicy) threadParams.approvalPolicy = session.approvalPolicy;
+          if (session.sandbox) threadParams.sandbox = session.sandbox;
           const threadResult = await session.rpc.request<CodexThreadStartResponse>("thread/start", threadParams);
           session.threadId = threadResult.thread.id;
           log(
@@ -411,7 +396,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
 
       log(
         "codex",
-        ` Send requested: session=${shortId(data.sessionId, 12)} thread=${shortId(session.threadId, 12)} text_len=${data.text.length} images=${data.images?.length ?? 0} effort=${data.effort ?? "default"} collab=${data.collaborationMode?.mode ?? "none"} activeTurn=${session.activeTurnId ? shortId(session.activeTurnId, 12) : "none"}`,
+        ` Send requested: session=${shortId(data.sessionId, 12)} thread=${shortId(session.threadId, 12)} text_len=${data.text.length} images=${data.images?.length ?? 0} effort=${data.effort ?? "default"} collab=${data.collaborationMode?.mode ?? "none"} approval=${session.approvalPolicy ?? "default"} activeTurn=${session.activeTurnId ? shortId(session.activeTurnId, 12) : "none"}`,
       );
 
       try {
@@ -428,6 +413,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
           ...(session.model ? { model: session.model } : {}),
           ...(data.effort ? { effort: data.effort } : {}),
           ...(data.collaborationMode ? { collaborationMode: data.collaborationMode } : {}),
+          ...(session.approvalPolicy ? { approvalPolicy: session.approvalPolicy } : {}),
         };
 
 
@@ -483,11 +469,22 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
       },
     ) => {
       const session = codexSessions.get(data.sessionId);
-      if (!session) return;
+      if (!session) return { error: "Session not found" };
 
-      const result: Record<string, unknown> = { decision: data.decision };
-      if (data.acceptSettings) result.acceptSettings = data.acceptSettings;
-      session.rpc.respondToServer(data.rpcId, result);
+      try {
+        const result: Record<string, unknown> = { decision: data.decision };
+        if (data.acceptSettings) result.acceptSettings = data.acceptSettings;
+        session.rpc.respondToServer(data.rpcId, result);
+        return { ok: true };
+      } catch (err) {
+        return {
+          error: reportError("CODEX_APPROVAL_RESPONSE_ERR", err, {
+            engine: "codex",
+            sessionId: data.sessionId,
+            rpcId: data.rpcId,
+          }),
+        };
+      }
     },
   );
 
@@ -503,8 +500,19 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
       },
     ) => {
       const session = codexSessions.get(data.sessionId);
-      if (!session) return;
-      session.rpc.respondToServer(data.rpcId, { answers: data.answers });
+      if (!session) return { error: "Session not found" };
+      try {
+        session.rpc.respondToServer(data.rpcId, { answers: data.answers });
+        return { ok: true };
+      } catch (err) {
+        return {
+          error: reportError("CODEX_USER_INPUT_RESPONSE_ERR", err, {
+            engine: "codex",
+            sessionId: data.sessionId,
+            rpcId: data.rpcId,
+          }),
+        };
+      }
     },
   );
 
@@ -521,8 +529,19 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
       },
     ) => {
       const session = codexSessions.get(data.sessionId);
-      if (!session) return;
-      session.rpc.respondToServerError(data.rpcId, data.code, data.message);
+      if (!session) return { error: "Session not found" };
+      try {
+        session.rpc.respondToServerError(data.rpcId, data.code, data.message);
+        return { ok: true };
+      } catch (err) {
+        return {
+          error: reportError("CODEX_SERVER_REQUEST_ERROR_ERR", err, {
+            engine: "codex",
+            sessionId: data.sessionId,
+            rpcId: data.rpcId,
+          }),
+        };
+      }
     },
   );
 
@@ -693,6 +712,8 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
           eventCounter: 0,
           cwd: data.cwd,
           model: data.model,
+          approvalPolicy: data.approvalPolicy,
+          sandbox: data.sandbox,
         };
         codexSessions.set(internalId, session);
         setupCodexHandlers(rpc, session, internalId, getMainWindow);

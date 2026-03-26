@@ -18,6 +18,7 @@ export default defineConfig({
     "@anthropic-ai/claude-agent-sdk",
     "electron-updater",
     "posthog-node",
+    "ws",
   ],
   noExternal: [],
   treeshake: true,

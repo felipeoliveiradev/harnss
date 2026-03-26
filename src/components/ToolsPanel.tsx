@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { Terminal as TerminalIcon, Plus, X, Loader2 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { TerminalTab } from "@/hooks/useSpaceTerminals";
@@ -76,7 +76,7 @@ interface ToolsPanelProps {
   resolvedTheme: ResolvedTheme;
 }
 
-export function ToolsPanel({
+export const ToolsPanel = memo(function ToolsPanel({
   spaceId,
   tabs,
   activeTabId,
@@ -212,7 +212,7 @@ export function ToolsPanel({
       )}
     </div>
   );
-}
+});
 
 function TerminalInstance({
   terminalId,
@@ -229,6 +229,7 @@ function TerminalInstance({
   const lastSeqRef = useRef(0);
   const pendingChunksRef = useRef<Array<{ seq: number; data: string }>>([]);
   const hydratedRef = useRef(false);
+  const suppressInputRef = useRef(false);
   const [ready, setReady] = useState(false);
 
   // Initialize xterm
@@ -277,6 +278,7 @@ function TerminalInstance({
 
       // Wire up input → PTY
       term.onData((data) => {
+        if (suppressInputRef.current) return;
         window.claude.terminal.write(terminalId, data);
       });
 
@@ -302,7 +304,16 @@ function TerminalInstance({
       if (disposed) return;
 
       if (snapshot.output) {
-        term.write(snapshot.output);
+        // Restoring historical terminal output into a fresh xterm instance can
+        // re-trigger terminal capability responses. Suppress onData while the
+        // snapshot is replayed so old escape-sequence replies do not leak into
+        // the live PTY as random input after a space switch.
+        suppressInputRef.current = true;
+        try {
+          term.write(snapshot.output);
+        } finally {
+          suppressInputRef.current = false;
+        }
       }
       lastSeqRef.current = snapshot.seq ?? 0;
       term.options.disableStdin = !!snapshot.exited;
@@ -336,6 +347,7 @@ function TerminalInstance({
       lastSeqRef.current = 0;
       pendingChunksRef.current = [];
       hydratedRef.current = false;
+      suppressInputRef.current = false;
     };
   }, [terminalId]);
 

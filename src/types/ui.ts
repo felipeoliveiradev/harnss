@@ -151,6 +151,7 @@ export interface UIMessage {
     checkpointId?: string;
     isQueued?: boolean;
     codeSnippets?: CodeSnippet[];
+  groupSlot?: { label: string; color: string; engine: string; model: string; role?: string };
 }
 
 export interface SessionInfo {
@@ -185,6 +186,7 @@ export interface SessionBase {
   agentSessionId?: string;
   agentId?: string;
   codexThreadId?: string;
+  groupId?: string;
 }
 
 export interface ChatSession extends SessionBase {
@@ -221,6 +223,7 @@ export interface PermissionRequest {
   toolUseId: string;
   suggestions?: PermissionUpdate[];
   decisionReason?: string;
+  slotSessionId?: string;
 }
 
 export type AcpPermissionBehavior = "ask" | "auto_accept" | "allow_all";
@@ -245,12 +248,15 @@ export interface BackgroundAgent {
   prompt: string;
   outputFile: string;
   launchedAt: number;
-  status: "running" | "completed" | "error";
+  status: "running" | "stopping" | "completed" | "error";
   activity: BackgroundAgentActivity[];
   toolUseId: string;
   result?: string;
-    taskId?: string;
-    usage?: BackgroundAgentUsage;
+  taskId?: string;
+  usage?: BackgroundAgentUsage;
+  progressSummary?: string;
+  currentTool?: { name: string; elapsedSeconds: number } | null;
+  isPending?: boolean;
 }
 
 export interface BackgroundAgentActivity {

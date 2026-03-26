@@ -1,11 +1,12 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import {
-  Bot,
   CheckCircle2,
   Loader2,
   ChevronRight,
   AlertCircle,
   X,
+  Square,
+  FileSearch,
   Terminal,
   FileText,
   FileEdit,
@@ -24,13 +25,19 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { PanelHeader } from "@/components/PanelHeader";
+import { AgentIcon } from "@/components/AgentIcon";
+import { AgentTranscriptViewer } from "@/components/AgentTranscriptViewer";
+import { ENGINE_ICONS } from "@/lib/engine-icons";
 import type { BackgroundAgent, BackgroundAgentActivity, BackgroundAgentUsage } from "@/types";
+
+const CLAUDE_ICON = ENGINE_ICONS["claude"];
 
 const REMARK_PLUGINS = [remarkGfm];
 
 interface BackgroundAgentsPanelProps {
   agents: BackgroundAgent[];
   onDismiss: (agentId: string) => void;
+  onStopAgent: (agentId: string, taskId: string) => void;
 }
 
 const TOOL_ICONS: Record<string, typeof Terminal> = {
@@ -42,24 +49,22 @@ const TOOL_ICONS: Record<string, typeof Terminal> = {
   Glob: FolderSearch,
   WebSearch: Globe,
   WebFetch: Globe,
-  Task: Bot,
 };
 
 function getToolIcon(toolName: string) {
   return TOOL_ICONS[toolName] ?? Wrench;
 }
 
-export function BackgroundAgentsPanel({ agents, onDismiss }: BackgroundAgentsPanelProps) {
-  const runningCount = agents.filter((a) => a.status === "running").length;
+export function BackgroundAgentsPanel({ agents, onDismiss, onStopAgent }: BackgroundAgentsPanelProps) {
+  const runningCount = agents.filter((a) => a.status === "running" || a.status === "stopping").length;
 
   return (
     <div className="flex h-full flex-col">
       {/* Header */}
       <PanelHeader
-        icon={Bot}
+        iconNode={<AgentIcon icon={CLAUDE_ICON} size={12} className="opacity-60" />}
         label="Agents"
         className="px-4 pt-4 pb-3"
-        iconClass="text-indigo-600/70 dark:text-indigo-200/50"
       >
         {runningCount > 0 && (
           <span className="flex items-center gap-1.5 text-xs text-foreground/50">
@@ -73,7 +78,12 @@ export function BackgroundAgentsPanel({ agents, onDismiss }: BackgroundAgentsPan
       <ScrollArea className="min-h-0 flex-1">
         <div className="px-2 py-2 space-y-1">
           {agents.map((agent) => (
-            <AgentItem key={agent.toolUseId} agent={agent} onDismiss={onDismiss} />
+            <AgentItem
+              key={agent.toolUseId}
+              agent={agent}
+              onDismiss={onDismiss}
+              onStopAgent={onStopAgent}
+            />
           ))}
         </div>
       </ScrollArea>
@@ -84,92 +94,167 @@ export function BackgroundAgentsPanel({ agents, onDismiss }: BackgroundAgentsPan
 function AgentItem({
   agent,
   onDismiss,
+  onStopAgent,
 }: {
   agent: BackgroundAgent;
   onDismiss: (agentId: string) => void;
+  onStopAgent: (agentId: string, taskId: string) => void;
 }) {
   const isRunning = agent.status === "running";
+  const isStopping = agent.status === "stopping";
+  const isActive = isRunning || isStopping;
   const isCompleted = agent.status === "completed";
   const isError = agent.status === "error";
   const [expanded, setExpanded] = useState(isRunning);
+  const [showTranscript, setShowTranscript] = useState(false);
 
   const lastActivity = agent.activity[agent.activity.length - 1];
 
+  const handleStop = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      if (agent.taskId) onStopAgent(agent.agentId, agent.taskId);
+    },
+    [agent.agentId, agent.taskId, onStopAgent],
+  );
+
   return (
-    <Collapsible open={expanded} onOpenChange={setExpanded}>
-      <div
-        className={`rounded-md overflow-hidden ${
-          isRunning ? "bg-foreground/[0.03]" : ""
-        }`}
-      >
-        <div className="flex items-center gap-1 pe-1">
-          <CollapsibleTrigger asChild>
-            <div className="group flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-[13px] transition-colors hover:text-foreground cursor-pointer">
-              <ChevronRight
-                className={`h-3 w-3 shrink-0 text-foreground/40 transition-transform duration-200 ${
-                  expanded ? "rotate-90" : ""
-                }`}
-              />
-              {isRunning ? (
-                <Loader2 className="h-3.5 w-3.5 shrink-0 text-blue-400/70 animate-spin" />
-              ) : isCompleted ? (
-                <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500/60" />
-              ) : (
-                <AlertCircle className="h-3.5 w-3.5 shrink-0 text-red-400/60" />
-              )}
-              <span className="truncate text-foreground/80">{agent.description}</span>
-            </div>
-          </CollapsibleTrigger>
-          {(isCompleted || isError) && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-5 w-5 shrink-0 text-foreground/40 hover:text-foreground/70"
-              onClick={(e) => {
-                e.stopPropagation();
-                onDismiss(agent.agentId);
-              }}
-            >
-              <X className="h-3 w-3" />
-            </Button>
-          )}
-        </div>
-
-        {/* Live step indicator when collapsed & running */}
-        {isRunning && !expanded && lastActivity && (
-          <div className="px-2 ps-9 pb-1.5 text-xs text-foreground/40 truncate">
-            <span className="animate-pulse">
-              {lastActivity.toolName && (
-                <span className="text-foreground/50">{lastActivity.toolName} </span>
-              )}
-              {lastActivity.summary}
-            </span>
-          </div>
-        )}
-
-        <CollapsibleContent>
-          <div className="px-2 ps-9 pb-2 space-y-2">
-            {/* Activity log — scrollable when long */}
-            {agent.activity.length > 0 && (
-              <div className="max-h-48 overflow-y-auto space-y-0.5 scrollbar-none">
-                {agent.activity.map((activity, i) => (
-                  <ActivityRow key={i} activity={activity} />
-                ))}
+    <>
+      <Collapsible open={expanded} onOpenChange={setExpanded}>
+        <div
+          className={`rounded-md overflow-hidden ${
+            isActive ? "bg-foreground/[0.03]" : ""
+          }`}
+        >
+          <div className="flex items-center gap-1 pe-1">
+            <CollapsibleTrigger asChild>
+              <div className="group flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-[13px] transition-colors hover:text-foreground cursor-pointer">
+                <ChevronRight
+                  className={`h-3 w-3 shrink-0 text-foreground/40 transition-transform duration-200 ${
+                    expanded ? "rotate-90" : ""
+                  }`}
+                />
+                {isStopping ? (
+                  <Loader2 className="h-3.5 w-3.5 shrink-0 text-amber-400/70 animate-spin" />
+                ) : isRunning ? (
+                  <Loader2 className="h-3.5 w-3.5 shrink-0 text-blue-400/70 animate-spin" />
+                ) : isCompleted ? (
+                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500/60" />
+                ) : (
+                  <AlertCircle className="h-3.5 w-3.5 shrink-0 text-red-400/60" />
+                )}
+                <span className="truncate text-foreground/80">
+                  {isStopping ? "Stopping… " : ""}
+                  {agent.description}
+                </span>
               </div>
-            )}
-
-            {/* Live usage metrics */}
-            {agent.usage && <UsageMetrics usage={agent.usage} />}
-
-            {/* Result */}
-            {(isCompleted || isError) && agent.result && (
-              <AgentResult result={agent.result} />
-            )}
-
+            </CollapsibleTrigger>
+            <div className="flex items-center gap-0.5 shrink-0">
+              {/* Stop button — visible for running agents with a taskId */}
+              {isRunning && agent.taskId && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-5 w-5 text-foreground/40 hover:text-red-400/80"
+                  onClick={handleStop}
+                  title="Stop agent"
+                >
+                  <Square className="h-2.5 w-2.5" />
+                </Button>
+              )}
+              {/* Transcript button — visible for completed/error agents with output */}
+              {(isCompleted || isError) && agent.outputFile && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-5 w-5 text-foreground/40 hover:text-foreground/70"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowTranscript(true);
+                  }}
+                  title="View transcript"
+                >
+                  <FileSearch className="h-3 w-3" />
+                </Button>
+              )}
+              {/* Dismiss button — visible for completed/error agents */}
+              {(isCompleted || isError) && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-5 w-5 text-foreground/40 hover:text-foreground/70"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDismiss(agent.agentId);
+                  }}
+                >
+                  <X className="h-3 w-3" />
+                </Button>
+              )}
+            </div>
           </div>
-        </CollapsibleContent>
-      </div>
-    </Collapsible>
+
+          {/* AI progress summary — shown below header when running */}
+          {isActive && agent.progressSummary && (
+            <div className="px-2 ps-9 pb-1 text-xs text-foreground/45 italic truncate">
+              {agent.progressSummary}
+            </div>
+          )}
+
+          {/* Current tool indicator — real-time from tool_progress events */}
+          {isRunning && agent.currentTool && (
+            <div className="flex items-center gap-1.5 px-2 ps-9 pb-1 text-xs text-foreground/40">
+              <Loader2 className="h-3 w-3 animate-spin shrink-0" />
+              <span className="text-foreground/50">{agent.currentTool.name}</span>
+              <span className="tabular-nums">{Math.round(agent.currentTool.elapsedSeconds)}s</span>
+            </div>
+          )}
+
+          {/* Live step indicator when collapsed & running (fallback when no currentTool) */}
+          {isRunning && !expanded && !agent.currentTool && lastActivity && (
+            <div className="px-2 ps-9 pb-1.5 text-xs text-foreground/40 truncate">
+              <span className="animate-pulse">
+                {lastActivity.toolName && (
+                  <span className="text-foreground/50">{lastActivity.toolName} </span>
+                )}
+                {lastActivity.summary}
+              </span>
+            </div>
+          )}
+
+          <CollapsibleContent>
+            <div className="px-2 ps-9 pb-2 space-y-2">
+              {/* Activity log — scrollable when long */}
+              {agent.activity.length > 0 && (
+                <div className="max-h-48 overflow-y-auto space-y-0.5 scrollbar-none">
+                  {agent.activity.map((activity, i) => (
+                    <ActivityRow key={i} activity={activity} />
+                  ))}
+                </div>
+              )}
+
+              {/* Live usage metrics */}
+              {agent.usage && <UsageMetrics usage={agent.usage} />}
+
+              {/* Result */}
+              {(isCompleted || isError) && agent.result && (
+                <AgentResult result={agent.result} />
+              )}
+
+            </div>
+          </CollapsibleContent>
+        </div>
+      </Collapsible>
+
+      {/* Transcript viewer modal */}
+      {showTranscript && agent.outputFile && (
+        <AgentTranscriptViewer
+          outputFile={agent.outputFile}
+          agentDescription={agent.description}
+          onClose={() => setShowTranscript(false)}
+        />
+      )}
+    </>
   );
 }
 

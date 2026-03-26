@@ -48,6 +48,10 @@ contextBridge.exposeInMainWorld("claude", {
   stop: (sessionId: string, reason?: string) =>
     ipcRenderer.invoke("claude:stop", { sessionId, reason }),
   interrupt: (sessionId: string) => ipcRenderer.invoke("claude:interrupt", sessionId),
+  stopTask: (sessionId: string, taskId: string) =>
+    ipcRenderer.invoke("claude:stop-task", { sessionId, taskId }),
+  readAgentOutput: (outputFile: string) =>
+    ipcRenderer.invoke("claude:read-agent-output", { outputFile }),
   log: (label: string, data: unknown) => ipcRenderer.send("claude:log", label, data),
   onEvent: (callback: (data: unknown) => void) => {
     const listener = (_event: IpcRendererEvent, data: unknown) => callback(data);
@@ -91,6 +95,7 @@ contextBridge.exposeInMainWorld("claude", {
   restartSession: (sessionId: string, mcpServers?: unknown[], cwd?: string, effort?: string, model?: string) =>
     ipcRenderer.invoke("claude:restart-session", { sessionId, mcpServers, cwd, effort, model }),
   readFile: (filePath: string) => ipcRenderer.invoke("file:read", filePath),
+  writeClipboardText: (text: string) => ipcRenderer.invoke("clipboard:write-text", text),
   openInEditor: (filePath: string, line?: number, editor?: string) => ipcRenderer.invoke("file:open-in-editor", { filePath, line, editor }),
   openExternal: (url: string) => ipcRenderer.invoke("shell:open-external", url),
   generateTitle: (message: string, cwd?: string, engine?: string, sessionId?: string) =>
@@ -125,7 +130,14 @@ contextBridge.exposeInMainWorld("claude", {
     listAll: (cwd: string) => ipcRenderer.invoke("files:list-all", cwd),
     watch: (cwd: string) => ipcRenderer.invoke("files:watch", cwd),
     unwatch: (cwd: string) => ipcRenderer.invoke("files:unwatch", cwd),
-    readMultiple: (cwd: string, paths: string[]) => ipcRenderer.invoke("files:read-multiple", { cwd, paths }),
+    calculateDeepSize: (cwd: string, paths: string[]) => ipcRenderer.invoke("files:calculate-deep-size", { cwd, paths }),
+    readMultiple: (cwd: string, paths: string[], deepPaths?: Set<string>) => ipcRenderer.invoke("files:read-multiple", { cwd, paths, deepPaths: deepPaths ? Array.from(deepPaths) : undefined }),
+    createFile: (cwd: string, path: string, content?: string) => ipcRenderer.invoke("files:create-file", { cwd, path, content }),
+    createDirectory: (cwd: string, path: string) => ipcRenderer.invoke("files:create-directory", { cwd, path }),
+    writeFile: (cwd: string, path: string, content: string) => ipcRenderer.invoke("files:write-file", { cwd, path, content }),
+    rename: (cwd: string, fromPath: string, toPath: string) => ipcRenderer.invoke("files:rename", { cwd, fromPath, toPath }),
+    copy: (cwd: string, fromPath: string, toPath: string) => ipcRenderer.invoke("files:copy", { cwd, fromPath, toPath }),
+    delete: (cwd: string, path: string) => ipcRenderer.invoke("files:delete", { cwd, path }),
     onChanged: (callback: (data: unknown) => void) => {
       const listener = (_event: IpcRendererEvent, data: unknown) => callback(data);
       ipcRenderer.on("files:changed", listener);
@@ -152,9 +164,41 @@ contextBridge.exposeInMainWorld("claude", {
     fetch: (cwd: string) => ipcRenderer.invoke("git:fetch", cwd),
     diffFile: (cwd: string, file: string, staged: boolean) => ipcRenderer.invoke("git:diff-file", { cwd, file, staged }),
     diffStat: (cwd: string) => ipcRenderer.invoke("git:diff-stat", cwd) as Promise<{ additions: number; deletions: number }>,
+    showFileAtHead: (cwd: string, file: string) => ipcRenderer.invoke("git:show-file-at-head", { cwd, file }),
+    reflog: (cwd: string, count?: number) => ipcRenderer.invoke("git:reflog", { cwd, count }),
+    undo: (cwd: string) => ipcRenderer.invoke("git:undo", cwd),
+    stashList: (cwd: string) => ipcRenderer.invoke("git:stash-list", cwd),
+    stashSave: (cwd: string, message?: string) => ipcRenderer.invoke("git:stash-save", { cwd, message }),
+    stashPop: (cwd: string, ref?: string) => ipcRenderer.invoke("git:stash-pop", { cwd, ref }),
+    stashApply: (cwd: string, ref?: string) => ipcRenderer.invoke("git:stash-apply", { cwd, ref }),
+    stashDrop: (cwd: string, ref?: string) => ipcRenderer.invoke("git:stash-drop", { cwd, ref }),
+    cherryPick: (cwd: string, hash: string) => ipcRenderer.invoke("git:cherry-pick", { cwd, hash }),
+    blame: (cwd: string, file: string) => ipcRenderer.invoke("git:blame", { cwd, file }),
     log: (cwd: string, count?: number) => ipcRenderer.invoke("git:log", { cwd, count }),
+    commitFiles: (cwd: string, hash: string) => ipcRenderer.invoke("git:commit-files", { cwd, hash }),
+    commitFileDiff: (cwd: string, hash: string, file: string) => ipcRenderer.invoke("git:show-commit-file-diff", { cwd, hash, file }),
+    graph: (cwd: string, count?: number) => ipcRenderer.invoke("git:graph", { cwd, count }),
     generateCommitMessage: (cwd: string, engine?: string, sessionId?: string) =>
       ipcRenderer.invoke("git:generate-commit-message", { cwd, engine, sessionId }),
+  },
+  executions: {
+    detectRunners: (cwd: string) => ipcRenderer.invoke("executions:detect-runners", cwd),
+    run: (options: { cwd: string; command: string; label?: string }) => ipcRenderer.invoke("executions:run", options),
+    stop: (executionId: string) => ipcRenderer.invoke("executions:stop", executionId),
+    onData: (callback: (data: unknown) => void) => {
+      const listener = (_event: IpcRendererEvent, data: unknown) => callback(data);
+      ipcRenderer.on("executions:data", listener);
+      return () => ipcRenderer.removeListener("executions:data", listener);
+    },
+    onExit: (callback: (data: unknown) => void) => {
+      const listener = (_event: IpcRendererEvent, data: unknown) => callback(data);
+      ipcRenderer.on("executions:exit", listener);
+      return () => ipcRenderer.removeListener("executions:exit", listener);
+    },
+  },
+  search: {
+    files: (options: { cwd: string; query: string; maxResults?: number }) => ipcRenderer.invoke("search:files", options),
+    content: (options: { cwd: string; pattern: string; isRegex?: boolean; caseSensitive?: boolean; maxResults?: number; include?: string; exclude?: string }) => ipcRenderer.invoke("search:content", options),
   },
   terminal: {
     create: (options: { cwd?: string; cols?: number; rows?: number; spaceId?: string }) => ipcRenderer.invoke("terminal:create", options),
@@ -279,6 +323,29 @@ contextBridge.exposeInMainWorld("claude", {
       return () => ipcRenderer.removeListener("ollama:exit", listener);
     },
   },
+  openclaw: {
+    start: (options: { cwd: string; gatewayUrl?: string; model?: string; skills?: string[] }) =>
+      ipcRenderer.invoke("openclaw:start", options),
+    send: (sessionId: string, text: string) =>
+      ipcRenderer.invoke("openclaw:send", { sessionId, text }),
+    stop: (sessionId: string) => ipcRenderer.invoke("openclaw:stop", sessionId),
+    interrupt: (sessionId: string) => ipcRenderer.invoke("openclaw:interrupt", sessionId),
+    status: () => ipcRenderer.invoke("openclaw:status"),
+    spawnAgent: (sessionId: string, agentName: string, prompt: string, skills?: string[]) =>
+      ipcRenderer.invoke("openclaw:spawn-agent", { sessionId, agentName, prompt, skills }),
+    listAgents: (sessionId?: string) => ipcRenderer.invoke("openclaw:list-agents", sessionId),
+    pair: () => ipcRenderer.invoke("openclaw:pair"),
+    onEvent: (callback: (data: unknown) => void) => {
+      const listener = (_event: IpcRendererEvent, data: unknown) => callback(data);
+      ipcRenderer.on("openclaw:event", listener);
+      return () => ipcRenderer.removeListener("openclaw:event", listener);
+    },
+    onExit: (callback: (data: unknown) => void) => {
+      const listener = (_event: IpcRendererEvent, data: unknown) => callback(data);
+      ipcRenderer.on("openclaw:exit", listener);
+      return () => ipcRenderer.removeListener("openclaw:exit", listener);
+    },
+  },
   mcp: {
     list: (projectId: string) => ipcRenderer.invoke("mcp:list", projectId),
     add: (projectId: string, server: unknown) => ipcRenderer.invoke("mcp:add", { projectId, server }),
@@ -359,5 +426,39 @@ contextBridge.exposeInMainWorld("claude", {
     install: () => ipcRenderer.invoke("updater:install"),
     check: () => ipcRenderer.invoke("updater:check"),
     currentVersion: () => ipcRenderer.invoke("updater:current-version") as Promise<string>,
+  },
+  groups: {
+    list: () => ipcRenderer.invoke("group:list"),
+    create: (group: unknown) => ipcRenderer.invoke("group:create", group),
+    update: (group: unknown) => ipcRenderer.invoke("group:update", group),
+    delete: (groupId: string) => ipcRenderer.invoke("group:delete", groupId),
+    startSession: (params: { groupId: string; prompt: string; cwd?: string; projectId?: string }) =>
+      ipcRenderer.invoke("group:start-session", params),
+    stopSession: (sessionId: string) => ipcRenderer.invoke("group:stop-session", sessionId),
+    sendMessage: (sessionId: string, message: unknown, projectId?: string) =>
+      ipcRenderer.invoke("group:send", { sessionId, message, projectId }),
+    interrupt: (sessionId: string) => ipcRenderer.invoke("group:interrupt", sessionId),
+    generateTeam: (params: { prompt: string; cwd?: string }) =>
+      ipcRenderer.invoke("group:generate-team", params) as Promise<{ ok: boolean; result?: string; error?: string }>,
+    getSession: (sessionId: string) => ipcRenderer.invoke("group:get-session", sessionId),
+    resumeSession: (sessionId: string, projectId?: string) =>
+      ipcRenderer.invoke("group:resume", { sessionId, projectId }),
+    onEvent: (callback: (data: unknown) => void) => {
+      const listener = (_event: IpcRendererEvent, data: unknown) => callback(data);
+      ipcRenderer.on("group:event", listener);
+      return () => ipcRenderer.removeListener("group:event", listener);
+    },
+    onSlotEvent: (callback: (data: unknown) => void) => {
+      const listener = (_event: IpcRendererEvent, data: unknown) => callback(data);
+      ipcRenderer.on("group:slot-event", listener);
+      return () => ipcRenderer.removeListener("group:slot-event", listener);
+    },
+    respondPermission: (sessionId: string, slotId: string, requestId: string, behavior: string) =>
+      ipcRenderer.invoke("group:permission-response", { sessionId, slotId, requestId, behavior }),
+    onPermissionRequest: (callback: (data: unknown) => void) => {
+      const listener = (_event: IpcRendererEvent, data: unknown) => callback(data);
+      ipcRenderer.on("group:permission_request", listener);
+      return () => ipcRenderer.removeListener("group:permission_request", listener);
+    },
   },
 });

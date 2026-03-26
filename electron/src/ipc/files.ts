@@ -3,6 +3,7 @@ import type { BrowserWindow } from "electron";
 import { execFile } from "child_process";
 import path from "path";
 import fs from "fs";
+import { promises as fsPromises } from "fs";
 import { log } from "../lib/logger";
 import { ALWAYS_SKIP } from "../lib/git-exec";
 import { getAppSetting } from "../lib/app-settings";
@@ -261,6 +262,17 @@ function buildFolderTree(dirPrefix: string, filePaths: string[]): string {
   return dirPrefix + "\n" + lines.join("\n");
 }
 
+function resolveProjectPath(cwd: string, relPath: string): { absPath?: string; error?: string } {
+  const projectRoot = path.resolve(cwd);
+  const candidate = relPath.trim();
+  if (!candidate) return { error: "Path is required" };
+  const absPath = path.resolve(projectRoot, candidate);
+  if (!absPath.startsWith(projectRoot + path.sep) && absPath !== projectRoot) {
+    return { error: "Path outside project directory" };
+  }
+  return { absPath };
+}
+
 export function register(getMainWindow: () => BrowserWindow | null): void {
   ipcMain.handle("shell:open-external", async (_event, url: string) => {
     try {
@@ -328,8 +340,59 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     }
   });
 
-  ipcMain.handle("files:read-multiple", async (_event, { cwd, paths }: { cwd: string; paths: string[] }) => {
+  ipcMain.handle("files:calculate-deep-size", async (_event, { cwd, paths }: { cwd: string; paths: string[] }) => {
+    let totalSize = 0;
+    let fileCount = 0;
+    const warnings: string[] = [];
+
+    for (const relPath of paths) {
+      try {
+        const absPath = path.resolve(cwd, relPath);
+        if (!absPath.startsWith(path.resolve(cwd) + path.sep) && absPath !== path.resolve(cwd)) {
+          continue;
+        }
+        const stat = await fsPromises.stat(absPath);
+        if (stat.isDirectory()) {
+          const allFiles = await listProjectFiles(cwd);
+          const dirPrefix = relPath.endsWith("/") ? relPath : relPath + "/";
+          const matchingFiles = allFiles.filter((f) => f.startsWith(dirPrefix));
+
+          for (const file of matchingFiles) {
+            const fileAbsPath = path.resolve(cwd, file);
+            try {
+              const fileStat = await fsPromises.stat(fileAbsPath);
+              if (!fileStat.isDirectory() && fileStat.size <= 500_000) {
+                totalSize += fileStat.size;
+                fileCount++;
+              } else if (fileStat.size > 500_000) {
+                warnings.push(`${file} (too large, will be skipped)`);
+              }
+            } catch {
+              // Skip files that can't be statted
+            }
+          }
+        }
+      } catch {
+        // Skip paths that can't be accessed
+      }
+    }
+
+    return {
+      totalSize,
+      fileCount,
+      estimatedTokens: Math.round(totalSize / 4), // 4 chars per token average
+      warnings,
+    };
+  });
+
+  ipcMain.handle("files:read-multiple", async (_event, { cwd, paths, deepPaths }: { cwd: string; paths: string[]; deepPaths?: string[] }) => {
     const results: Array<{ path: string; content?: string; error?: string; isDir?: boolean; tree?: string }> = [];
+    const deepPathsSet = new Set(deepPaths ?? []);
+
+    // Token limit: ~100k tokens = ~400KB of text (4 chars/token average)
+    const MAX_TOTAL_SIZE = 400_000; // bytes
+    let totalContentSize = 0;
+
     for (const relPath of paths) {
       try {
         const absPath = path.resolve(cwd, relPath);
@@ -337,26 +400,210 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
           results.push({ path: relPath, error: "Path outside project directory" });
           continue;
         }
-        const stat = fs.statSync(absPath);
+        const stat = await fsPromises.stat(absPath);
         if (stat.isDirectory()) {
           const allFiles = await listProjectFiles(cwd);
           const dirPrefix = relPath.endsWith("/") ? relPath : relPath + "/";
           const matchingFiles = allFiles.filter((f) => f.startsWith(dirPrefix));
           const tree = buildFolderTree(dirPrefix, matchingFiles);
-          results.push({ path: relPath, isDir: true, tree });
+
+          // If this is a deep folder (@#), also include all file contents
+          if (deepPathsSet.has(relPath)) {
+            // Add tree first
+            results.push({ path: relPath, isDir: true, tree });
+
+            // Calculate total size first to check limit
+            let folderContentSize = 0;
+            const filesToRead: string[] = [];
+            for (const file of matchingFiles) {
+              const fileAbsPath = path.resolve(cwd, file);
+              const projectRoot = path.resolve(cwd);
+              if (!fileAbsPath.startsWith(projectRoot + path.sep) && fileAbsPath !== projectRoot) {
+                results.push({ path: file, error: "Path outside project directory" });
+                continue;
+              }
+              try {
+                const fileStat = await fsPromises.stat(fileAbsPath);
+                if (!fileStat.isDirectory() && fileStat.size <= 500_000) {
+                  folderContentSize += fileStat.size;
+                  filesToRead.push(file);
+                }
+              } catch {
+                // Skip files that can't be statted
+              }
+            }
+
+            // Check if adding this folder would exceed the global limit
+            if (totalContentSize + folderContentSize > MAX_TOTAL_SIZE) {
+              results.push({
+                path: relPath,
+                error: `Deep folder content too large: ${Math.round(folderContentSize / 1024)}KB (would exceed ${Math.round(MAX_TOTAL_SIZE / 1024)}KB limit). Try a smaller folder or use regular @mention for tree only.`,
+              });
+              continue;
+            }
+
+            // Read all files in the folder with batching to avoid blocking
+            // Process files in batches of 10 to periodically yield to event loop
+            const BATCH_SIZE = 10;
+            for (let i = 0; i < filesToRead.length; i += BATCH_SIZE) {
+              const batch = filesToRead.slice(i, i + BATCH_SIZE);
+
+              // Process batch in parallel
+              await Promise.all(
+                batch.map(async (file) => {
+                  const fileAbsPath = path.resolve(cwd, file);
+                  try {
+                    const fileStat = await fsPromises.stat(fileAbsPath);
+                    if (fileStat.size > 500_000) {
+                      results.push({ path: file, error: "File too large" });
+                      return;
+                    }
+                    const content = await fsPromises.readFile(fileAbsPath, "utf-8");
+                    results.push({ path: file, content });
+                    totalContentSize += content.length;
+                  } catch (fileErr) {
+                    results.push({ path: file, error: fileErr instanceof Error ? fileErr.message : String(fileErr) });
+                  }
+                })
+              );
+
+              // Yield to event loop between batches
+              if (i + BATCH_SIZE < filesToRead.length) {
+                await new Promise(resolve => setImmediate(resolve));
+              }
+            }
+          } else {
+            // Regular folder mention - just the tree
+            results.push({ path: relPath, isDir: true, tree });
+          }
         } else {
           if (stat.size > 500_000) {
             results.push({ path: relPath, error: "File too large" });
             continue;
           }
-          const content = fs.readFileSync(absPath, "utf-8");
+          const content = await fsPromises.readFile(absPath, "utf-8");
           results.push({ path: relPath, content });
+          totalContentSize += content.length;
         }
       } catch (err) {
         results.push({ path: relPath, error: err instanceof Error ? err.message : String(err) });
       }
     }
     return results;
+  });
+
+  ipcMain.handle("files:create-file", async (_event, { cwd, path: relPath, content }: { cwd: string; path: string; content?: string }) => {
+    const resolved = resolveProjectPath(cwd, relPath);
+    if (resolved.error) return { error: resolved.error };
+    const absPath = resolved.absPath!;
+
+    try {
+      await fs.promises.mkdir(path.dirname(absPath), { recursive: true });
+      const exists = fs.existsSync(absPath);
+      if (exists) return { error: "File already exists" };
+      await fs.promises.writeFile(absPath, content ?? "", "utf-8");
+      return { ok: true };
+    } catch (err) {
+      const errMsg = reportError("FILES:CREATE_FILE_ERR", err, { cwd, relPath });
+      return { error: errMsg };
+    }
+  });
+
+  ipcMain.handle("files:create-directory", async (_event, { cwd, path: relPath }: { cwd: string; path: string }) => {
+    const resolved = resolveProjectPath(cwd, relPath);
+    if (resolved.error) return { error: resolved.error };
+    const absPath = resolved.absPath!;
+
+    try {
+      if (fs.existsSync(absPath)) return { error: "Directory already exists" };
+      await fs.promises.mkdir(absPath, { recursive: true });
+      return { ok: true };
+    } catch (err) {
+      const errMsg = reportError("FILES:CREATE_DIRECTORY_ERR", err, { cwd, relPath });
+      return { error: errMsg };
+    }
+  });
+
+  ipcMain.handle("files:write-file", async (_event, { cwd, path: relPath, content }: { cwd: string; path: string; content: string }) => {
+    const resolved = resolveProjectPath(cwd, relPath);
+    if (resolved.error) return { error: resolved.error };
+    const absPath = resolved.absPath!;
+
+    try {
+      const stat = await fs.promises.stat(absPath);
+      if (!stat.isFile()) return { error: "Target is not a file" };
+      await fs.promises.writeFile(absPath, content, "utf-8");
+      return { ok: true };
+    } catch (err) {
+      const errMsg = reportError("FILES:WRITE_FILE_ERR", err, { cwd, relPath });
+      return { error: errMsg };
+    }
+  });
+
+  ipcMain.handle("files:rename", async (_event, { cwd, fromPath, toPath }: { cwd: string; fromPath: string; toPath: string }) => {
+    const resolvedFrom = resolveProjectPath(cwd, fromPath);
+    if (resolvedFrom.error) return { error: resolvedFrom.error };
+    const resolvedTo = resolveProjectPath(cwd, toPath);
+    if (resolvedTo.error) return { error: resolvedTo.error };
+
+    const absFrom = resolvedFrom.absPath!;
+    const absTo = resolvedTo.absPath!;
+
+    try {
+      if (!fs.existsSync(absFrom)) return { error: "Source path does not exist" };
+      if (fs.existsSync(absTo)) return { error: "Destination path already exists" };
+      await fs.promises.mkdir(path.dirname(absTo), { recursive: true });
+      await fs.promises.rename(absFrom, absTo);
+      return { ok: true };
+    } catch (err) {
+      const errMsg = reportError("FILES:RENAME_ERR", err, { cwd, fromPath, toPath });
+      return { error: errMsg };
+    }
+  });
+
+  ipcMain.handle("files:copy", async (_event, { cwd, fromPath, toPath }: { cwd: string; fromPath: string; toPath: string }) => {
+    const resolvedFrom = resolveProjectPath(cwd, fromPath);
+    if (resolvedFrom.error) return { error: resolvedFrom.error };
+    const resolvedTo = resolveProjectPath(cwd, toPath);
+    if (resolvedTo.error) return { error: resolvedTo.error };
+
+    const absFrom = resolvedFrom.absPath!;
+    const absTo = resolvedTo.absPath!;
+
+    try {
+      if (!fs.existsSync(absFrom)) return { error: "Source path does not exist" };
+      if (fs.existsSync(absTo)) return { error: "Destination path already exists" };
+      await fs.promises.mkdir(path.dirname(absTo), { recursive: true });
+      const stat = await fs.promises.stat(absFrom);
+      if (stat.isDirectory()) {
+        await fs.promises.cp(absFrom, absTo, { recursive: true, errorOnExist: true, force: false });
+      } else {
+        await fs.promises.copyFile(absFrom, absTo, fs.constants.COPYFILE_EXCL);
+      }
+      return { ok: true };
+    } catch (err) {
+      const errMsg = reportError("FILES:COPY_ERR", err, { cwd, fromPath, toPath });
+      return { error: errMsg };
+    }
+  });
+
+  ipcMain.handle("files:delete", async (_event, { cwd, path: relPath }: { cwd: string; path: string }) => {
+    const resolved = resolveProjectPath(cwd, relPath);
+    if (resolved.error) return { error: resolved.error };
+    const absPath = resolved.absPath!;
+
+    try {
+      const stat = await fs.promises.stat(absPath);
+      if (stat.isDirectory()) {
+        await fs.promises.rm(absPath, { recursive: true, force: false });
+      } else {
+        await fs.promises.unlink(absPath);
+      }
+      return { ok: true };
+    } catch (err) {
+      const errMsg = reportError("FILES:DELETE_ERR", err, { cwd, relPath });
+      return { error: errMsg };
+    }
   });
 
   ipcMain.handle("file:read", async (_event, filePath: string) => {

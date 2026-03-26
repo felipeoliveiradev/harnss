@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ImageAttachment, UIMessage } from "../../types";
+import type { ImageAttachment, UIMessage, CodeSnippet } from "../../types";
 import type { CollaborationMode } from "../../types/codex-protocol/CollaborationMode";
 import { imageAttachmentsToCodexInputs } from "../../lib/codex-adapter";
 import { suppressNextSessionCompletion } from "../../lib/notification-utils";
@@ -20,7 +20,7 @@ type BoundaryWaitState =
   | { kind: "asap" };
 
 export function useMessageQueue({ refs, setters, engines, activeSessionId }: UseMessageQueueParams) {
-  const { claude, acp, codex, engine } = engines;
+  const { claude, acp, codex, openclaw, engine } = engines;
   const { setQueuedCount } = setters;
   const {
     activeSessionIdRef,
@@ -69,13 +69,13 @@ export function useMessageQueue({ refs, setters, engines, activeSessionId }: Use
   }, [messageQueueRef]);
 
   /** Add a message to the queue and show it in chat immediately with isQueued styling */
-  const enqueueMessage = useCallback((text: string, images?: ImageAttachment[], displayText?: string) => {
+  const enqueueMessage = useCallback((text: string, images?: ImageAttachment[], displayText?: string, codeSnippets?: CodeSnippet[]) => {
     const activeId = activeSessionIdRef.current;
     if (!activeId || activeId === DRAFT_ID) return;
 
     const msgId = `user-queued-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const queue = getQueueForSession(activeId);
-    queue.push({ text, images, displayText, messageId: msgId });
+    queue.push({ text, images, displayText, codeSnippets, messageId: msgId });
     setQueuedCount(queue.length);
     engine.setMessages((prev) => [
       ...prev,
@@ -87,6 +87,7 @@ export function useMessageQueue({ refs, setters, engines, activeSessionId }: Use
         isQueued: true,
         ...(images?.length ? { images } : {}),
         ...(displayText ? { displayContent: displayText } : {}),
+        ...(codeSnippets?.length ? { codeSnippets } : {}),
       },
     ]);
   }, [activeSessionIdRef, engine.setMessages, getQueueForSession, setQueuedCount]);
@@ -150,8 +151,8 @@ export function useMessageQueue({ refs, setters, engines, activeSessionId }: Use
     if (!queue || queue.length === 0) return;
 
     const sessionEngine = sessionsRef.current.find((s) => s.id === activeId)?.engine ?? "claude";
-    const targetSetMessages = sessionEngine === "codex" ? codex.setMessages : sessionEngine === "acp" ? acp.setMessages : claude.setMessages;
-    const targetSetIsProcessing = sessionEngine === "codex" ? codex.setIsProcessing : sessionEngine === "acp" ? acp.setIsProcessing : claude.setIsProcessing;
+    const targetSetMessages = sessionEngine === "codex" ? codex.setMessages : sessionEngine === "acp" ? acp.setMessages : sessionEngine === "openclaw" ? openclaw.setMessages : claude.setMessages;
+    const targetSetIsProcessing = sessionEngine === "codex" ? codex.setIsProcessing : sessionEngine === "acp" ? acp.setIsProcessing : sessionEngine === "openclaw" ? openclaw.setIsProcessing : claude.setIsProcessing;
 
     const next = queue.shift()!;
     if (queue.length === 0) {
@@ -193,6 +194,10 @@ export function useMessageQueue({ refs, setters, engines, activeSessionId }: Use
       if (sessionEngine === "acp") {
         targetSetIsProcessing(true);
         const result = await window.claude.acp.prompt(activeId, next.text, next.images);
+        if (result?.error) handleSendError();
+      } else if (sessionEngine === "openclaw") {
+        targetSetIsProcessing(true);
+        const result = await window.claude.openclaw.send(activeId, next.text);
         if (result?.error) handleSendError();
       } else if (sessionEngine === "codex") {
         targetSetIsProcessing(true);
@@ -246,6 +251,8 @@ export function useMessageQueue({ refs, setters, engines, activeSessionId }: Use
     clearQueue,
     codex.setIsProcessing,
     codex.setMessages,
+    openclaw.setIsProcessing,
+    openclaw.setMessages,
     codexEffortRef,
     engine.isProcessing,
     liveSessionIdsRef,
@@ -364,6 +371,8 @@ export function useMessageQueue({ refs, setters, engines, activeSessionId }: Use
     suppressNextSessionCompletion(activeId);
     if (sessionEngine === "acp") {
       void window.claude.acp.cancel(activeId);
+    } else if (sessionEngine === "openclaw") {
+      void window.claude.openclaw.interrupt(activeId);
     } else if (sessionEngine === "codex") {
       void window.claude.codex.interrupt(activeId);
     } else {

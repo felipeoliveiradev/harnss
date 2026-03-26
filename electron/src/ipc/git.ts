@@ -361,6 +361,23 @@ export function register(): void {
       const args = ["worktree", "add", "-b", branch, resolvedPath];
       if (fromRef?.trim()) args.push(fromRef.trim());
       const output = await gitExec(args, cwd);
+
+      // Auto-add .harnss/ to .gitignore if the worktree is inside .harnss/worktrees/
+      if (resolvedPath.includes("/.harnss/")) {
+        try {
+          const gitignorePath = path.join(cwd, ".gitignore");
+          const existing = fs.existsSync(gitignorePath) ? fs.readFileSync(gitignorePath, "utf-8") : "";
+          if (!existing.includes(".harnss/") && !existing.includes(".harnss")) {
+            const newContent = existing
+              ? (existing.endsWith("\n") ? `${existing}.harnss/\n` : `${existing}\n.harnss/\n`)
+              : ".harnss/\n";
+            fs.writeFileSync(gitignorePath, newContent, "utf-8");
+          }
+        } catch {
+          // Non-critical — don't fail worktree creation over .gitignore
+        }
+      }
+
       return { ok: true, path: resolvedPath, output };
     } catch (err) {
       return { error: reportError("GIT_CREATE_WORKTREE_ERR", err) };
@@ -452,6 +469,148 @@ export function register(): void {
     }
   });
 
+  ipcMain.handle("git:show-file-at-head", async (_event, { cwd, file }: { cwd: string; file: string }) => {
+    const withTimeout = <T>(promise: Promise<T>, ms: number): Promise<T> =>
+      Promise.race([promise, new Promise<T>((_, reject) => setTimeout(() => reject(new Error("timeout")), ms))]);
+
+    try {
+      const headContent = await withTimeout(gitExec(["show", `HEAD:${file}`], cwd), 8000);
+
+      let hasDiff = false;
+      try {
+        const diff = await withTimeout(gitExec(["diff", "HEAD", "--", file], cwd), 4000);
+        hasDiff = diff.trim().length > 0;
+      } catch {}
+
+      if (!hasDiff) {
+        try {
+          const parentContent = await withTimeout(gitExec(["show", `HEAD~1:${file}`], cwd), 4000);
+          if (parentContent !== headContent) return { content: parentContent };
+        } catch {}
+      }
+
+      return { content: headContent };
+    } catch (err) {
+      reportError("GIT_SHOW_FILE_AT_HEAD_ERR", err, { cwd, file });
+      return { error: "not-in-git" };
+    }
+  });
+
+  ipcMain.handle("git:reflog", async (_event, { cwd, count }: { cwd: string; count?: number }) => {
+    try {
+      const limit = count || 20;
+      const raw = await gitExec(["reflog", "--format=%H|%gd|%gs|%ci", `-n${limit}`], cwd);
+      const entries = raw.trim().split("\n").filter(Boolean).map((line) => {
+        const [hash, ref, subject, date] = line.split("|");
+        return { hash, ref, subject, date };
+      });
+      return { entries };
+    } catch (err) {
+      return { entries: [], error: reportError("GIT_REFLOG_ERR", err) };
+    }
+  });
+
+  ipcMain.handle("git:undo", async (_event, cwd: string) => {
+    try {
+      const reflog = await gitExec(["reflog", "--format=%H|%gs", "-n2"], cwd);
+      const lines = reflog.trim().split("\n").filter(Boolean);
+      if (lines.length < 2) return { error: "nothing-to-undo" };
+      const targetHash = lines[1].split("|")[0];
+      await gitExec(["reset", "--soft", targetHash], cwd);
+      return { success: true, hash: targetHash };
+    } catch (err) {
+      return { error: reportError("GIT_UNDO_ERR", err) };
+    }
+  });
+
+  ipcMain.handle("git:stash-list", async (_event, cwd: string) => {
+    try {
+      const raw = await gitExec(["stash", "list", "--format=%gd|%gs|%ci"], cwd);
+      const stashes = raw.trim().split("\n").filter(Boolean).map((line) => {
+        const [ref, message, date] = line.split("|");
+        return { ref, message, date };
+      });
+      return { stashes };
+    } catch {
+      return { stashes: [] };
+    }
+  });
+
+  ipcMain.handle("git:stash-save", async (_event, { cwd, message }: { cwd: string; message?: string }) => {
+    try {
+      const args = ["stash", "push"];
+      if (message) args.push("-m", message);
+      await gitExec(args, cwd);
+      return { success: true };
+    } catch (err) {
+      return { error: reportError("GIT_STASH_SAVE_ERR", err) };
+    }
+  });
+
+  ipcMain.handle("git:stash-pop", async (_event, { cwd, ref }: { cwd: string; ref?: string }) => {
+    try {
+      await gitExec(["stash", "pop", ref || "stash@{0}"], cwd);
+      return { success: true };
+    } catch (err) {
+      return { error: reportError("GIT_STASH_POP_ERR", err) };
+    }
+  });
+
+  ipcMain.handle("git:stash-apply", async (_event, { cwd, ref }: { cwd: string; ref?: string }) => {
+    try {
+      await gitExec(["stash", "apply", ref || "stash@{0}"], cwd);
+      return { success: true };
+    } catch (err) {
+      return { error: reportError("GIT_STASH_APPLY_ERR", err) };
+    }
+  });
+
+  ipcMain.handle("git:stash-drop", async (_event, { cwd, ref }: { cwd: string; ref?: string }) => {
+    try {
+      await gitExec(["stash", "drop", ref || "stash@{0}"], cwd);
+      return { success: true };
+    } catch (err) {
+      return { error: reportError("GIT_STASH_DROP_ERR", err) };
+    }
+  });
+
+  ipcMain.handle("git:cherry-pick", async (_event, { cwd, hash }: { cwd: string; hash: string }) => {
+    try {
+      await gitExec(["cherry-pick", hash], cwd);
+      return { success: true };
+    } catch (err) {
+      return { error: reportError("GIT_CHERRY_PICK_ERR", err) };
+    }
+  });
+
+  ipcMain.handle("git:blame", async (_event, { cwd, file }: { cwd: string; file: string }) => {
+    try {
+      const raw = await gitExec(["blame", "--porcelain", file], cwd);
+      const lines: Array<{ hash: string; author: string; date: string; lineNumber: number; content: string }> = [];
+      const rawLines = raw.split("\n");
+      let currentHash = "";
+      let currentAuthor = "";
+      let currentDate = "";
+      let lineNum = 0;
+      for (const line of rawLines) {
+        const hashMatch = line.match(/^([0-9a-f]{40})\s+(\d+)\s+(\d+)/);
+        if (hashMatch) {
+          currentHash = hashMatch[1];
+          lineNum = parseInt(hashMatch[3], 10);
+          continue;
+        }
+        if (line.startsWith("author ")) { currentAuthor = line.slice(7); continue; }
+        if (line.startsWith("author-time ")) { currentDate = new Date(parseInt(line.slice(12), 10) * 1000).toISOString(); continue; }
+        if (line.startsWith("\t")) {
+          lines.push({ hash: currentHash, author: currentAuthor, date: currentDate, lineNumber: lineNum, content: line.slice(1) });
+        }
+      }
+      return { lines };
+    } catch (err) {
+      return { error: reportError("GIT_BLAME_ERR", err) };
+    }
+  });
+
   ipcMain.handle("git:log", async (_event, { cwd, count }: { cwd: string; count?: number }) => {
     try {
       const limit = count || 50;
@@ -468,6 +627,80 @@ export function register(): void {
       return entries;
     } catch (err) {
       return { error: reportError("GIT_LOG_ERR", err) };
+    }
+  });
+
+  ipcMain.handle("git:commit-files", async (_event, { cwd, hash }: { cwd: string; hash: string }) => {
+    try {
+      validateRef(hash);
+      const raw = await gitExec(["diff-tree", "--no-commit-id", "-r", "-m", "--first-parent", "--name-status", hash], cwd);
+      const files: Array<{ status: string; path: string }> = [];
+      for (const line of raw.split("\n")) {
+        if (!line.trim()) continue;
+        const tab = line.indexOf("\t");
+        if (tab === -1) continue;
+        files.push({ status: line.slice(0, tab), path: line.slice(tab + 1) });
+      }
+      return { files };
+    } catch (err) {
+      return { files: [], error: reportError("GIT_COMMIT_FILES", err) };
+    }
+  });
+
+  ipcMain.handle("git:show-commit-file-diff", async (_event, { cwd, hash, file }: { cwd: string; hash: string; file: string }) => {
+    try {
+      validateRef(hash);
+      let diff: string;
+      try {
+        diff = await gitExec(["diff", `${hash}~1`, hash, "--", file], cwd);
+      } catch {
+        diff = await gitExec(["show", hash, "--format=", "--", file], cwd);
+      }
+      return { diff };
+    } catch (err) {
+      return { diff: "", error: reportError("GIT_COMMIT_DIFF", err) };
+    }
+  });
+
+  ipcMain.handle("git:graph", async (_event, { cwd, count }: { cwd: string; count?: number }) => {
+    try {
+      const limit = count || 100;
+      const SEP = "\x1f";
+      const [graphRaw, structuredRaw] = await Promise.all([
+        gitExec(["log", "--all", "--oneline", "--graph", "--decorate", "--color=never", `-n${limit}`], cwd),
+        gitExec(["log", "--all", `--format=%H${SEP}%h${SEP}%P${SEP}%D${SEP}%s${SEP}%an${SEP}%ai`, `-n${limit}`], cwd),
+      ]);
+
+      const entries: Array<{
+        hash: string;
+        shortHash: string;
+        parents: string[];
+        refs: string[];
+        message: string;
+        author: string;
+        date: string;
+      }> = [];
+
+      for (const line of structuredRaw.split("\n")) {
+        if (!line.trim()) continue;
+        const parts = line.split(SEP);
+        if (parts.length < 7) continue;
+
+        const [hash, shortHash, parentsRaw, refsRaw, message, author, date] = parts;
+        const parents = parentsRaw.trim() ? parentsRaw.trim().split(" ").filter(Boolean) : [];
+        const refs = refsRaw.trim()
+          ? refsRaw
+              .split(",")
+              .map((r) => r.trim())
+              .filter((r) => r && r !== "")
+          : [];
+
+        entries.push({ hash, shortHash, parents, refs, message, author, date });
+      }
+
+      return { entries, graph: graphRaw };
+    } catch (err) {
+      return { entries: [], graph: "", error: reportError("GIT_GRAPH_ERR", err) };
     }
   });
 }

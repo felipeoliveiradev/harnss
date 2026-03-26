@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useProjectManager } from "@/hooks/useProjectManager";
 import { useSessionManager } from "@/hooks/useSessionManager";
+import { useSecondaryPane } from "@/hooks/useSecondaryPane";
 import { useSidebar } from "@/hooks/useSidebar";
 import { useSpaceManager } from "@/hooks/useSpaceManager";
 import { useSettings } from "@/hooks/useSettings";
@@ -25,7 +26,7 @@ import { getStoredProjectGitCwd, resolveProjectForSpace } from "@/lib/space-proj
 import { getTodoItems } from "@/lib/todo-utils";
 import { isWindows } from "@/lib/utils";
 import { COLUMN_TOOL_IDS, type ToolId } from "@/components/ToolPicker";
-import type { ImageAttachment, Space, SpaceColor, InstalledAgent, AcpPermissionBehavior, ClaudeEffort, EngineId } from "@/types";
+import type { ImageAttachment, Space, SpaceColor, InstalledAgent, AcpPermissionBehavior, ClaudeEffort, EngineId, CodeSnippet } from "@/types";
 import type { NotificationSettings } from "@/types/ui";
 
 export function useAppOrchestrator() {
@@ -33,12 +34,9 @@ export function useAppOrchestrator() {
   const projectManager = useProjectManager();
   const spaceManager = useSpaceManager();
   const LAST_SESSION_KEY = "harnss-last-session-per-space";
-  // Read ACP permission behavior early — it's a global setting (same localStorage key as useSettings)
-  // so we can read it before useSettings which depends on manager.activeSession for per-project scoping
   const acpPermissionBehavior = (localStorage.getItem("harnss-acp-permission-behavior") ?? "ask") as AcpPermissionBehavior;
   const manager = useSessionManager(projectManager.projects, acpPermissionBehavior, spaceManager.setActiveSpaceId);
 
-  // Derive activeProjectId early so useSettings can scope per-project
   const activeProjectId = manager.activeSession?.projectId ?? manager.draftProjectId;
   const readLastSessionMap = useCallback((): Record<string, string> => {
     try {
@@ -70,6 +68,11 @@ export function useAppOrchestrator() {
   const showThinking = true;
   const activeProjectPath = settings.gitCwd ?? activeProject?.path;
   const { agents, refresh: refreshAgents, saveAgent, deleteAgent } = useAgentRegistry();
+
+  const pane1 = useSecondaryPane();
+  const [activePaneIndex, setActivePaneIndex] = useState<0 | 1>(0);
+  const activePaneIndexRef = useRef<0 | 1>(0);
+  activePaneIndexRef.current = activePaneIndex;
   useAcpAgentAutoUpdate({ installedAgents: agents, refreshInstalledAgents: refreshAgents });
   const getClaudeEffortForModel = useCallback((model: string | undefined): ClaudeEffort | undefined => {
     if (!model) return undefined;
@@ -82,10 +85,13 @@ export function useAppOrchestrator() {
   }, [manager.supportedModels, settings.claudeEffort]);
 
   const handleAgentWorktreeChange = useCallback((nextPath: string | null) => {
+    if (activePaneIndex === 1 && settings.splitMode) {
+      settings.setPane1GitCwd(nextPath);
+      return;
+    }
+
     settings.setGitCwd(nextPath);
 
-    // If there's an active non-draft session, open a new chat so the agent
-    // starts fresh in the selected worktree (instead of restarting in-place).
     if (manager.activeSessionId && !manager.isDraft && manager.activeSession) {
       const engine = manager.activeSession.engine ?? "claude";
       manager.createSession(manager.activeSession.projectId, {
@@ -100,12 +106,11 @@ export function useAppOrchestrator() {
         agentId: manager.activeSession.agentId,
       });
     }
-  }, [manager.activeSessionId, manager.isDraft, manager.activeSession, manager.createSession, settings]);
+  }, [activePaneIndex, settings, manager.activeSessionId, manager.isDraft, manager.activeSession, manager.createSession, getClaudeEffortForModel]);
 
   const handleAgentChange = useCallback((agent: InstalledAgent | null) => {
     setSelectedAgent(agent);
 
-    // If this agent would open a new chat, do it immediately on selection
     const currentEngine = manager.activeSession?.engine ?? "claude";
     const currentAgentId = manager.activeSession?.agentId;
     const wantedEngine = agent?.engine ?? "claude";
@@ -140,18 +145,14 @@ export function useAppOrchestrator() {
     }
   }, [manager.setDraftAgent, manager.isDraft, manager.activeSession, manager.createSession, settings.getModelForEngine, settings.permissionMode, settings.planMode, settings.thinking, getClaudeEffortForModel]);
 
-  // Engine is locked once a session is active (not draft) — null means free to switch
   const lockedEngine = !manager.isDraft && manager.activeSession?.engine
     ? manager.activeSession.engine
     : null;
 
-  // Agent ID is locked for ACP sessions — switching agents must open a new chat
   const lockedAgentId = !manager.isDraft && manager.activeSession?.agentId
     ? manager.activeSession.agentId
     : null;
 
-  // Persist ACP config options cache when live session provides them,
-  // then refresh agent registry so next agent selection uses cached values
   useEffect(() => {
     const agentId = manager.activeSession?.agentId;
     if (!agentId || manager.activeSession?.engine !== "acp") return;
@@ -161,16 +162,26 @@ export function useAppOrchestrator() {
       .then(() => refreshAgents());
   }, [manager.acpConfigOptions, manager.activeSession, refreshAgents]);
 
+  const handleFocusPane = useCallback((pane: 0 | 1) => {
+    setActivePaneIndex(pane);
+  }, []);
+
+  const handleToggleSplit = useCallback(() => {
+    const next = !settings.splitMode;
+    settings.setSplitMode(next);
+    if (!next) {
+      setActivePaneIndex(0);
+      pane1.clearSecondarySession();
+    }
+  }, [settings, pane1.clearSecondarySession]);
+
   const [showSettings, setShowSettings] = useState(false);
 
-  // ── Glass/transparency support detection ──
   const [glassSupported, setGlassSupported] = useState(false);
   useEffect(() => {
     window.claude.getGlassSupported().then((supported) => setGlassSupported(supported));
   }, []);
 
-  // Toggle the glass-enabled CSS class when the transparency setting changes.
-  // Preload applies the initial class from localStorage so first paint stays in sync.
   useEffect(() => {
     if (!glassSupported) return;
     const root = document.documentElement;
@@ -181,12 +192,10 @@ export function useAppOrchestrator() {
     }
   }, [settings.transparency, glassSupported]);
 
-  // ── Notification settings (loaded from main-process AppSettings) ──
   const [notificationSettings, setNotificationSettings] = useState<NotificationSettings | null>(null);
   const [devFillEnabled, setDevFillEnabled] = useState(false);
   const [jiraBoardEnabled, setJiraBoardEnabled] = useState(false);
 
-  // Load on mount + re-fetch when settings panel closes (so changes take effect immediately)
   useEffect(() => {
     window.claude.settings.get().then((s) => {
       if (s?.notifications) setNotificationSettings(s.notifications as NotificationSettings);
@@ -195,15 +204,27 @@ export function useAppOrchestrator() {
     });
   }, [showSettings]);
 
-  // Fire OS notifications and sounds for permission prompts + session completion
+  const handleFocusPane0FromNotification = useCallback(() => handleFocusPane(0), [handleFocusPane]);
+  const handleFocusPane1FromNotification = useCallback(() => handleFocusPane(1), [handleFocusPane]);
+
   useNotifications({
     pendingPermission: manager.pendingPermission,
     notificationSettings,
     activeSessionId: manager.activeSessionId,
     isProcessing: manager.isProcessing,
+    paneLabel: settings.splitMode ? "Tab 1" : undefined,
+    onNotificationClick: settings.splitMode ? handleFocusPane0FromNotification : undefined,
   });
 
-  // When settings closes, fire resize so hidden tool panels (xterm) re-fit
+  useNotifications({
+    pendingPermission: pane1.pendingPermission,
+    notificationSettings,
+    activeSessionId: pane1.sessionId,
+    isProcessing: pane1.isProcessing,
+    paneLabel: settings.splitMode ? "Tab 2" : undefined,
+    onNotificationClick: settings.splitMode ? handleFocusPane1FromNotification : undefined,
+  });
+
   useEffect(() => {
     if (!showSettings) window.dispatchEvent(new Event("resize"));
   }, [showSettings]);
@@ -211,13 +232,11 @@ export function useAppOrchestrator() {
   const [spaceCreatorOpen, setSpaceCreatorOpen] = useState(false);
   const [editingSpace, setEditingSpace] = useState<Space | null>(null);
   const [scrollToMessageId, setScrollToMessageId] = useState<string | undefined>();
-  // In-chat Ctrl+F / Cmd+F search overlay
   const [chatSearchOpen, setChatSearchOpen] = useState(false);
   const spaceTerminals = useSpaceTerminals();
 
   const hasProjects = projectManager.projects.length > 0;
 
-  // ── Tool toggle with suppression ──
 
   const handleToggleTool = useCallback(
     (toolId: ToolId) => {
@@ -226,11 +245,9 @@ export function useAppOrchestrator() {
         const next = new Set(prev);
         if (next.has(toolId)) {
           next.delete(toolId);
-          // User manually closed a contextual panel — suppress auto-open
           if (isContextual) settings.suppressPanel(toolId);
         } else {
           next.add(toolId);
-          // User manually opened a contextual panel — clear suppression
           if (isContextual) settings.unsuppressPanel(toolId);
         }
         return next;
@@ -239,7 +256,6 @@ export function useAppOrchestrator() {
     [settings],
   );
 
-  // Reorder panel tools in the ToolPicker (moves fromId to toId's position)
   const handleToolReorder = useCallback(
     (fromId: ToolId, toId: ToolId) => {
       const count = settings.toolOrder.filter(
@@ -254,7 +270,6 @@ export function useAppOrchestrator() {
         next.splice(toIdx, 0, fromId);
         return next;
       });
-      // Reset split ratios to equal when reordering (positional, not keyed)
       if (count > 1) {
         settings.setToolsSplitRatios(new Array<number>(count).fill(1 / count));
         settings.saveToolsSplitRatios();
@@ -284,16 +299,15 @@ export function useAppOrchestrator() {
   );
 
   const handleSend = useCallback(
-    async (text: string, images?: ImageAttachment[], displayText?: string) => {
-      // If the selected agent/engine differs from the current session, start a new session first
+    async (text: string, images?: ImageAttachment[], displayText?: string, codeSnippets?: CodeSnippet[]) => {
+      const agent = selectedAgent;
       const currentEngine = manager.activeSession?.engine ?? "claude";
-      const wantedEngine = selectedAgent?.engine ?? "claude";
+      const wantedEngine = agent?.engine ?? "claude";
       const currentAgentId = manager.activeSession?.agentId;
-      const wantedAgentId = selectedAgent?.id;
+      const wantedAgentId = agent?.id;
       const wantedModel = settings.getModelForEngine(wantedEngine);
-      const needsNewSession = !manager.isDraft && manager.activeSession && (
+      const needsNewSession = !manager.isDraft && manager.activeSession && currentEngine !== "group" && (
         currentEngine !== wantedEngine ||
-        // Switching ACP agents within a session must also create a new chat
         (currentEngine === "acp" && wantedEngine === "acp" && currentAgentId !== wantedAgentId)
       );
       if (needsNewSession) {
@@ -304,11 +318,11 @@ export function useAppOrchestrator() {
           thinkingEnabled: settings.thinking,
           effort: wantedEngine === "claude" ? getClaudeEffortForModel(wantedModel || undefined) : undefined,
           engine: wantedEngine,
-          agentId: selectedAgent?.id ?? "claude-code",
-          cachedConfigOptions: selectedAgent?.cachedConfigOptions,
+          agentId: agent?.id ?? "claude-code",
+          cachedConfigOptions: agent?.cachedConfigOptions,
         });
       }
-      await manager.send(text, images, displayText);
+      await manager.send(text, images, displayText, codeSnippets);
     },
     [manager.send, manager.isDraft, manager.activeSession, manager.createSession, selectedAgent, settings.getModelForEngine, settings.permissionMode, settings.planMode, settings.thinking, getClaudeEffortForModel],
   );
@@ -370,16 +384,22 @@ export function useAppOrchestrator() {
     manager.unqueueMessage(messageId);
   }, [manager.unqueueMessage]);
 
-  // Wrap session selection to also close settings view
   const handleSelectSession = useCallback(
     (sessionId: string) => {
       setShowSettings(false);
-      manager.switchSession(sessionId);
+      if (settings.splitMode) {
+        if (activePaneIndex === 1) {
+          void pane1.switchSecondarySession(sessionId, manager.sessions, manager.getBackgroundSessionState);
+        } else {
+          manager.switchSession(sessionId);
+        }
+      } else {
+        manager.switchSession(sessionId);
+      }
     },
-    [manager.switchSession],
+    [activePaneIndex, settings.splitMode, pane1.switchSecondarySession, manager.switchSession, manager.sessions, manager.getBackgroundSessionState],
   );
 
-  // Wrap project creation to also close settings view, assigning to the active space
   const handleCreateProject = useCallback(async () => {
     setShowSettings(false);
     await projectManager.createProject(spaceManager.activeSpaceId);
@@ -455,17 +475,16 @@ export function useAppOrchestrator() {
     [projectManager.updateProjectSpace],
   );
 
-  // ── Space <-> session tracking: switch to last used chat when changing spaces ──
 
   const prevSpaceIdRef = useRef(spaceManager.activeSpaceId);
 
-  const activeSpaceTerminalCwd = activeSpaceProject
+  const activeSpaceTerminalCwdBase = activeSpaceProject
     ? (getStoredProjectGitCwd(activeSpaceProject.id) ?? activeSpaceProject.path)
     : null;
+  const activeSpaceTerminalCwd = (settings.splitMode && activePaneIndex === 1)
+    ? (settings.pane1GitCwd ?? activeSpaceTerminalCwdBase)
+    : activeSpaceTerminalCwdBase;
 
-  // Save current session as last-used for its owning space whenever it changes.
-  // Use the session's project space (not the currently selected space), because
-  // space switching and session switching can be out of sync for one render.
   useEffect(() => {
     if (!manager.activeSessionId || manager.isDraft) return;
     const active = manager.sessions.find((s) => s.id === manager.activeSessionId);
@@ -478,52 +497,48 @@ export function useAppOrchestrator() {
     localStorage.setItem(LAST_SESSION_KEY, JSON.stringify(map));
   }, [manager.activeSessionId, manager.isDraft, manager.sessions, projectManager.projects, readLastSessionMap]);
 
-  // When activeSpaceId changes, switch to last used session in that space
   useEffect(() => {
     const prev = prevSpaceIdRef.current;
     const next = spaceManager.activeSpaceId;
     prevSpaceIdRef.current = next;
     if (prev === next) return;
 
-    // Find projects in the new space
-    const spaceProjectIds = new Set(
-      projectManager.projects
-        .filter((p) => (p.spaceId || "default") === next)
-        .map((p) => p.id),
-    );
-
-    // Check if current session is already in the new space
-    if (manager.activeSession && spaceProjectIds.has(manager.activeSession.projectId)) {
-      return; // Already in the right space
-    }
-
-    // Try to restore the last used session in this space
-    const map = readLastSessionMap();
-    const lastSessionId = map[next];
-    if (lastSessionId) {
-      const session = manager.sessions.find(
-        (s) => s.id === lastSessionId && spaceProjectIds.has(s.projectId),
+    const timer = setTimeout(() => {
+      const spaceProjectIds = new Set(
+        projectManager.projects
+          .filter((p) => (p.spaceId || "default") === next)
+          .map((p) => p.id),
       );
-      if (session) {
-        manager.switchSession(session.id);
+
+      if (manager.activeSession && spaceProjectIds.has(manager.activeSession.projectId)) {
         return;
       }
-    }
 
-    // No remembered chat for this space: open a fresh draft chat in the space.
-    // If the space has no projects, we can't create a draft chat yet.
-    const firstProjectInSpace = projectManager.projects.find(
-      (p) => (p.spaceId || "default") === next,
-    );
-    if (firstProjectInSpace) {
-      void handleNewChat(firstProjectInSpace.id);
-    } else {
-      // No projects in this space — deselect
-      manager.deselectSession();
-    }
+      const map = readLastSessionMap();
+      const lastSessionId = map[next];
+      if (lastSessionId) {
+        const session = manager.sessions.find(
+          (s) => s.id === lastSessionId && spaceProjectIds.has(s.projectId),
+        );
+        if (session) {
+          manager.switchSession(session.id);
+          return;
+        }
+      }
+
+      const firstProjectInSpace = projectManager.projects.find(
+        (p) => (p.spaceId || "default") === next,
+      );
+      if (firstProjectInSpace) {
+        void handleNewChat(firstProjectInSpace.id);
+      } else {
+        manager.deselectSession();
+      }
+    }, 60);
+
+    return () => clearTimeout(timer);
   }, [spaceManager.activeSpaceId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Sync model from loaded session (canonical runtime names -> picker values)
   useEffect(() => {
     if (!manager.activeSessionId || manager.isDraft || manager.supportedModels.length === 0) return;
     const session = manager.sessions.find((s) => s.id === manager.activeSessionId);
@@ -536,7 +551,6 @@ export function useAppOrchestrator() {
     }
   }, [manager.activeSessionId, manager.isDraft, manager.sessions, manager.supportedModels, settings.getModelForEngine, settings.setModelForEngine]);
 
-  // Sync selectedAgent when switching to a different session
   useEffect(() => {
     if (!manager.activeSessionId || manager.isDraft) return;
     const session = manager.sessions.find((s) => s.id === manager.activeSessionId);
@@ -580,22 +594,23 @@ export function useAppOrchestrator() {
       return;
     }
 
+    if (session.engine === "group") {
+      if (selectedAgent?.id !== "__groups__") {
+        setSelectedAgent({ id: "__groups__", name: "Agent Groups", engine: "group" as EngineId, builtIn: true });
+      }
+      return;
+    }
+
     if (selectedAgent !== null) {
       setSelectedAgent(null);
     }
   }, [manager.activeSessionId, manager.isDraft, manager.sessions, agents]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Derive the latest todo list — Codex uses turn/plan/updated events,
-  // Claude uses TodoWrite tool calls in the message stream.
-  // Optimization: only re-scan when messages.length changes (new message added),
-  // not on every streaming content update (which only modifies the last message).
   const todoMsgCount = manager.messages.length;
   const activeTodos = useMemo(() => {
-    // Codex engine: todos come from turn/plan/updated events
     if (manager.codexTodoItems && manager.codexTodoItems.length > 0) {
       return manager.codexTodoItems;
     }
-    // Claude engine: todos derived from last TodoWrite tool call in messages
     for (let i = manager.messages.length - 1; i >= 0; i--) {
       const msg = manager.messages[i];
       if (
@@ -615,7 +630,6 @@ export function useAppOrchestrator() {
     sessionId: manager.activeSessionId,
   });
 
-  // ── Contextual tools (tasks / agents) — auto-activate when data appears ──
 
   const hasTodos = activeTodos.length > 0;
   const hasAgents = bgAgents.agents.length > 0;
@@ -627,10 +641,8 @@ export function useAppOrchestrator() {
     return s;
   }, [hasTodos, hasAgents]);
 
-  // Auto-add contextual tools when data appears (unless suppressed)
   useEffect(() => {
     if (!hasTodos) {
-      // Data gone — clear suppression so next session starts fresh
       settings.unsuppressPanel("tasks");
       return;
     }
@@ -657,13 +669,12 @@ export function useAppOrchestrator() {
     });
   }, [hasAgents]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Cmd+Shift+P (Mac) / Ctrl+Shift+P — toggle plan mode for Claude and Codex engines
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "p") {
         e.preventDefault();
         const engine = manager.activeSession?.engine ?? selectedAgent?.engine ?? "claude";
-        if (engine === "acp") return; // ACP doesn't support plan mode
+        if (engine === "acp" || engine === "openclaw") return;
         const next = !settings.planMode;
         settings.setPlanMode(next);
         manager.setActivePlanMode(next);
@@ -673,7 +684,6 @@ export function useAppOrchestrator() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [settings.planMode, settings.setPlanMode, manager.setActivePlanMode, manager.activeSession?.engine, selectedAgent?.engine]);
 
-  // Cmd+F (Mac) / Ctrl+F — toggle in-chat search overlay
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === "f") {
@@ -686,46 +696,45 @@ export function useAppOrchestrator() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [manager.activeSessionId]);
 
-  // Close chat search when switching sessions
   useEffect(() => {
     setChatSearchOpen(false);
   }, [manager.activeSessionId]);
 
-  // Sync InputBar controls when sessionInfo.permissionMode changes (e.g. ExitPlanMode)
   useEffect(() => {
+    if (!manager.activeSessionId || manager.isDraft) return;
     const mode = manager.sessionInfo?.permissionMode;
     if (!mode) return;
-    if (mode === "plan") {
-      if (!settings.planMode) settings.setPlanMode(true);
-      manager.setActivePlanMode(true);
-      return;
+    const activePlanMode = !!manager.activeSession?.planMode;
+    const nextPlanMode = mode === "plan";
+    if (settings.planMode !== nextPlanMode) settings.setPlanMode(nextPlanMode);
+    if (activePlanMode !== nextPlanMode) {
+      manager.setActivePlanMode(nextPlanMode);
     }
-    if (settings.planMode) settings.setPlanMode(false);
-    manager.setActivePlanMode(false);
-    if (mode !== settings.permissionMode) settings.setPermissionMode(mode);
-  }, [manager.sessionInfo?.permissionMode]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [
+    manager.activeSessionId,
+    manager.activeSession?.planMode,
+    manager.isDraft,
+    manager.sessionInfo?.permissionMode,
+    manager.setActivePlanMode,
+    settings.planMode,
+    settings.setPlanMode,
+  ]);
 
-  // Keep plan toggle scoped to the active chat session.
   useEffect(() => {
     if (!manager.activeSessionId || manager.isDraft || !manager.activeSession) return;
     const nextPlanMode = !!manager.activeSession.planMode;
     if (settings.planMode !== nextPlanMode) settings.setPlanMode(nextPlanMode);
   }, [manager.activeSessionId, manager.activeSession?.planMode, manager.isDraft, settings.planMode, settings.setPlanMode]);
 
-  // Panel visibility flags
   const hasRightPanel = ((hasTodos && settings.activeTools.has("tasks")) || (hasAgents && settings.activeTools.has("agents"))) && !!manager.activeSessionId;
-  // Side column only includes active COLUMN tools that are NOT placed in the bottom row
   const hasToolsColumn = [...settings.activeTools].some((id) => COLUMN_TOOL_IDS.has(id) && !settings.bottomTools.has(id)) && !!manager.activeSessionId;
-  // Bottom tools row: active COLUMN tools that ARE placed in the bottom row
   const hasBottomTools = [...settings.activeTools].some((id) => COLUMN_TOOL_IDS.has(id) && settings.bottomTools.has(id)) && !!manager.activeSessionId;
 
-  // ── Dynamic Electron minimum window width ──
   const isIsland = settings.islandLayout;
   const minChatWidth = getMinChatWidth(isIsland);
   const margins = isIsland ? ISLAND_LAYOUT_MARGIN : 0;
   const handleW = getResizeHandleWidth(isIsland);
   const pickerW = getToolPickerWidth(isIsland);
-  // Windows native frame borders consume extra pixels from the content area
   const winFrameBuffer = isWindows ? WINDOWS_FRAME_BUFFER_WIDTH : 0;
 
   useEffect(() => {
@@ -741,7 +750,6 @@ export function useAppOrchestrator() {
     window.claude.setMinWidth(Math.max(minW, 600));
   }, [sidebar.isOpen, hasRightPanel, hasToolsColumn, manager.activeSessionId, minChatWidth, margins, pickerW, handleW]);
 
-  // When tools column or bottom row becomes visible, fire resize so xterm terminals re-fit
   useEffect(() => {
     if (hasToolsColumn || hasBottomTools) window.dispatchEvent(new Event("resize"));
   }, [hasToolsColumn, hasBottomTools]);
@@ -749,7 +757,6 @@ export function useAppOrchestrator() {
   const activeSpaceTerminals = spaceTerminals.getSpaceState(spaceManager.activeSpaceId);
 
   return {
-    // Core managers
     sidebar,
     projectManager,
     spaceManager,
@@ -757,7 +764,6 @@ export function useAppOrchestrator() {
     settings,
     resolvedTheme,
 
-    // Agent state
     agents,
     selectedAgent,
     saveAgent,
@@ -766,7 +772,6 @@ export function useAppOrchestrator() {
     lockedEngine,
     lockedAgentId,
 
-    // Derived state
     activeProjectId,
     activeProject,
     activeProjectPath,
@@ -787,28 +792,22 @@ export function useAppOrchestrator() {
     devFillEnabled,
     jiraBoardEnabled,
 
-    // Settings view
     showSettings,
     setShowSettings,
 
-    // Space creator
     spaceCreatorOpen,
     setSpaceCreatorOpen,
     editingSpace,
 
-    // Scroll navigation
     scrollToMessageId,
     setScrollToMessageId,
 
-    // In-chat search
     chatSearchOpen,
     setChatSearchOpen,
 
-    // Terminals
     spaceTerminals,
     activeSpaceTerminals,
 
-    // Callbacks
     handleToggleTool,
     handleToolReorder,
     handleNewChat,
@@ -832,5 +831,10 @@ export function useAppOrchestrator() {
     handleDeleteSpace,
     handleSaveSpace,
     handleMoveProjectToSpace,
+
+    pane1,
+    activePaneIndex,
+    handleFocusPane,
+    handleToggleSplit,
   };
 }

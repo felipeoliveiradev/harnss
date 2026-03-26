@@ -1,5 +1,6 @@
 import { memo } from "react";
-import { ChevronDown, Info, Loader2, PanelLeft } from "lucide-react";
+import { ChevronDown, Info, Loader2, PanelLeft, SplitSquareHorizontal, X } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -35,6 +36,16 @@ interface ChatHeaderProps {
   showDevFill?: boolean;
   onSeedDevExampleConversation?: () => void;
   onSeedDevExampleSpaceData?: () => void;
+  /** Whether split chat mode is active */
+  splitMode?: boolean;
+  /** 0 = primary pane, 1 = secondary pane */
+  paneIndex?: 0 | 1;
+  /** Whether this pane tab is currently active */
+  isActivePane?: boolean;
+  /** Activates this pane tab */
+  onActivatePane?: () => void;
+  /** Toggle split mode on/off */
+  onToggleSplit?: () => void;
 }
 
 export const ChatHeader = memo(function ChatHeader({
@@ -53,6 +64,11 @@ export const ChatHeader = memo(function ChatHeader({
   showDevFill,
   onSeedDevExampleConversation,
   onSeedDevExampleSpaceData,
+  splitMode = false,
+  paneIndex = 0,
+  isActivePane = false,
+  onActivatePane,
+  onToggleSplit,
 }: ChatHeaderProps) {
   const modeLabel = permissionMode ? PERMISSION_MODE_LABELS[permissionMode] : null;
   const acpBehaviorLabel = acpPermissionBehavior
@@ -139,7 +155,7 @@ export const ChatHeader = memo(function ChatHeader({
       ) : null}
 
       {/* Session info — subtle icon, hover reveals model / permissions / cost / session ID */}
-      {(showDevSeedButton || hasDetails) && (
+      {(showDevSeedButton || hasDetails || splitMode) && (
         <div className="ms-auto flex items-center gap-1.5">
           {showDevSeedButton && (
             <DropdownMenu>
@@ -182,6 +198,63 @@ export const ChatHeader = memo(function ChatHeader({
               </TooltipContent>
             </Tooltip>
           )}
+          {/* Split mode: pane badge */}
+          {splitMode && (
+            <button
+              type="button"
+              className="no-drag"
+              onClick={onActivatePane}
+              aria-label={`Selecionar aba ${paneIndex + 1}`}
+            >
+              <Badge
+                variant={isActivePane ? "default" : "secondary"}
+                className="h-5 rounded-full px-2 text-[10px] font-medium tabular-nums shrink-0"
+              >
+                {paneIndex + 1}
+              </Badge>
+            </button>
+          )}
+          {/* Split toggle: show close-split on pane 1, open-split on pane 0 when not in split mode */}
+          {onToggleSplit && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="no-drag h-7 w-7 text-muted-foreground/60 hover:text-foreground"
+                  onClick={onToggleSplit}
+                >
+                  {splitMode
+                    ? <X className="h-3.5 w-3.5" />
+                    : <SplitSquareHorizontal className="h-3.5 w-3.5" />
+                  }
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" align="end">
+                {splitMode ? "Fechar split" : "Dividir chat"}
+              </TooltipContent>
+            </Tooltip>
+          )}
+        </div>
+      )}
+      {/* When no details but split toggle available and not in split mode, still show toggle */}
+      {!showDevSeedButton && !hasDetails && !splitMode && onToggleSplit && (
+        <div className="ms-auto flex items-center gap-1.5">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="no-drag h-7 w-7 text-muted-foreground/60 hover:text-foreground"
+                onClick={onToggleSplit}
+              >
+                <SplitSquareHorizontal className="h-3.5 w-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" align="end">
+              Dividir chat
+            </TooltipContent>
+          </Tooltip>
         </div>
       )}
     </div>

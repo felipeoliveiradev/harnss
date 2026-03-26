@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import { Pencil, Trash2, MoreHorizontal, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -11,10 +12,11 @@ import type { ChatSession, InstalledAgent } from "@/types";
 import { AgentIcon } from "@/components/AgentIcon";
 import { getSessionEngineIcon } from "@/lib/engine-icons";
 
-export function SessionItem({
+export const SessionItem = memo(function SessionItem({
   islandLayout,
   session,
   isActive,
+  openInPane,
   onSelect,
   onDelete,
   onRename,
@@ -23,9 +25,10 @@ export function SessionItem({
   islandLayout: boolean;
   session: ChatSession;
   isActive: boolean;
-  onSelect: () => void;
-  onDelete: () => void;
-  onRename: (title: string) => void;
+  openInPane?: 0 | 1 | null;
+  onSelect: (sessionId: string) => void;
+  onDelete: (sessionId: string) => void;
+  onRename: (sessionId: string, title: string) => void;
   agents?: InstalledAgent[];
 }) {
   const [isEditing, setIsEditing] = useState(false);
@@ -34,7 +37,7 @@ export function SessionItem({
   const handleRename = () => {
     const trimmed = editTitle.trim();
     if (trimmed && trimmed !== session.title) {
-      onRename(trimmed);
+      onRename(session.id, trimmed);
     }
     setIsEditing(false);
   };
@@ -60,8 +63,8 @@ export function SessionItem({
   return (
     <div className="group relative">
       <button
-        onClick={onSelect}
-        className={`session-item-button flex w-full min-w-0 items-center gap-2.5 rounded-lg ps-4 pe-8 py-1.5 text-start text-[13px] font-medium transition-all ${
+        onClick={() => onSelect(session.id)}
+        className={`session-item-button flex w-full min-w-0 items-center gap-2.5 rounded-lg ps-4 pe-7 py-1.5 text-start text-[13px] font-medium transition-all ${
           isActive
             ? "session-item-active bg-primary/10 text-black dark:bg-primary/15 dark:text-primary"
             : "text-sidebar-foreground/75 hover:bg-black/5 hover:text-sidebar-foreground dark:hover:bg-white/5"
@@ -86,6 +89,21 @@ export function SessionItem({
           <span className={isActive ? "text-current opacity-80 italic" : "text-sidebar-foreground/60 italic"}>Generating title...</span>
         ) : (
           <span className="min-w-0 truncate">{session.title}</span>
+        )}
+        {openInPane != null && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span
+                className="ms-auto me-1 shrink-0 inline-flex h-4 w-4 items-center justify-center rounded-full bg-primary/15 text-[9px] font-semibold tabular-nums text-primary/70 transition-colors group-hover:bg-primary/20"
+                aria-label={`Aberto no painel ${openInPane + 1}`}
+              >
+                {openInPane + 1}
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="right" className="text-xs">
+              Aberto no painel {openInPane + 1}
+            </TooltipContent>
+          </Tooltip>
         )}
       </button>
 
@@ -119,7 +137,7 @@ export function SessionItem({
             </DropdownMenuItem>
             <DropdownMenuItem
               className="text-destructive focus:text-destructive"
-              onClick={onDelete}
+              onClick={() => onDelete(session.id)}
             >
               <Trash2 className="me-2 h-3.5 w-3.5" />
               Delete
@@ -129,4 +147,4 @@ export function SessionItem({
       </div>
     </div>
   );
-}
+});
