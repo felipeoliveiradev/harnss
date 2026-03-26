@@ -101,6 +101,21 @@ export function AppLayout() {
   );
   const isGlassActive = glassSupported && settings.transparency;
   const isLightGlass = isGlassActive && resolvedTheme !== "dark";
+  const isNativeGlass = isGlassActive && isMac;
+
+  // ── Window focus tracking (subtle veil on macOS liquid glass when unfocused) ──
+  const [windowFocused, setWindowFocused] = useState(true);
+  useEffect(() => {
+    if (!isNativeGlass) return;
+    const onFocus = () => setWindowFocused(true);
+    const onBlur = () => setWindowFocused(false);
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, [isNativeGlass]);
 
 
   const [welcomeCompleted, setWelcomeCompleted] = useState(
@@ -598,6 +613,13 @@ Link: ${issue.url}`;
           style={glassOverlayStyle}
         />
       )}
+      {/* Unfocused veil — subtle dim/brighten on macOS liquid glass when window loses focus */}
+      {isNativeGlass && (
+        <div
+          className={`pointer-events-none fixed inset-0 z-0 transition-opacity duration-300 ${windowFocused ? "opacity-0" : "opacity-100"}`}
+          style={{ background: isLightGlass ? "rgba(255,255,255,0.38)" : "rgba(0,0,0,0.34)" }}
+        />
+      )}
       <SpaceCreator
         open={spaceCreatorOpen}
         onOpenChange={setSpaceCreatorOpen}
@@ -612,6 +634,8 @@ Link: ${issue.url}`;
         activeSessionId={sidebarActiveSessionId}
         jiraBoardProjectId={jiraBoardProjectId}
         jiraBoardEnabled={jiraBoardEnabled}
+        foldersByProject={o.foldersByProject}
+        organizeByChatBranch={settings.organizeByChatBranch}
         onNewChat={handleOpenNewChat}
         onToggleProjectJiraBoard={handleToggleProjectJiraBoard}
         onSelectSession={handleSidebarSelectSession}
@@ -626,6 +650,12 @@ Link: ${issue.url}`;
         onNavigateToMessage={handleNavigateToMessage}
         onMoveProjectToSpace={handleMoveProjectToSpace}
         onReorderProject={projectManager.reorderProject}
+        onPinSession={o.handlePinSession}
+        onMoveSessionToFolder={o.handleMoveSessionToFolder}
+        onCreateFolder={o.handleCreateFolder}
+        onRenameFolder={o.handleRenameFolder}
+        onDeleteFolder={o.handleDeleteFolder}
+        onSetOrganizeByChatBranch={settings.setOrganizeByChatBranch}
         spaces={spaceManager.spaces}
         activeSpaceId={spaceManager.activeSpaceId}
         onSelectSpace={spaceManager.setActiveSpaceId}
@@ -763,27 +793,28 @@ Link: ${issue.url}`;
                 />
               )}
               <ChatView
-                  messages={manager.messages}
-                  isProcessing={manager.isProcessing}
-                  showThinking={showThinking}
-                  autoGroupTools={settings.autoGroupTools}
-                  avoidGroupingEdits={settings.avoidGroupingEdits}
-                  autoExpandTools={settings.autoExpandTools}
-                  extraBottomPadding={!!manager.pendingPermission}
-                  scrollToMessageId={scrollToMessageId}
-                  onScrolledToMessage={handleScrolledToMessage}
-                  sessionId={manager.activeSessionId}
-                  onRevert={manager.isConnected && manager.revertFiles ? handleRevert : undefined}
-                  onFullRevert={manager.isConnected && manager.fullRevert ? handleFullRevert : undefined}
-                  onTopScrollProgress={handleTopScrollProgress}
-                  onSendQueuedNow={handleSendQueuedNow}
-                  onUnqueueQueuedMessage={handleUnqueueMessage}
-                  sendNextId={manager.sendNextId}
-                  agents={agents}
-                  selectedAgent={selectedAgent}
-                  onAgentChange={handleAgentChange}
-                  activeSlots={manager.activeSlots}
-                />
+                spaceId={spaceManager.activeSpaceId}
+                messages={manager.messages}
+                isProcessing={manager.isProcessing}
+                showThinking={showThinking}
+                autoGroupTools={settings.autoGroupTools}
+                avoidGroupingEdits={settings.avoidGroupingEdits}
+                autoExpandTools={settings.autoExpandTools}
+                extraBottomPadding={!!manager.pendingPermission}
+                scrollToMessageId={scrollToMessageId}
+                onScrolledToMessage={handleScrolledToMessage}
+                sessionId={manager.activeSessionId}
+                onRevert={manager.isConnected && manager.revertFiles ? handleRevert : undefined}
+                onFullRevert={manager.isConnected && manager.fullRevert ? handleFullRevert : undefined}
+                onTopScrollProgress={handleTopScrollProgress}
+                onSendQueuedNow={handleSendQueuedNow}
+                onUnqueueQueuedMessage={handleUnqueueMessage}
+                sendNextId={manager.sendNextId}
+                agents={agents}
+                selectedAgent={selectedAgent}
+                onAgentChange={handleAgentChange}
+                activeSlots={manager.activeSlots}
+              />
               <div
                 className={`pointer-events-none absolute inset-x-0 bottom-0 z-[5] transition-opacity duration-200 ${isIsland ? "h-24" : "h-28"}`}
                 style={{
