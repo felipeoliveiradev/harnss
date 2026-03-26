@@ -414,15 +414,28 @@ async function createAcpConnection(
     },
 
     async readTextFile(params: { path?: string; uri?: string; line?: number | null; limit?: number | null }) {
-      const { filePath, content } = await acpReadTextFile(params);
-      log("ACP_FS", `readTextFile path=${filePath} line=${params.line ?? ""} limit=${params.limit ?? ""}`);
-      log("ACP_FS", `readTextFile result len=${content.length}`);
-      return { content };
+      try {
+        const { filePath, content } = await acpReadTextFile(params);
+        log("ACP_FS", `readTextFile path=${filePath} line=${params.line ?? ""} limit=${params.limit ?? ""}`);
+        log("ACP_FS", `readTextFile result len=${content.length}`);
+        return { content };
+      } catch (err) {
+        const msg = (err as Error).message ?? String(err);
+        log("ACP_FS", `readTextFile ERROR: ${msg}`);
+        // Return error as content so the agent can handle it gracefully instead of hanging
+        return { content: `[Error reading file: ${msg}]` };
+      }
     },
     async writeTextFile(params: { path?: string; uri?: string; content: string }) {
-      const { filePath } = await acpWriteTextFile(params);
-      log("ACP_FS", `writeTextFile path=${filePath} len=${params.content.length}`);
-      return {};
+      try {
+        const { filePath } = await acpWriteTextFile(params);
+        log("ACP_FS", `writeTextFile path=${filePath} len=${params.content.length}`);
+        return {};
+      } catch (err) {
+        const msg = (err as Error).message ?? String(err);
+        log("ACP_FS", `writeTextFile ERROR: ${msg}`);
+        throw new Error(`Failed to write file: ${msg}`);
+      }
     },
   }), stream);
 
@@ -611,12 +624,27 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     }
     prompt.push({ type: "text", text });
 
+    // 5-minute hard timeout — prevents infinite hang when the agent stops responding
+    // mid-turn (common with Gemini CLI on multi-turn sessions)
+    const PROMPT_TIMEOUT_MS = 5 * 60 * 1000;
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+
     try {
       session.lastStderrError = undefined;
-      const result = await session.connection.prompt({
+
+      const promptPromise = session.connection.prompt({
         sessionId: session.acpSessionId,
         prompt,
       });
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutHandle = setTimeout(
+          () => reject(new Error("Agent response timed out (5 min)")),
+          PROMPT_TIMEOUT_MS,
+        );
+      });
+
+      const result = await Promise.race([promptPromise, timeoutPromise]);
+      if (timeoutHandle !== null) clearTimeout(timeoutHandle);
 
       log("ACP_TURN_COMPLETE", `session=${sessionId.slice(0, 8)} stopReason=${result.stopReason} usage=${JSON.stringify(result.usage ?? null)}`);
 
@@ -628,11 +656,18 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
 
       return { ok: true };
     } catch (err) {
+      if (timeoutHandle !== null) clearTimeout(timeoutHandle);
       const msg = extractErrorMessage(err);
       // Prefer stderr context over generic "Internal error" — it usually contains
       // the real cause (auth failures, API errors, etc.)
       const surfacedError = session.lastStderrError ?? (msg === "Internal error" ? "Agent error — check that you are authenticated (run: gemini auth)" : msg);
       reportError("ACP_PROMPT_ERR", err, { engine: "acp", sessionId, surfacedError });
+      // Ensure the renderer knows the turn ended on error
+      safeSend(getMainWindow, "acp:turn_complete", {
+        _sessionId: sessionId,
+        stopReason: "error",
+        usage: null,
+      });
       return { error: surfacedError };
     }
   });
