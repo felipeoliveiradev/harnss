@@ -243,7 +243,7 @@ export const SearchPanel = memo(function SearchPanel({
                     {r.dir && <span className="min-w-0 truncate text-foreground/40">{r.dir}</span>}
                   </button>
                 </TooltipTrigger>
-                <TooltipContent side="left" sideOffset={4}>
+                <TooltipContent side="top" sideOffset={4}>
                   <p className="font-mono text-[10px]">{r.path}</p>
                 </TooltipContent>
               </Tooltip>
