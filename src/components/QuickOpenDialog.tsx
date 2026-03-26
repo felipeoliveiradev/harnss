@@ -313,6 +313,9 @@ export const QuickOpenDialog = memo(function QuickOpenDialog({
 
           {!isSearching && !error && mode === "folder" && folderMatches.map((item, index) => {
             const isSelected = index === selectedIndex;
+            const segments = item.path.split("/");
+            const folderName = segments.pop() ?? item.path;
+            const parentPath = segments.join("/");
             return (
               <Tooltip key={item.path}>
                 <TooltipTrigger asChild>
@@ -324,7 +327,8 @@ export const QuickOpenDialog = memo(function QuickOpenDialog({
                     }`}
                   >
                     <Folder className="h-3.5 w-3.5 shrink-0 text-amber-400/60" />
-                    <span className="min-w-0 flex-1 truncate text-sm text-foreground/90">{item.path}</span>
+                    <span className="shrink-0 text-sm font-medium text-foreground/90">{folderName}</span>
+                    {parentPath && <span className="min-w-0 truncate text-xs text-muted-foreground/50">{parentPath}</span>}
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="right" sideOffset={8}>
