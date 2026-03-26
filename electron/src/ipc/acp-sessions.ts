@@ -67,6 +67,13 @@ interface ACPSessionEntry {
   lastStderrError?: string;
   /** True after we've already attempted to auto-switch mode to agent */
   modeAutoSwitched?: boolean;
+  /**
+   * Called by sessionUpdate on every event while an acp:prompt is in-flight.
+   * The acp:prompt handler installs this to reset an inactivity timer — if
+   * Gemini streams events then silently stops without sending the turn-end
+   * JSON-RPC response, the timer fires and unblocks the renderer.
+   */
+  promptInactivityReset?: () => void;
 }
 
 export const acpSessions = new Map<string, ACPSessionEntry>();
@@ -350,6 +357,12 @@ async function createAcpConnection(
       const summary = summarizeUpdate(update);
       log("ACP_EVENT", `session=${internalId.slice(0, 8)} #${count} ${entry?.isReloading ? "[suppressed] " : ""}${summary}`);
 
+      // Notify an in-flight acp:prompt that the agent is still active.
+      // This resets the streaming inactivity timer — prevents false timeouts
+      // on long-running tool chains while preventing infinite hangs when
+      // Gemini stops sending events without completing the turn.
+      if (entry) entry.promptInactivityReset?.();
+
       // Full dump for tool calls and tool results
       const eventKind = update?.sessionUpdate as string;
       if (eventKind === "tool_call" || eventKind === "tool_call_update") {
@@ -364,6 +377,12 @@ async function createAcpConnection(
         // Auto-switch to Agent mode the first time a "mode" config option arrives
         // in "ask" state. The mode option is sent via event (not in newSession response),
         // so we must handle it here instead of in acp:start.
+        //
+        // IMPORTANT: we do NOT forward the original "ask" config_option_update to the
+        // renderer here. We wait for setSessionConfigOption() to complete and then
+        // forward the updated config (with "agent" as currentValue) in the .then().
+        // This prevents a race condition where the renderer's onEvent listener hasn't
+        // registered yet and the "ask" value gets stuck in the UI.
         if (entry && !entry.modeAutoSwitched) {
           const modeOpt = (configOptions as Array<{ id: string; category?: string; currentValue: string; options?: unknown[] }>)
             .find((o) => o.category === "mode");
@@ -383,19 +402,29 @@ async function createAcpConnection(
                 configId: modeOpt.id,
                 value: agentOpt.value,
               }).then((r) => {
-                if (r.configOptions) {
-                  configBuffer.set(internalId, r.configOptions);
-                  // Propagate updated config to renderer immediately
-                  safeSend(getMainWindow, "acp:event", {
-                    _sessionId: internalId,
-                    sessionId: entry.acpSessionId,
-                    update: { sessionUpdate: "config_option_update", configOptions: r.configOptions },
-                  });
-                }
-                log("ACP_MODE", `session=${internalId.slice(0, 8)} mode switch OK`);
+                const updatedOptions = r.configOptions ?? configOptions;
+                configBuffer.set(internalId, updatedOptions);
+                log("ACP_MODE", `session=${internalId.slice(0, 8)} mode switch OK, forwarding updated config`);
+                // Forward the UPDATED config (mode=agent) — not the original "ask" version.
+                // By the time this .then() fires, useACP's onEvent listener should be registered.
+                safeSend(getMainWindow, "acp:event", {
+                  _sessionId: internalId,
+                  sessionId: entry.acpSessionId,
+                  update: { sessionUpdate: "config_option_update", configOptions: updatedOptions },
+                });
               }).catch((err) => {
-                log("ACP_MODE", `session=${internalId.slice(0, 8)} mode switch failed (non-fatal): ${(err as Error).message}`);
+                log("ACP_MODE", `session=${internalId.slice(0, 8)} mode switch failed — forwarding original config: ${(err as Error).message}`);
+                // Switch failed: still forward the original config so the UI has something
+                safeSend(getMainWindow, "acp:event", {
+                  _sessionId: internalId,
+                  sessionId: entry.acpSessionId,
+                  update: { sessionUpdate: "config_option_update", configOptions },
+                });
               });
+              // Do NOT fall through to the generic safeSend below — return early.
+              // The renderer will receive the config once the switch resolves.
+              if (entry?.isReloading) return;
+              return;
             }
           }
         }
@@ -667,9 +696,14 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     }
     prompt.push({ type: "text", text });
 
-    // Hard timeout — last-resort guard if the agent stops responding
+    // Hard timeout — absolute last-resort guard (2 min)
     const PROMPT_TIMEOUT_MS = 2 * 60 * 1000;
+    // Inactivity timeout — fires when streaming events stop but the turn never completes.
+    // This is the main failure mode for Gemini CLI: it streams "Planning next moves" events
+    // then silently stops without sending the session/prompt JSON-RPC response.
+    const INACTIVITY_TIMEOUT_MS = 45_000; // 45 seconds without a new sessionUpdate event
     let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+    let inactivityHandle: ReturnType<typeof setTimeout> | null = null;
 
     try {
       session.lastStderrError = undefined;
@@ -686,6 +720,20 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
         return Promise.reject(new Error("Agent process exited before completing the turn"));
       });
 
+      // Inactivity promise: rejects if no sessionUpdate event arrives for INACTIVITY_TIMEOUT_MS.
+      // Every sessionUpdate from the agent resets this timer (via session.promptInactivityReset).
+      const inactivityPromise = new Promise<never>((_, reject) => {
+        const reset = () => {
+          if (inactivityHandle !== null) clearTimeout(inactivityHandle);
+          inactivityHandle = setTimeout(
+            () => reject(new Error(`Agent stopped responding (${INACTIVITY_TIMEOUT_MS / 1000}s inactivity)`)),
+            INACTIVITY_TIMEOUT_MS,
+          );
+        };
+        session.promptInactivityReset = reset;
+        reset(); // arm the initial timer
+      });
+
       const timeoutPromise = new Promise<never>((_, reject) => {
         timeoutHandle = setTimeout(
           () => reject(new Error("Agent response timed out (2 min)")),
@@ -693,8 +741,10 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
         );
       });
 
-      const result = await Promise.race([promptPromise, closedPromise, timeoutPromise]);
+      const result = await Promise.race([promptPromise, closedPromise, inactivityPromise, timeoutPromise]);
       if (timeoutHandle !== null) clearTimeout(timeoutHandle);
+      if (inactivityHandle !== null) clearTimeout(inactivityHandle);
+      session.promptInactivityReset = undefined;
 
       log("ACP_TURN_COMPLETE", `session=${sessionId.slice(0, 8)} stopReason=${result.stopReason} usage=${JSON.stringify(result.usage ?? null)}`);
 
@@ -707,6 +757,8 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
       return { ok: true };
     } catch (err) {
       if (timeoutHandle !== null) clearTimeout(timeoutHandle);
+      if (inactivityHandle !== null) clearTimeout(inactivityHandle);
+      session.promptInactivityReset = undefined;
       const msg = extractErrorMessage(err);
       // Prefer stderr context over generic "Internal error" — it usually contains
       // the real cause (auth failures, API errors, etc.)

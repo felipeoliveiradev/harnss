@@ -117,7 +117,26 @@ Delete a file.
 - Always read a file before editing it (so the SEARCH blocks match exactly).
 - All paths are relative to the working directory: ${cwd}
 - Never invent file contents — always read first.
-- Be autonomous: chain tool calls until the task is fully done.`;
+- Be autonomous: chain tool calls until the task is fully done.
+
+---
+
+## CRITICAL — Tool Tag Formatting
+
+**NEVER wrap tool tags in code blocks or backticks.** Output them DIRECTLY in your response text so the system can detect and execute them.
+
+CORRECT (tool will execute):
+<read_file path="src/index.ts"/>
+
+INCORRECT (tool will NOT execute):
+\`\`\`xml
+<read_file path="src/index.ts"/>
+\`\`\`
+
+INCORRECT (tool will NOT execute):
+\`<read_file path="src/index.ts"/>\`
+
+The XML tags are real commands, not code examples. Write them directly in your message.`;
 }
 
 // ── Tool execution ─────────────────────────────────────────────────────────────
@@ -135,12 +154,34 @@ interface ToolResult {
   attachment?: { path: string; content: string };
 }
 
+function stripCodeFencedToolTags(text: string): string {
+  // Match code blocks (```xml, ````, or plain ```) whose body contains a tool XML tag,
+  // and unwrap them so the tool tag appears inline for regex matching.
+  return text.replace(
+    /```(?:xml|html|plaintext)?\s*\n([\s\S]*?)\n```/g,
+    (_match, inner: string) => {
+      const trimmed = inner.trim();
+      // Only unwrap if the block contains one of our tool tags
+      if (
+        /^<(read_file|write_file|edit_file|delete_file)\b/.test(trimmed)
+      ) {
+        return trimmed;
+      }
+      // Not a tool tag — leave the code block intact
+      return _match;
+    },
+  );
+}
+
 function executeToolTags(
   fullText: string,
   cwd: string,
   getMainWindow: () => BrowserWindow | null,
   sessionId: string,
 ): { results: ToolResult[]; cleanedText: string } {
+  // Pre-process: unwrap tool tags that the model wrapped in code fences
+  fullText = stripCodeFencedToolTags(fullText);
+
   const results: ToolResult[] = [];
   const processed = new Set<string>();
   let ops = 0;
@@ -312,7 +353,7 @@ function executeToolTags(
     }
   }
 
-  // Strip tool tags from displayed text
+  // Strip tool tags from displayed text (both inline and any remaining code-fenced variants)
   let cleanedText = fullText
     .replace(/<read_file\s+path="[^"]+"\s*\/>/g, "")
     .replace(/<write_file\s+path="[^"]+">([\s\S]*?)<\/write_file>/g, "")
