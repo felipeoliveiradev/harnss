@@ -1,7 +1,8 @@
 import { startTransition, useCallback, useEffect, useRef } from "react";
 import { toast } from "sonner";
-import type { UIMessage, ChatSession, PersistedSession, ImageAttachment, McpServerConfig, Project, ClaudeEffort } from "../../types";
+import type { UIMessage, ChatSession, PersistedSession, ImageAttachment, McpServerConfig, Project, ClaudeEffort, CodeSnippet } from "../../types";
 import type { ACPConfigOption } from "../../types/acp";
+import type { AgentSlot } from "../../types/groups";
 import type { CollaborationMode } from "../../types/codex-protocol/CollaborationMode";
 import { imageAttachmentsToCodexInputs } from "../../lib/codex-adapter";
 import { suppressNextSessionCompletion } from "../../lib/notification-utils";
@@ -28,10 +29,8 @@ interface UseSessionLifecycleParams {
   activeEngine: string;
   findProject: (projectId: string) => Project | null;
   getProjectCwd: (project: Project) => string;
-  // From persistence
   saveCurrentSession: () => Promise<void>;
   seedBackgroundStore: () => void;
-  // From draft materialization
   eagerStartSession: (projectId: string, options?: StartOptions) => Promise<void>;
   eagerStartAcpSession: (projectId: string, options?: StartOptions, overrideServers?: McpServerConfig[]) => Promise<void>;
   prefetchCodexModels: (preferredModel?: string) => Promise<void>;
@@ -39,14 +38,11 @@ interface UseSessionLifecycleParams {
   abandonEagerSession: (reason?: string) => void;
   abandonDraftAcpSession: (reason?: string) => void;
   materializeDraft: (text: string, images?: ImageAttachment[], displayText?: string) => Promise<string>;
-  // From revival
-  reviveSession: (text: string, images?: ImageAttachment[], displayText?: string) => Promise<void>;
-  reviveAcpSession: (text: string, images?: ImageAttachment[], displayText?: string) => Promise<void>;
-  reviveCodexSession: (text: string, images?: ImageAttachment[]) => Promise<void>;
-  // From message queue
-  enqueueMessage: (text: string, images?: ImageAttachment[], displayText?: string) => void;
+  reviveSession: (text: string, images?: ImageAttachment[], displayText?: string, codeSnippets?: CodeSnippet[]) => Promise<void>;
+  reviveAcpSession: (text: string, images?: ImageAttachment[], displayText?: string, codeSnippets?: CodeSnippet[]) => Promise<void>;
+  reviveCodexSession: (text: string, images?: ImageAttachment[], displayText?: string, codeSnippets?: CodeSnippet[]) => Promise<void>;
+  enqueueMessage: (text: string, images?: ImageAttachment[], displayText?: string, codeSnippets?: CodeSnippet[]) => void;
   clearQueue: () => void;
-  // Codex effort helpers
   resetCodexEffortToModelDefault: (effort: string | undefined) => void;
 }
 
@@ -75,7 +71,7 @@ export function useSessionLifecycle({
   clearQueue,
   resetCodexEffortToModelDefault,
 }: UseSessionLifecycleParams) {
-  const { claude, acp, codex, ollama, engine } = engines;
+  const { claude, acp, codex, ollama, openclaw, group, engine } = engines;
   const {
     setSessions,
     setActiveSessionId,
@@ -100,6 +96,7 @@ export function useSessionLifecycle({
     totalCostRef,
     contextUsageRef,
     isProcessingRef,
+    sessionInfoRef,
     liveSessionIdsRef,
     backgroundStoreRef,
     preStartedSessionIdRef,
@@ -139,12 +136,21 @@ export function useSessionLifecycle({
   }, []);
 
   const applyLoadedSession = useCallback((id: string, data: PersistedSession) => {
+    if (data.engine === "group" && (data as unknown as Record<string, unknown>).groupId) {
+      window.claude.groups.resumeSession(id, data.projectId).catch((err) => {
+        console.error("[GROUP_RESUME_ERR]", id, err);
+      });
+    }
     startTransition(() => {
       setStartOptions((prev) => ({
         ...prev,
         planMode: !!data.planMode,
       }));
-      setInitialMessages(data.messages);
+      setInitialMessages(
+        data.engine === "group"
+          ? data.messages.filter((m) => m.content?.trim() !== "[PASS]")
+          : data.messages,
+      );
       setInitialMeta({
         isProcessing: false,
         isConnected: false,
@@ -182,14 +188,13 @@ export function useSessionLifecycle({
     setStartOptions,
   ]);
 
-  // Load sessions for ALL projects
-  useEffect(() => {
-    if (projects.length === 0) {
+  const reloadSessions = useCallback(() => {
+    if (refs.projectsRef.current.length === 0) {
       setSessions([]);
       return;
     }
     Promise.all(
-      projects.map((p) => window.claude.sessions.list(p.id)),
+      refs.projectsRef.current.map((p) => window.claude.sessions.list(p.id)),
     ).then((results) => {
       const all = results.flat().map((s) => ({
         id: s.id,
@@ -205,10 +210,19 @@ export function useSessionLifecycle({
         codexThreadId: s.codexThreadId,
       }));
       setSessions(all);
-    }).catch(() => { /* IPC failure — leave sessions empty */ });
+    }).catch(() => { });
+  }, []);
+
+  useEffect(() => {
+    reloadSessions();
   }, [projects]);
 
-  // Hydrate Claude model cache at app startup and refresh it in the background.
+  useEffect(() => {
+    const handler = () => reloadSessions();
+    window.addEventListener("harnss:session-saved", handler);
+    return () => window.removeEventListener("harnss:session-saved", handler);
+  }, [reloadSessions]);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -220,11 +234,8 @@ export function useSessionLifecycle({
       if (result.models?.length) {
         setCachedModels(result.models);
       }
-    }).catch(() => { /* cache read is optional */ });
+    }).catch(() => { });
 
-    // Defer revalidation (spawns a Claude SDK subprocess) to avoid competing with
-    // the startup IPC burst. The cached models from modelsCacheGet() above are
-    // sufficient for the initial render.
     const revalidateTimer = setTimeout(() => {
       window.claude.modelsCacheRevalidate(preferredCwd ? { cwd: preferredCwd } : undefined).then((result) => {
         if (cancelled) return;
@@ -235,7 +246,7 @@ export function useSessionLifecycle({
         if (result.error) {
           toast.error("Failed to load Claude models", { description: result.error });
         }
-      }).catch(() => { /* keep stale cache if revalidation fails */ });
+      }).catch(() => { });
     }, 3000);
 
     return () => {
@@ -244,7 +255,6 @@ export function useSessionLifecycle({
     };
   }, [getProjectCwd]);
 
-  // Ensure Codex model metadata is available even before first turn.
   useEffect(() => {
     if (activeEngine !== "codex") return;
     if (codex.codexModels.length > 0) return;
@@ -255,7 +265,6 @@ export function useSessionLifecycle({
   }, [
     activeEngine,
     activeSessionId,
-    // Must re-run when sessions list changes (startOptions.model could resolve to session model)
     projects,
     startOptionsRef.current.model,
     codex.codexModels.length,
@@ -290,7 +299,6 @@ export function useSessionLifecycle({
         } finally {
           inFlightPrefetchRef.current.delete(session.id);
         }
-        // Yield between sequential loads to let the main process event loop breathe
         await new Promise((r) => setTimeout(r, 50));
       }
     };
@@ -316,7 +324,6 @@ export function useSessionLifecycle({
     };
   }, [activeSessionId, cacheSessionPayload, projects]);
 
-  // createSession now requires a projectId
   const createSession = useCallback(
     async (projectId: string, options?: StartOptions) => {
       abandonEagerSession("new_draft");
@@ -327,7 +334,8 @@ export function useSessionLifecycle({
       seedBackgroundStore();
       void saveCurrentSession();
       const draftEngine = options?.engine ?? "claude";
-      setStartOptions(options ?? {});
+      const preservedGroupId = draftEngine === "group" ? (options?.groupId ?? startOptionsRef.current.groupId) : undefined;
+      setStartOptions({ ...(options ?? {}), ...(preservedGroupId ? { groupId: preservedGroupId } : {}) });
       setDraftProjectId(projectId);
       setInitialMessages([]);
       setInitialMeta(null);
@@ -336,18 +344,13 @@ export function useSessionLifecycle({
       setAcpConfigOptionsLoading(draftEngine === "acp");
       setInitialPermission(null);
       setInitialRawAcpPermission(null);
-      // Explicitly clear ACP state — when activeSessionId is already DRAFT_ID,
-      // useACP's reset effect won't fire, so stale messages (e.g. from a failed start) would persist
       acp.setMessages([]);
       acp.setIsProcessing(false);
       setActiveSessionId(DRAFT_ID);
-      // Remove any leftover pending DRAFT_ID session from a previous failed ACP start
       setSessions((prev) => prev.filter(s => s.id !== DRAFT_ID).map((s) => ({ ...s, isActive: false })));
 
       if (draftEngine === "claude") {
-        // Eager start for Claude engine (fire-and-forget)
         eagerStartSession(projectId, options);
-        // Set immediate "pending" statuses while SDK connects
         window.claude.mcp.list(projectId).then(servers => {
           if (activeSessionIdRef.current === DRAFT_ID && draftProjectIdRef.current === projectId) {
             setDraftMcpStatuses(servers.map(s => ({
@@ -355,12 +358,11 @@ export function useSessionLifecycle({
               status: "pending" as const,
             })));
           }
-        }).catch(() => { /* IPC failure */ });
+        }).catch(() => { });
       } else if (draftEngine === "acp") {
         eagerStartAcpSession(projectId, options);
         probeMcpServers(projectId);
       } else {
-        // Codex: no eager start; prefetch model list for the picker.
         setDraftMcpStatuses([]);
         prefetchCodexModels(options?.model);
       }
@@ -387,14 +389,11 @@ export function useSessionLifecycle({
         planMode: !!session.planMode,
       }));
 
-      // Switch to the correct space for this session's project — ensures that
-      // clicking a permission toast (or any cross-space navigation) lands in the right space
       const sessionProject = refs.projectsRef.current.find((p) => p.id === session.projectId);
       if (sessionProject) {
         onSpaceChangeRef.current?.(sessionProject.spaceId || "default");
       }
 
-      // Restore from the in-memory session cache if available.
       const bgState = backgroundStoreRef.current.consume(id);
       if (bgState) {
         startTransition(() => {
@@ -430,7 +429,6 @@ export function useSessionLifecycle({
         return;
       }
 
-      // Fall back to loading from disk (non-live session)
       const data = await window.claude.sessions.load(session.projectId, id);
       if (requestId !== switchRequestIdRef.current) return;
       if (data) {
@@ -461,7 +459,6 @@ export function useSessionLifecycle({
     ],
   );
 
-  // Keep switchSessionRef in sync for stable toast callbacks
   switchSessionRef.current = switchSession;
 
   const deleteSession = useCallback(
@@ -480,6 +477,9 @@ export function useSessionLifecycle({
         } else if (session.engine === "ollama") {
           suppressNextSessionCompletion(id);
           await window.claude.ollama.stop(id);
+        } else if (session.engine === "openclaw") {
+          suppressNextSessionCompletion(id);
+          await window.claude.openclaw.stop(id);
         } else {
           suppressNextSessionCompletion(id);
           await window.claude.stop(id, "session_delete");
@@ -489,7 +489,6 @@ export function useSessionLifecycle({
       backgroundStoreRef.current.delete(id);
       messageQueueRef.current.delete(id);
       bgAgentStore.clearSession(id);
-      // Dismiss any permission toast for this session
       toast.dismiss(`permission-${id}`);
       await window.claude.sessions.delete(session.projectId, id);
       if (activeSessionIdRef.current === id) {
@@ -515,7 +514,7 @@ export function useSessionLifecycle({
       if (data) {
         window.claude.sessions.save({ ...data, title });
       }
-    }).catch(() => { /* session may have been deleted */ });
+    }).catch(() => { });
   }, []);
 
   const deselectSession = useCallback(async () => {
@@ -529,7 +528,6 @@ export function useSessionLifecycle({
     setInitialMeta(null);
     setInitialPermission(null);
     setInitialRawAcpPermission(null);
-    // Filter out any leftover DRAFT_ID placeholder from a pending ACP start
     setSessions((prev) => prev.filter(s => s.id !== DRAFT_ID).map((s) => ({ ...s, isActive: false })));
   }, [saveCurrentSession, seedBackgroundStore, abandonEagerSession, abandonDraftAcpSession]);
 
@@ -538,7 +536,6 @@ export function useSessionLifecycle({
       const project = findProject(projectId);
       if (!project) return;
 
-      // If already imported, just switch to it
       const existing = sessionsRef.current.find((s) => s.id === ccSessionId);
       if (existing) {
         await switchSession(ccSessionId);
@@ -563,7 +560,6 @@ export function useSessionLifecycle({
         isActive: true,
       };
 
-      // Persist immediately so switchSession can load it later
       await window.claude.sessions.save({
         id: ccSessionId,
         projectId: project.id,
@@ -602,7 +598,6 @@ export function useSessionLifecycle({
     }
 
     if (draftEngine !== "claude" && preStartedSessionIdRef.current) {
-      // Switching away from Claude draft should immediately close the eager Claude session.
       abandonEagerSession("engine_switch");
     }
     if (prevEngine === "acp" && draftAcpSessionIdRef.current && (draftEngine !== "acp" || agentId !== prevAgentId)) {
@@ -646,7 +641,6 @@ export function useSessionLifecycle({
         applyCodexDefaultEffort(model);
       }
       const draftEngine = startOptionsRef.current.engine ?? "claude";
-      // Model change requires eager Claude session restart only when the draft engine is Claude.
       if (preStartedSessionIdRef.current && draftEngine === "claude") {
         const oldId = preStartedSessionIdRef.current;
         suppressNextSessionCompletion(oldId);
@@ -656,10 +650,8 @@ export function useSessionLifecycle({
         preStartedSessionIdRef.current = null;
         setPreStartedSessionId(null);
         setDraftMcpStatuses([]);
-        // Re-start eager session with new model
         if (draftProjectIdRef.current) {
           eagerStartSession(draftProjectIdRef.current, { ...startOptionsRef.current, model });
-          // Set pending statuses while new session connects
           window.claude.mcp.list(draftProjectIdRef.current).then(servers => {
             if (activeSessionIdRef.current === DRAFT_ID) {
               setDraftMcpStatuses(servers.map(s => ({
@@ -667,10 +659,9 @@ export function useSessionLifecycle({
                 status: "pending" as const,
               })));
             }
-          }).catch(() => { /* IPC failure */ });
+          }).catch(() => { });
         }
       } else if (preStartedSessionIdRef.current && draftEngine !== "claude") {
-        // If draft engine switched away from Claude, drop the stale eager session.
         abandonEagerSession("engine_switch");
       }
       return;
@@ -688,7 +679,7 @@ export function useSessionLifecycle({
         if (data) {
           window.claude.sessions.save({ ...data, model });
         }
-      }).catch(() => { /* session may have been deleted */ });
+      }).catch(() => { });
     };
 
     const isLiveClaudeSession = (session.engine ?? "claude") === "claude"
@@ -749,7 +740,6 @@ export function useSessionLifecycle({
     setStartOptions((prev) => ({ ...prev, permissionMode: normalizedPermission }));
 
     if (id === DRAFT_ID) {
-      // Apply to pre-started session if running (no restart needed)
       if (preStartedSessionIdRef.current) {
         window.claude.setPermissionMode(preStartedSessionIdRef.current, effectiveClaudeMode);
       }
@@ -770,12 +760,23 @@ export function useSessionLifecycle({
     const id = activeSessionIdRef.current;
     if (!id) return;
 
+    const livePermissionMode = !planMode
+      ? sessionInfoRef.current?.permissionMode?.trim()
+      : undefined;
+    const nextPermissionMode = livePermissionMode && livePermissionMode !== "plan"
+      ? livePermissionMode
+      : startOptionsRef.current.permissionMode;
     const nextOptions = {
       ...startOptionsRef.current,
       planMode,
+      ...(nextPermissionMode ? { permissionMode: nextPermissionMode } : {}),
     };
     const effectiveClaudeMode = getEffectiveClaudePermissionMode(nextOptions);
-    setStartOptions((prev) => ({ ...prev, planMode }));
+    setStartOptions((prev) => ({
+      ...prev,
+      planMode,
+      ...(nextPermissionMode ? { permissionMode: nextPermissionMode } : {}),
+    }));
     if (planMode) capture("plan_mode_entered");
     setSessions((prev) => prev.map((s) => (
       s.id === id ? { ...s, planMode } : s
@@ -795,14 +796,12 @@ export function useSessionLifecycle({
         if (data) {
           window.claude.sessions.save({ ...data, planMode });
         }
-      }).catch(() => { /* session may have been deleted */ });
+      }).catch(() => { });
     }
     if (sessionEngine === "claude") {
       engine.setPermissionMode(effectiveClaudeMode);
     }
-    // Codex: no mid-session mode RPC — collaborationMode is sent per-turn on turn/start.
-    // startOptions is already updated above, so the next send() will pick it up.
-  }, [engine.setPermissionMode]);
+  }, [engine.setPermissionMode, sessionInfoRef, startOptionsRef]);
 
   const setActiveThinking = useCallback((thinkingEnabled: boolean) => {
     const id = activeSessionIdRef.current;
@@ -923,7 +922,7 @@ export function useSessionLifecycle({
         if (data) {
           window.claude.sessions.save({ ...data, model });
         }
-      }).catch(() => { /* session may have been deleted */ });
+      }).catch(() => { });
     };
 
     if (liveSessionIdsRef.current.has(id)) {
@@ -937,7 +936,6 @@ export function useSessionLifecycle({
     persistModel();
   }, [setCachedModels, setDraftMcpStatuses, setSessions, setStartOptions]);
 
-  // Update MCP servers for the active ACP session, preserving conversation context.
   const restartAcpSession = useCallback(async (servers: McpServerConfig[], cwdOverride?: string): Promise<{ ok?: boolean; error?: string }> => {
     const currentId = activeSessionIdRef.current;
     if (!currentId || currentId === DRAFT_ID) return { ok: true };
@@ -947,9 +945,7 @@ export function useSessionLifecycle({
     const agentId = acpAgentIdRef.current;
     if (!session || !project || !agentId) return { error: "ACP session cannot be restarted right now." };
 
-    // Probe servers so we get accurate statuses (including needs-auth) before any reload
     const probeResults = await window.claude.mcp.probe(servers);
-    // Guard: session may have changed during async probe
     if (activeSessionIdRef.current !== currentId) return { ok: true };
     setAcpMcpStatuses(probeResults.map(r => ({
       name: r.name,
@@ -957,15 +953,12 @@ export function useSessionLifecycle({
       ...(r.error ? { error: r.error } : {}),
     })));
 
-    // Try session/load first — updates MCP on the existing connection, no context loss
     const nextCwd = cwdOverride ?? getProjectCwd(project);
     const reloadResult = await window.claude.acp.reloadSession(currentId, servers, nextCwd);
     if (reloadResult.supportsLoad && reloadResult.ok) {
-      // session/load succeeded — session ID and process unchanged, context preserved
       return { ok: true };
     }
 
-    // Fall back to stop + restart (agent doesn't support session/load, or reload failed)
     const currentMessages = messagesRef.current;
     const currentCost = totalCostRef.current;
 
@@ -980,8 +973,6 @@ export function useSessionLifecycle({
       mcpServers: servers,
     });
     if (result.error || !result.sessionId) {
-      // Show error in the UI after restart failure — use setMessages directly
-      // because session ID hasn't changed (no reset effect to consume initialMessages)
       const errorMsg = result.error || "Failed to restart agent session";
       acp.setMessages(prev => [...prev, {
         id: `system-error-${Date.now()}`,
@@ -999,7 +990,6 @@ export function useSessionLifecycle({
     setSessions(prev => prev.map(s =>
       s.id === currentId ? { ...s, id: newId } : s
     ));
-    // Restore UI message history and config options through initialMessages → useACP reset effect
     setInitialMessages(currentMessages);
     setInitialMeta({
       isProcessing: false,
@@ -1031,6 +1021,10 @@ export function useSessionLifecycle({
       return restartAcpSession(mcpServers, nextCwd);
     }
 
+    if (session.engine === "openclaw") {
+      return { error: "OpenClaw session restart in another worktree is not yet supported." };
+    }
+
     if (session.engine === "codex") {
       let codexThreadId: string | undefined = session.codexThreadId;
       if (!codexThreadId) {
@@ -1038,7 +1032,6 @@ export function useSessionLifecycle({
           const persisted = await window.claude.sessions.load(session.projectId, currentId);
           codexThreadId = persisted?.codexThreadId;
         } catch {
-          // Ignore persistence lookup failure; we'll surface the missing thread below.
         }
       }
 
@@ -1093,7 +1086,6 @@ export function useSessionLifecycle({
     return { ok: true };
   }, [claude.refreshMcpStatus, findProject, getProjectCwd, restartAcpSession]);
 
-  // Full revert: rewind files + fork a new SDK session truncated to the checkpoint.
   const fullRevertSession = useCallback(async (checkpointId: string) => {
     const currentId = activeSessionIdRef.current;
     if (!currentId || currentId === DRAFT_ID) return;
@@ -1103,11 +1095,9 @@ export function useSessionLifecycle({
     const project = findProject(session.projectId);
     if (!project) return;
 
-    // 1. Flush any pending streaming content
     claude.flushNow();
     claude.resetStreaming();
 
-    // 2. Compute truncated messages BEFORE the async IPC calls
     const currentMessages = messagesRef.current;
     const checkpointIdx = currentMessages.findIndex(
       (m) => m.role === "user" && m.checkpointId === checkpointId,
@@ -1116,7 +1106,6 @@ export function useSessionLifecycle({
       ? currentMessages.slice(0, checkpointIdx)
       : currentMessages;
 
-    // 3. Revert files while old session is still alive (needs queryHandle.rewindFiles)
     const revertResult = await window.claude.revertFiles(currentId, checkpointId);
     if (revertResult.error) {
       claude.setMessages(prev => [...prev, {
@@ -1129,13 +1118,11 @@ export function useSessionLifecycle({
       return;
     }
 
-    // 4. Stop old session — cleanup runs async in the event loop's finally block
     suppressNextSessionCompletion(currentId);
     await window.claude.stop(currentId, "revert_restart");
     liveSessionIdsRef.current.delete(currentId);
     backgroundStoreRef.current.delete(currentId);
 
-    // 5. Start a forked session — SDK creates a new session branched at the checkpoint.
     const mcpServers = await window.claude.mcp.list(session.projectId);
     const startResult = await window.claude.start({
       cwd: getProjectCwd(project),
@@ -1163,12 +1150,10 @@ export function useSessionLifecycle({
     const newId = startResult.sessionId;
     liveSessionIdsRef.current.add(newId);
 
-    // 6. Map sidebar entry to new forked ID
     setSessions(prev => prev.map(s =>
       s.id === currentId ? { ...s, id: newId } : s,
     ));
 
-    // 7. Provide truncated messages + system message via initialMessages → reset effect
     const systemMsg: UIMessage = {
       id: `system-revert-${Date.now()}`,
       role: "system" as const,
@@ -1179,15 +1164,13 @@ export function useSessionLifecycle({
     setInitialMeta({
       isProcessing: false,
       isConnected: true,
-      sessionInfo: null, // repopulated by system/init event from forked session
+      sessionInfo: null,
       totalCost: totalCostRef.current,
       contextUsage: contextUsageRef.current,
     });
 
-    // 8. Switch to new session ID → triggers useClaude's reset effect
     setActiveSessionId(newId);
 
-    // 9. Persist: save under new forked ID, delete old session file
     const oldData = await window.claude.sessions.load(project.id, currentId);
     if (oldData) {
       await window.claude.sessions.save({
@@ -1199,9 +1182,8 @@ export function useSessionLifecycle({
     }
   }, [findProject, claude.flushNow, claude.resetStreaming, claude.setMessages]);
 
-  // The main send function
   const send = useCallback(
-    async (text: string, images?: ImageAttachment[], displayText?: string) => {
+    async (text: string, images?: ImageAttachment[], displayText?: string, codeSnippets?: CodeSnippet[]) => {
       const activeId = activeSessionIdRef.current;
       const sendEngine = activeSessionIdRef.current === DRAFT_ID
         ? (startOptionsRef.current.engine ?? "claude")
@@ -1219,7 +1201,6 @@ export function useSessionLifecycle({
         const draftEngine = startOptionsRef.current.engine ?? "claude";
 
         if (draftEngine === "acp") {
-          // Show user message + spinner immediately, before the potentially slow materializeDraft
           const userMsg: UIMessage = {
             id: `user-${Date.now()}`,
             role: "user" as const,
@@ -1227,20 +1208,19 @@ export function useSessionLifecycle({
             timestamp: Date.now(),
             ...(images?.length ? { images } : {}),
             ...(displayText ? { displayContent: displayText } : {}),
+            ...(codeSnippets?.length ? { codeSnippets } : {}),
           };
           acp.setMessages((prev) => [...prev, userMsg]);
           acp.setIsProcessing(true);
 
           const sessionId = await materializeDraft(text, images, displayText);
           if (!sessionId) {
-            // materializeDraft failed or was cancelled — stop processing (error already shown)
             acp.setIsProcessing(false);
             return;
           }
 
           trackMessageSent(sessionId);
 
-          // Session is live — send the prompt (user message already in UI)
           await new Promise((resolve) => setTimeout(resolve, 50));
           const promptResult = await window.claude.acp.prompt(sessionId, text, images);
           if (promptResult?.error) {
@@ -1273,6 +1253,7 @@ export function useSessionLifecycle({
               timestamp: Date.now(),
               ...(images?.length ? { images } : {}),
               ...(displayText ? { displayContent: displayText } : {}),
+              ...(codeSnippets?.length ? { codeSnippets } : {}),
             },
           ]);
           codex.setIsProcessing(true);
@@ -1356,7 +1337,64 @@ export function useSessionLifecycle({
           return;
         }
 
-        // Claude SDK path
+        if (draftEngine === "openclaw") {
+          trackMessageSent();
+          const sessionId = await materializeDraft(text, images, displayText);
+          if (!sessionId) return;
+          await new Promise((resolve) => setTimeout(resolve, 50));
+
+          openclaw.setMessages((prev) => [
+            ...prev,
+            {
+              id: `user-${Date.now()}`,
+              role: "user",
+              content: text,
+              timestamp: Date.now(),
+              ...(images?.length ? { images } : {}),
+              ...(displayText ? { displayContent: displayText } : {}),
+              ...(codeSnippets?.length ? { codeSnippets } : {}),
+            },
+          ]);
+          openclaw.setIsProcessing(true);
+
+          const sendResult = await window.claude.openclaw.send(sessionId, text);
+          if (sendResult?.error) {
+            liveSessionIdsRef.current.delete(sessionId);
+            openclaw.setMessages((prev) => [
+              ...prev,
+              {
+                id: `system-send-error-${Date.now()}`,
+                role: "system",
+                content: `Unable to send message: ${sendResult.error}`,
+                timestamp: Date.now(),
+                isError: true,
+              },
+            ]);
+            openclaw.setIsProcessing(false);
+          }
+          return;
+        }
+
+        if (draftEngine === "group") {
+          trackMessageSent();
+          group.setIsProcessing(true);
+          group.setMessages((prev) => [
+            ...prev,
+            {
+              id: `user-${Date.now()}`,
+              role: "user",
+              content: text,
+              timestamp: Date.now(),
+            },
+          ]);
+          const sessionId = await materializeDraft(text, images, displayText);
+          if (!sessionId) {
+            group.setIsProcessing(false);
+            return;
+          }
+          return;
+        }
+
         trackMessageSent();
         const sessionId = await materializeDraft(text);
         if (!sessionId) return;
@@ -1390,6 +1428,7 @@ export function useSessionLifecycle({
               timestamp: Date.now(),
               ...(images?.length ? { images } : {}),
               ...(displayText ? { displayContent: displayText } : {}),
+              ...(codeSnippets?.length ? { codeSnippets } : {}),
             },
           ]);
         }
@@ -1398,23 +1437,20 @@ export function useSessionLifecycle({
 
       if (!activeId) return;
 
-      // Queue check: if engine is processing, enqueue instead of sending directly
       const activeSessionEngine = sessionsRef.current.find(s => s.id === activeId)?.engine ?? "claude";
       if (isProcessingRef.current && liveSessionIdsRef.current.has(activeId)) {
         trackMessageSent(activeSessionEngine === "acp" ? activeId : undefined);
-        enqueueMessage(text, images, displayText);
+        enqueueMessage(text, images, displayText, codeSnippets);
         return;
       }
 
       if (activeSessionEngine === "acp") {
-        // ACP sessions: send through ACP hook if live
         if (liveSessionIdsRef.current.has(activeId)) {
           trackMessageSent(activeId);
-          await acp.send(text, images, displayText);
+          await acp.send(text, images, displayText, codeSnippets);
           return;
         }
-        // ACP session dead (app restarted) — attempt revival via session/load
-        await reviveAcpSession(text, images, displayText);
+        await reviveAcpSession(text, images, displayText, codeSnippets);
         return;
       }
 
@@ -1440,7 +1476,6 @@ export function useSessionLifecycle({
       }
 
       if (activeSessionEngine === "codex") {
-        // Codex sessions: send through Codex hook if live
         if (liveSessionIdsRef.current.has(activeId)) {
           const activeSession = sessionsRef.current.find((s) => s.id === activeId);
           let codexCollabMode: CollaborationMode | undefined;
@@ -1459,23 +1494,34 @@ export function useSessionLifecycle({
             ]);
             return;
           }
-          await codex.send(text, images, displayText, codexCollabMode);
+          await codex.send(text, images, displayText, codexCollabMode, codeSnippets);
           return;
         }
-        // Codex session dead — attempt revival via thread/resume
-        await reviveCodexSession(text, images);
+        await reviveCodexSession(text, images, undefined, codeSnippets);
         return;
       }
 
-      // Claude SDK path
+      if (activeSessionEngine === "openclaw") {
+        liveSessionIdsRef.current.add(activeId);
+        trackMessageSent();
+        await openclaw.send(text, images, displayText, codeSnippets);
+        return;
+      }
+
+      if (activeSessionEngine === "group") {
+        trackMessageSent();
+        await group.send(text);
+        return;
+      }
+
       if (liveSessionIdsRef.current.has(activeId)) {
-        const sent = await claude.send(text, images, displayText);
+        const sent = await claude.send(text, images, displayText, codeSnippets);
         if (sent) return;
         liveSessionIdsRef.current.delete(activeId);
       }
 
       if (activeSessionIdRef.current !== DRAFT_ID) {
-        await reviveSession(text, images, displayText);
+        await reviveSession(text, images, displayText, codeSnippets);
         return;
       }
     },
@@ -1491,6 +1537,12 @@ export function useSessionLifecycle({
       ollama.send,
       ollama.setMessages,
       ollama.setIsProcessing,
+      openclaw.send,
+      openclaw.setMessages,
+      openclaw.setIsProcessing,
+      group.send,
+      group.setMessages,
+      group.setIsProcessing,
       materializeDraft,
       reviveSession,
       reviveAcpSession,
@@ -1498,6 +1550,13 @@ export function useSessionLifecycle({
       enqueueMessage,
     ],
   );
+
+  const setDraftGroupId = useCallback((groupId: string | null, slots?: AgentSlot[]) => {
+    setStartOptions((prev) => ({ ...prev, groupId: groupId ?? undefined }));
+    if (slots) {
+      group.registerSlotMeta(slots);
+    }
+  }, [group.registerSlotMeta]);
 
   return {
     createSession,
@@ -1507,6 +1566,7 @@ export function useSessionLifecycle({
     deselectSession,
     importCCSession,
     setDraftAgent,
+    setDraftGroupId,
     setActiveModel,
     setActivePermissionMode,
     setActivePlanMode,

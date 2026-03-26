@@ -6,7 +6,7 @@ import { app } from "electron";
 
 const execFileAsync = promisify(execFile);
 
-export type EngineId = "claude" | "acp" | "codex" | "openclaw" | "ollama";
+export type EngineId = "claude" | "acp" | "codex" | "openclaw" | "ollama" | "group";
 
 export interface InstalledAgent {
   id: string;

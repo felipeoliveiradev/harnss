@@ -7,6 +7,7 @@ export const ENGINE_ICONS: Record<string, string> = {
   codex: "https://cdn.agentclientprotocol.com/registry/v1/latest/codex-acp.svg",
   openclaw: "Lobster",
   ollama: "cpu",
+  group: "Users",
 };
 
 /** Resolve the icon source for an agent — engine CDN icons override agent-level icons */
@@ -21,7 +22,7 @@ export function getSessionEngineIcon(
   agents?: InstalledAgent[],
 ): string | undefined {
   const effectiveEngine = engine ?? "claude";
-  if (effectiveEngine !== "acp" && effectiveEngine !== "openclaw" && effectiveEngine !== "ollama") {
+  if (effectiveEngine !== "acp" && effectiveEngine !== "openclaw" && effectiveEngine !== "ollama" && effectiveEngine !== "group") {
     return ENGINE_ICONS[effectiveEngine];
   }
   if (effectiveEngine === "openclaw") {
@@ -29,6 +30,9 @@ export function getSessionEngineIcon(
   }
   if (effectiveEngine === "ollama") {
     return ENGINE_ICONS.ollama;
+  }
+  if (effectiveEngine === "group") {
+    return ENGINE_ICONS.group;
   }
   if (agentId && agents) {
     const agent = agents.find((a) => a.id === agentId);

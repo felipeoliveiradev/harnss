@@ -445,7 +445,7 @@ function AskUserQuestionPrompt({ request, onRespond }: PermissionPromptProps) {
                         {opt.label}
                       </span>
                       {opt.description && (
-                        <span className="block truncate text-[10px] leading-none text-muted-foreground/50">
+                        <span className="block text-[10px] leading-snug text-muted-foreground/50">
                           {opt.description}
                         </span>
                       )}

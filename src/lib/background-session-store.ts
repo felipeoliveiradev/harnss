@@ -8,9 +8,11 @@ import type {
 } from "../types";
 import type { ACPSessionEvent, ACPPermissionEvent } from "../types/acp";
 import type { CodexSessionEvent } from "../types/codex";
+import type { OpenClawSessionEvent } from "../types/openclaw";
 import { handleClaudeEvent } from "./background-claude-handler";
 import { handleACPEvent as acpHandler, handleACPTurnComplete as acpTurnComplete } from "./background-acp-handler";
 import { handleCodexEvent as codexHandler } from "./background-codex-handler";
+import { handleOpenClawEvent as openclawHandler } from "./background-openclaw-handler";
 
 export interface BackgroundSessionState {
   messages: UIMessage[];
@@ -117,6 +119,16 @@ export class BackgroundSessionStore {
     }
   }
 
+  handleOpenClawEvent(event: OpenClawSessionEvent): void {
+    const sessionId = event._sessionId;
+    if (!sessionId) return;
+    const state = this.getOrCreate(sessionId);
+    openclawHandler(state, event);
+    if (!state.isProcessing) {
+      this.onProcessingChange?.(sessionId, false);
+    }
+  }
+
   /** Store a pending permission for a background session and fire the callback. */
   setPermission(sessionId: string, permission: PermissionRequest, rawAcpPermission?: ACPPermissionEvent | null): void {
     const state = this.getOrCreate(sessionId);
@@ -132,16 +144,15 @@ export class BackgroundSessionStore {
   get(sessionId: string): BackgroundSessionState | undefined {
     const state = this.sessions.get(sessionId);
     if (!state) return undefined;
-    // Clone messages to prevent external mutation of internal state
     return {
-      messages: state.messages.map(m => ({ ...m })),
+      messages: state.messages,
       isProcessing: state.isProcessing,
       isConnected: state.isConnected,
       isCompacting: state.isCompacting,
-      sessionInfo: state.sessionInfo ? { ...state.sessionInfo } : null,
+      sessionInfo: state.sessionInfo,
       totalCost: state.totalCost,
-      contextUsage: state.contextUsage ? { ...state.contextUsage } : null,
-      pendingPermission: state.pendingPermission ? { ...state.pendingPermission } : null,
+      contextUsage: state.contextUsage,
+      pendingPermission: state.pendingPermission,
       rawAcpPermission: state.rawAcpPermission,
       slashCommands: state.slashCommands ?? [],
     };

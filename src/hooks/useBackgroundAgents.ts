@@ -39,7 +39,17 @@ export function useBackgroundAgents({ sessionId }: UseBackgroundAgentsOptions) {
     [],
   );
 
-  return { agents, dismissAgent };
+  const stopAgent = useCallback(
+    async (agentId: string, taskId: string) => {
+      const sid = sessionIdRef.current;
+      if (!sid) return;
+      bgAgentStore.setAgentStopping(sid, agentId);
+      await window.claude.stopTask(sid, taskId);
+    },
+    [],
+  );
+
+  return { agents, dismissAgent, stopAgent };
 }
 
 // Module-level stable subscribe function — avoids re-subscription on every render.

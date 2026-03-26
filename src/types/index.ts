@@ -19,6 +19,7 @@ export type {
   TaskStartedEvent,
   TaskProgressEvent,
   TaskNotificationEvent,
+  ToolProgressEvent,
   ClaudeEvent,
   AuthStatusEvent,
 } from "./protocol";
@@ -47,6 +48,7 @@ export type {
   BackgroundAgentUsage,
   ImageAttachment,
   GrabbedElement,
+  CodeSnippet,
   ContextUsage,
   AppSettings,
   InstalledAgent,
