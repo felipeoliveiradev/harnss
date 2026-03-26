@@ -73,7 +73,7 @@ interface ToolDef {
   icon: typeof Terminal;
 }
 
-const PANEL_TOOLS_MAP: Record<string, ToolDef> = {
+export const PANEL_TOOLS_MAP: Record<string, ToolDef> = {
   terminal: { id: "terminal", label: "Terminal", icon: Terminal },
   browser: { id: "browser", label: "Browser", icon: Globe },
   git: { id: "git", label: "Source Control", icon: GitBranch },
