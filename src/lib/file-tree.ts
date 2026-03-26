@@ -125,14 +125,15 @@ export function filterTree(nodes: FileTreeNode[], query: string): FileTreeNode[]
 
   function filterNode(node: FileTreeNode): FileTreeNode | null {
     if (node.type === "file") {
-      return node.name.toLowerCase().includes(q) ? node : null;
+      // Match on full path (e.g. "src/components/Button.tsx") or just filename
+      return node.path.toLowerCase().includes(q) ? node : null;
     }
 
     // Directory: recurse into children, keep if any child matches
     const filteredChildren = (node.children ?? []).map(filterNode).filter(Boolean) as FileTreeNode[];
     if (filteredChildren.length === 0) {
-      // Also keep if the directory name itself matches
-      return node.name.toLowerCase().includes(q) ? { ...node, children: [] } : null;
+      // Also keep if the directory path itself matches
+      return node.path.toLowerCase().includes(q) ? { ...node, children: [] } : null;
     }
 
     return { ...node, children: filteredChildren };

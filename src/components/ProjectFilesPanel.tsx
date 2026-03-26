@@ -1,4 +1,5 @@
 import { memo, startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   ClipboardPaste,
   Copy,
@@ -24,7 +25,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
@@ -168,6 +168,7 @@ export const ProjectFilesPanel = memo(function ProjectFilesPanel({
   const [filePanelData, setFilePanelData] = useState<FilePanelData | null>(null);
 
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(() => new Set());
+  const [searchCollapsedDirs, setSearchCollapsedDirs] = useState<Set<string>>(() => new Set());
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
@@ -193,6 +194,7 @@ export const ProjectFilesPanel = memo(function ProjectFilesPanel({
   const [dragOverDir, setDragOverDir] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const containerRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
 
   const filteredTree = useMemo(() => {
     if (!tree) return null;
@@ -202,13 +204,25 @@ export const ProjectFilesPanel = memo(function ProjectFilesPanel({
 
   const effectiveExpanded = useMemo(() => {
     if (!filteredTree || !debouncedQuery.trim()) return expandedDirs;
-    return collectDirPaths(filteredTree);
-  }, [filteredTree, debouncedQuery, expandedDirs]);
+    // During search: expand all matched dirs except those the user manually collapsed
+    const allDirs = collectDirPaths(filteredTree);
+    if (searchCollapsedDirs.size === 0) return allDirs;
+    const result = new Set(allDirs);
+    for (const d of searchCollapsedDirs) result.delete(d);
+    return result;
+  }, [filteredTree, debouncedQuery, expandedDirs, searchCollapsedDirs]);
 
   const flatItems = useMemo(() => {
     if (!filteredTree) return [];
     return flattenTree(filteredTree, effectiveExpanded);
   }, [filteredTree, effectiveExpanded]);
+
+  const virtualizer = useVirtualizer({
+    count: flatItems.length,
+    getScrollElement: () => listRef.current,
+    estimateSize: () => 28,
+    overscan: 15,
+  });
 
   const totalFiles = useMemo(() => (tree ? countFiles(tree) : 0), [tree]);
   const nodeByPath = useMemo(() => (tree ? collectNodeMap(tree) : new Map<string, FileTreeNode>()), [tree]);
@@ -291,18 +305,29 @@ export const ProjectFilesPanel = memo(function ProjectFilesPanel({
 
   const handleSearchChange = useCallback((value: string) => {
     setSearchQuery(value);
+    setSearchCollapsedDirs(new Set()); // reset manual collapse state on new search
     clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => setDebouncedQuery(value), 200);
   }, []);
 
   const toggleDir = useCallback((path: string) => {
-    setExpandedDirs((prev) => {
-      const next = new Set(prev);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
-      return next;
-    });
-  }, []);
+    if (debouncedQuery.trim()) {
+      // During search: toggle in the manually-collapsed set
+      setSearchCollapsedDirs((prev) => {
+        const next = new Set(prev);
+        if (next.has(path)) next.delete(path);
+        else next.add(path);
+        return next;
+      });
+    } else {
+      setExpandedDirs((prev) => {
+        const next = new Set(prev);
+        if (next.has(path)) next.delete(path);
+        else next.add(path);
+        return next;
+      });
+    }
+  }, [debouncedQuery]);
 
   const runPathAction = useCallback(async () => {
     if (!cwd) return;
@@ -626,7 +651,7 @@ export const ProjectFilesPanel = memo(function ProjectFilesPanel({
         </div>
       )}
 
-      <ScrollArea className="min-h-0 flex-1">
+      <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto">
         {loading && !tree && (
           <div className="flex items-center justify-center p-8">
             <RefreshCw className="h-4 w-4 animate-spin text-muted-foreground/50" />
@@ -647,57 +672,71 @@ export const ProjectFilesPanel = memo(function ProjectFilesPanel({
           </div>
         )}
 
-        <div className="py-1">
-          {flatItems.map((item) => {
-            const access = item.node.type === "file"
-              ? accessByRelativePath.get(item.node.path)
-              : undefined;
-            return (
-            <FileTreeRow
-              key={item.node.path}
-              node={item.node}
-              cwd={cwd}
-              depth={item.depth}
-              isExpanded={item.isExpanded}
-              isSelected={selectedPath === item.node.path}
-              accessType={access?.accessType}
-              accessRangeText={access ? formatRanges(access) : null}
-              onClick={handleRowClick}
-              onOpenFile={handleRowOpenFile}
-              onToggleDir={toggleDir}
-              onCreateFile={() => openCreateDialog("new-file", item.node.type === "directory" ? item.node.path : getParentDir(item.node.path))}
-              onCreateFolder={() => openCreateDialog("new-folder", item.node.type === "directory" ? item.node.path : getParentDir(item.node.path))}
-              onOpenInWorkspace={openFileInWorkspace}
-              onRename={openRenameDialog}
-              onDuplicate={handleDuplicate}
-              onCopy={(path) => setClipboardItem({ path, mode: "copy" })}
-              onCut={(path) => setClipboardItem({ path, mode: "cut" })}
-              onPaste={(targetDir) => void handlePasteInto(targetDir)}
-              onDelete={(path) => setDeleteTarget(path)}
-              draggingPath={draggingPath}
-              dragOverDir={dragOverDir}
-              onDragStart={(path) => setDraggingPath(path)}
-              onDragEnd={() => {
-                setDraggingPath(null);
-                setDragOverDir(null);
-              }}
-              onDragOverDir={(path) => setDragOverDir(path)}
-              onDropToDir={(targetDir) => {
-                if (!draggingPath || draggingPath === targetDir) return;
-                if (isPathInside(targetDir, draggingPath)) {
-                  toast.error("Cannot move a folder into itself");
-                  return;
-                }
-                const targetPath = joinRelativePath(targetDir, getBaseName(draggingPath));
-                void renamePath(draggingPath, targetPath).then((ok) => {
-                  if (ok) toast.success("Path moved");
-                });
-              }}
-            />
-            );
-          })}
-        </div>
-      </ScrollArea>
+        {flatItems.length > 0 && (
+          <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+            {virtualizer.getVirtualItems().map((virtualItem) => {
+              const item = flatItems[virtualItem.index];
+              const access = item.node.type === "file"
+                ? accessByRelativePath.get(item.node.path)
+                : undefined;
+              return (
+                <div
+                  key={item.node.path}
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    width: "100%",
+                    height: `${virtualItem.size}px`,
+                    transform: `translateY(${virtualItem.start}px)`,
+                  }}
+                >
+                  <FileTreeRow
+                    node={item.node}
+                    cwd={cwd}
+                    depth={item.depth}
+                    isExpanded={item.isExpanded}
+                    isSelected={selectedPath === item.node.path}
+                    accessType={access?.accessType}
+                    accessRangeText={access ? formatRanges(access) : null}
+                    onClick={handleRowClick}
+                    onOpenFile={handleRowOpenFile}
+                    onToggleDir={toggleDir}
+                    onCreateFile={() => openCreateDialog("new-file", item.node.type === "directory" ? item.node.path : getParentDir(item.node.path))}
+                    onCreateFolder={() => openCreateDialog("new-folder", item.node.type === "directory" ? item.node.path : getParentDir(item.node.path))}
+                    onOpenInWorkspace={openFileInWorkspace}
+                    onRename={openRenameDialog}
+                    onDuplicate={handleDuplicate}
+                    onCopy={(path) => setClipboardItem({ path, mode: "copy" })}
+                    onCut={(path) => setClipboardItem({ path, mode: "cut" })}
+                    onPaste={(targetDir) => void handlePasteInto(targetDir)}
+                    onDelete={(path) => setDeleteTarget(path)}
+                    draggingPath={draggingPath}
+                    dragOverDir={dragOverDir}
+                    onDragStart={(path) => setDraggingPath(path)}
+                    onDragEnd={() => {
+                      setDraggingPath(null);
+                      setDragOverDir(null);
+                    }}
+                    onDragOverDir={(path) => setDragOverDir(path)}
+                    onDropToDir={(targetDir) => {
+                      if (!draggingPath || draggingPath === targetDir) return;
+                      if (isPathInside(targetDir, draggingPath)) {
+                        toast.error("Cannot move a folder into itself");
+                        return;
+                      }
+                      const targetPath = joinRelativePath(targetDir, getBaseName(draggingPath));
+                      void renamePath(draggingPath, targetPath).then((ok) => {
+                        if (ok) toast.success("Path moved");
+                      });
+                    }}
+                  />
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
       <Dialog open={pathDialog.open} onOpenChange={(open) => setPathDialog((prev) => ({ ...prev, open }))}>
         <DialogContent className="sm:max-w-md">
