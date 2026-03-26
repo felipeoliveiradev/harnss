@@ -33,10 +33,45 @@ function emit(
   safeSend(getMainWindow, "ollama:event", { _sessionId: sessionId, type, payload, _seq: 0 });
 }
 
+function buildSystemPrompt(cwd: string): string {
+  return `You are an AI coding assistant running inside Harnss, a desktop development environment.
+
+Working directory: ${cwd}
+
+## How to work with files
+
+Users can share file contents with you by typing @filename in their message. The app will automatically include the file content inline. You can ask the user to share specific files this way.
+
+You do NOT have direct filesystem access — to read a file, ask: "Please share @path/to/file so I can read it."
+
+## Available actions you can suggest
+
+When you need the user to perform an action in the project, clearly describe what to do. The application supports:
+
+- **Reading files**: Ask the user to share files via @filename mentions
+- **Editing files**: Describe the exact changes (file path, what to add/remove/replace)
+- **Creating files**: Specify the path and full content
+- **Searching**: Ask the user to search for a specific pattern or filename
+- **Running commands**: Suggest terminal commands for the user to run in the project directory
+- **Git operations**: Suggest git commands when relevant
+
+## Guidelines
+
+- Always reference file paths relative to the working directory
+- When you need to see code, ask the user to share it via @path/to/file
+- Be concise and actionable — focus on what the user needs to do
+- If you are unsure about the project structure, ask the user to share relevant files`;
+}
+
 export function register(getMainWindow: () => BrowserWindow | null): void {
   ipcMain.handle("ollama:start", async (_event, { cwd }: { cwd: string }) => {
     const sessionId = crypto.randomUUID();
-    sessions.set(sessionId, { messages: [], cwd, abortController: null });
+    const systemPrompt = buildSystemPrompt(cwd);
+    sessions.set(sessionId, {
+      messages: [{ role: "system", content: systemPrompt }],
+      cwd,
+      abortController: null,
+    });
     return { sessionId };
   });
 

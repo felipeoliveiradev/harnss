@@ -252,9 +252,18 @@ async function createAcpConnection(
   const acp = await getACP();
   const internalId = crypto.randomUUID();
 
+  // For npx-based agents: prefer the local npm cache to avoid re-downloading on
+  // every startup. Falls back to network only if not cached.
+  const isNpx = agentDef.binary === "npx";
+  const spawnEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    ...agentDef.env,
+    ...(isNpx ? { NPM_CONFIG_PREFER_OFFLINE: "true" } : {}),
+  };
+
   const proc = spawn(agentDef.binary, agentDef.args ?? [], {
     stdio: ["pipe", "pipe", "pipe"],
-    env: { ...process.env, ...agentDef.env },
+    env: spawnEnv,
     shell: process.platform === "win32",
   });
 
@@ -271,15 +280,27 @@ async function createAcpConnection(
     commandsBuffer.delete(internalId);
   });
 
+  // Accumulate multi-line stderr messages before parsing
+  let stderrBuffer = "";
   proc.stderr?.on("data", (chunk: Buffer) => {
-    const raw = chunk.toString().trim();
-    log("ACP_STDERR", `session=${internalId.slice(0, 8)} ${raw}`);
-    const cleaned = raw.replace(/\x1b\[[0-9;]*m/g, "");
-    const turnError = cleaned.match(/Unhandled error during turn:\s*(.+)$/)?.[1]?.trim();
-    const parsed = turnError || (/\bERROR\b/i.test(cleaned) ? cleaned : undefined);
-    if (!parsed) return;
-    const entry = acpSessions.get(internalId);
-    if (entry) entry.lastStderrError = parsed;
+    stderrBuffer += chunk.toString();
+    // Process complete lines
+    const lines = stderrBuffer.split("\n");
+    stderrBuffer = lines.pop() ?? "";
+    for (const line of lines) {
+      const raw = line.trim();
+      if (!raw) continue;
+      log("ACP_STDERR", `session=${internalId.slice(0, 8)} ${raw}`);
+      const cleaned = raw.replace(/\x1b\[[0-9;]*m/g, "");
+
+      // Detect actionable errors: explicit error patterns and auth failures
+      const turnError = cleaned.match(/Unhandled error during turn:\s*(.+)$/)?.[1]?.trim();
+      const authError = /auth|login|credential|api[\s_-]?key|unauthorized|403|permission denied/i.test(cleaned) ? cleaned : undefined;
+      const parsed = turnError ?? authError ?? (/\bERROR\b/i.test(cleaned) ? cleaned : undefined);
+      if (!parsed) continue;
+      const entry = acpSessions.get(internalId);
+      if (entry) entry.lastStderrError = parsed;
+    }
   });
 
   proc.on("exit", (code) => {
@@ -608,7 +629,9 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
       return { ok: true };
     } catch (err) {
       const msg = extractErrorMessage(err);
-      const surfacedError = msg === "Internal error" && session.lastStderrError ? session.lastStderrError : msg;
+      // Prefer stderr context over generic "Internal error" — it usually contains
+      // the real cause (auth failures, API errors, etc.)
+      const surfacedError = session.lastStderrError ?? (msg === "Internal error" ? "Agent error — check that you are authenticated (run: gemini auth)" : msg);
       reportError("ACP_PROMPT_ERR", err, { engine: "acp", sessionId, surfacedError });
       return { error: surfacedError };
     }
