@@ -667,8 +667,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     }
     prompt.push({ type: "text", text });
 
-    // 2-minute hard timeout — prevents infinite hang when the agent stops responding
-    // mid-turn (common with Gemini CLI on multi-turn sessions)
+    // Hard timeout — last-resort guard if the agent stops responding
     const PROMPT_TIMEOUT_MS = 2 * 60 * 1000;
     let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
 
@@ -679,14 +678,22 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
         sessionId: session.acpSessionId,
         prompt,
       });
+
+      // Race against the stream closing (process exit) so we fail immediately
+      // instead of waiting for the timeout. The ACP SDK doesn't reject pending
+      // requests when the underlying stream closes, so we do it ourselves here.
+      const closedPromise: Promise<never> = session.connection.closed.then(() => {
+        return Promise.reject(new Error("Agent process exited before completing the turn"));
+      });
+
       const timeoutPromise = new Promise<never>((_, reject) => {
         timeoutHandle = setTimeout(
-          () => reject(new Error("Agent response timed out (5 min)")),
+          () => reject(new Error("Agent response timed out (2 min)")),
           PROMPT_TIMEOUT_MS,
         );
       });
 
-      const result = await Promise.race([promptPromise, timeoutPromise]);
+      const result = await Promise.race([promptPromise, closedPromise, timeoutPromise]);
       if (timeoutHandle !== null) clearTimeout(timeoutHandle);
 
       log("ACP_TURN_COMPLETE", `session=${sessionId.slice(0, 8)} stopReason=${result.stopReason} usage=${JSON.stringify(result.usage ?? null)}`);
