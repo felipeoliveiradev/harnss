@@ -1,7 +1,7 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, Search, File, AlignLeft, Folder, Regex } from "lucide-react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { parseQuickOpenQuery, rankQuickOpenMatches } from "@/lib/quick-open";
+import { parseQuickOpenQuery } from "@/lib/quick-open";
 import { reportError } from "@/lib/analytics";
 
 type QuickMode = "file" | "text" | "folder" | "regex";
@@ -34,47 +34,29 @@ export const QuickOpenDialog = memo(function QuickOpenDialog({
   onOpenFile,
 }: QuickOpenDialogProps) {
   const [query, setQuery] = useState("");
-  const [files, setFiles] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [fileMatches, setFileMatches] = useState<Array<{ path: string; name: string; dir: string; score: number }>>([]);
+  const [folderMatches, setFolderMatches] = useState<Array<{ path: string }>>([]);
   const [textResults, setTextResults] = useState<Array<{ file: string; line: number; preview: string }>>([]);
-  const [textSearching, setTextSearching] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const queryRef = useRef(query);
+  queryRef.current = query;
 
-  const { mode, cleanQuery } = useMemo(() => detectMode(query), [query]);
+  const detectResult = detectMode(query);
+  const mode = detectResult.mode;
+  const cleanQuery = detectResult.cleanQuery;
 
   useEffect(() => {
     if (!open) return;
     setQuery("");
     setSelectedIndex(0);
+    setFileMatches([]);
+    setFolderMatches([]);
     setTextResults([]);
   }, [open]);
-
-  useEffect(() => {
-    if (!open || !cwd) return;
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-
-    window.claude.files.listAll(cwd)
-      .then((result) => {
-        if (cancelled) return;
-        setFiles(result.files);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        const message = reportError("QUICK_OPEN_LIST_FILES_ERR", err, { cwd });
-        setError(message);
-        setFiles([]);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-
-    return () => { cancelled = true; };
-  }, [cwd, open]);
 
   useEffect(() => {
     if (!open) return;
@@ -83,47 +65,50 @@ export const QuickOpenDialog = memo(function QuickOpenDialog({
   }, [open]);
 
   useEffect(() => {
-    if (!cwd || !window.claude?.search) return;
-    if ((mode === "text" || mode === "regex") && cleanQuery.length >= 2) {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-      debounceRef.current = setTimeout(async () => {
-        setTextSearching(true);
-        try {
+    if (!cwd || !open || !window.claude?.search) return;
+    if (!cleanQuery || cleanQuery.length < 1) {
+      setFileMatches([]);
+      setFolderMatches([]);
+      setTextResults([]);
+      return;
+    }
+
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        if (mode === "file") {
+          const result = await window.claude.search.files({ cwd, query: cleanQuery, maxResults: 100 });
+          if (queryRef.current === query) setFileMatches(result.results || []);
+        } else if (mode === "folder") {
+          const result = await window.claude.search.files({ cwd, query: cleanQuery, maxResults: 200 });
+          if (queryRef.current === query) {
+            const seen = new Set<string>();
+            const dirs: Array<{ path: string }> = [];
+            for (const r of (result.results || [])) {
+              if (r.dir && !seen.has(r.dir)) { seen.add(r.dir); dirs.push({ path: r.dir }); }
+            }
+            setFolderMatches(dirs);
+          }
+        } else {
           const result = await window.claude.search.content({
             cwd,
             pattern: cleanQuery,
             isRegex: mode === "regex",
             maxResults: 50,
           });
-          setTextResults(result.results || []);
-        } finally {
-          setTextSearching(false);
+          if (queryRef.current === query) setTextResults(result.results || []);
         }
-      }, 300);
-    } else {
-      setTextResults([]);
-    }
-    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-  }, [cwd, mode, cleanQuery]);
-
-  const fileMatches = useMemo(
-    () => rankQuickOpenMatches(files, cleanQuery, 300),
-    [files, cleanQuery],
-  );
-
-  const folderMatches = useMemo(() => {
-    if (mode !== "folder" || !cleanQuery) return [];
-    const seen = new Set<string>();
-    const dirs: Array<{ path: string; score: number }> = [];
-    for (const m of fileMatches) {
-      const dir = m.path.split("/").slice(0, -1).join("/");
-      if (dir && !seen.has(dir)) {
-        seen.add(dir);
-        dirs.push({ path: dir, score: m.score });
+      } catch (err) {
+        if (queryRef.current === query) setError(reportError("QUICK_OPEN_SEARCH", err));
+      } finally {
+        setLoading(false);
       }
-    }
-    return dirs;
-  }, [mode, cleanQuery, fileMatches]);
+    }, mode === "file" ? 150 : 300);
+
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [cwd, open, query, mode, cleanQuery]);
 
   const totalItems = mode === "file" ? fileMatches.length
     : mode === "folder" ? folderMatches.length
