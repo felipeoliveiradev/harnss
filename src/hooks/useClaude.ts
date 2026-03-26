@@ -499,7 +499,7 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
                 return prev.filter((m) => m.id !== target.id);
               }
               const next = prev.slice();
-              next[idx] = merged;
+              next[prev.indexOf(target)] = merged;
               return next;
             }
 

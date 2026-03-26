@@ -696,6 +696,15 @@ export function useDraftMaterialization({
             totalCost: 0,
             contextUsage: null,
           });
+        } else if (draftEngine === "ollama") {
+          setInitialMessages([]);
+          setInitialMeta({
+            isProcessing: false,
+            isConnected: true,
+            sessionInfo: null,
+            totalCost: 0,
+            contextUsage: null,
+          });
         } else {
           setInitialMessages([]);
           setInitialMeta(null);

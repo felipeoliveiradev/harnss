@@ -75,8 +75,9 @@ function toBuildTree(root: Map<string, TreeBuildNode>): FileTreeNode[] {
 /**
  * Build a nested file tree from flat file/dir lists (as returned by `files:list` IPC).
  * Directories are sorted before files at each level, alphabetical within each group.
+ * Accepts optional `emptyDirs` to show directories that contain no files (VS Code behavior).
  */
-export function buildFileTree(files: string[]): FileTreeNode[] {
+export function buildFileTree(files: string[], emptyDirs: string[] = []): FileTreeNode[] {
   const root = new Map<string, TreeBuildNode>();
 
   for (const filePath of files) {
@@ -99,6 +100,12 @@ export function buildFileTree(files: string[]): FileTreeNode[] {
       isFile: true,
       extension: ext,
     });
+  }
+
+  // Create nodes for empty directories (no files inside them)
+  for (const dirPath of emptyDirs) {
+    const segments = dirPath.split("/");
+    getOrCreateDir(root, segments);
   }
 
   return toBuildTree(root);

@@ -159,11 +159,13 @@ export function useSessionPersistence({
     const unsubAcpExit = window.claude.acp.onExit((data: { _sessionId: string; code: number | null }) => handleSessionExit(data._sessionId));
     const unsubCodexExit = window.claude.codex.onExit((data) => handleSessionExit(data._sessionId));
     const unsubOpenclawExit = window.claude.openclaw.onExit((data) => handleSessionExit(data._sessionId));
+    const unsubOllamaExit = window.claude.ollama.onExit((data) => handleSessionExit(data._sessionId));
     return () => {
       unsubExit();
       unsubAcpExit();
       unsubCodexExit();
       unsubOpenclawExit();
+      unsubOllamaExit();
     };
   }, []);
 

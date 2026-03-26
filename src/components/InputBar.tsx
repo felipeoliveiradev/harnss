@@ -442,6 +442,10 @@ function EngineControls({
   onACPConfigChange,
   // Ollama
   ollamaModelName,
+  ollamaModels,
+  ollamaModelsLoading,
+  onOllamaModelChange,
+  onFetchOllamaModels,
   openclawAgentId,
   onOpenclawAgentChange,
   groups,
@@ -477,6 +481,10 @@ function EngineControls({
   acpConfigOptionsLoading?: boolean;
   onACPConfigChange?: (configId: string, value: string) => void;
   ollamaModelName?: string;
+  ollamaModels?: string[];
+  ollamaModelsLoading?: boolean;
+  onOllamaModelChange?: (model: string) => void;
+  onFetchOllamaModels?: () => void;
   openclawAgentId?: string;
   onOpenclawAgentChange?: (agentId: string) => void;
   groups?: Array<{ id: string; name: string; slots: Array<{ label: string; engine: string; model: string; color: string; role: string }> }>;
@@ -485,9 +493,37 @@ function EngineControls({
 }) {
   if (isOllamaAgent) {
     return (
-      <span className="flex shrink-0 items-center rounded-lg px-2 py-1 text-xs text-muted-foreground">
-        {ollamaModelName || "Ollama"}
-      </span>
+      <DropdownMenu onOpenChange={(open) => { if (open && onFetchOllamaModels) onFetchOllamaModels(); }}>
+        <DropdownMenuTrigger asChild>
+          <button
+            className="flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+            disabled={isProcessing}
+          >
+            {ollamaModelName || "Ollama"}
+            <ChevronDown className="h-3 w-3" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start">
+          {ollamaModelsLoading ? (
+            <div className="flex items-center gap-2 px-2 py-1.5 text-xs text-muted-foreground">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Loading models…
+            </div>
+          ) : ollamaModels && ollamaModels.length > 0 ? (
+            ollamaModels.map((m) => (
+              <DropdownMenuItem
+                key={m}
+                onClick={() => onOllamaModelChange?.(m)}
+                className={m === ollamaModelName ? "bg-accent" : ""}
+              >
+                {m}
+              </DropdownMenuItem>
+            ))
+          ) : (
+            <div className="px-2 py-1.5 text-xs text-muted-foreground">No models found</div>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
     );
   }
 
@@ -1069,6 +1105,8 @@ export const InputBar = memo(function InputBar({
   const [ollamaAvailable, setOllamaAvailable] = useState<boolean | null>(null);
   const [ollamaError, setOllamaError] = useState<string | null>(null);
   const [ollamaModelName, setOllamaModelName] = useState<string>("Ollama");
+  const [ollamaModels, setOllamaModels] = useState<string[]>([]);
+  const [ollamaModelsLoading, setOllamaModelsLoading] = useState(false);
   const [gatewayAvailable, setGatewayAvailable] = useState<boolean | null>(null);
   const [gatewayError, setGatewayError] = useState<string | null>(null);
 
@@ -1157,6 +1195,24 @@ export const InputBar = memo(function InputBar({
       setOllamaModelName(s.ollamaDefaultModel || "Ollama");
     }).catch(() => {});
   }, [isOllamaAgent]);
+
+  const handleOllamaModelChange = useCallback(async (model: string) => {
+    setOllamaModelName(model);
+    const s = await window.claude.settings.get();
+    await window.claude.settings.set({ ...s, ollamaDefaultModel: model });
+  }, []);
+
+  const handleFetchOllamaModels = useCallback(async () => {
+    setOllamaModelsLoading(true);
+    try {
+      const result = await window.claude.ollama.listModels();
+      if (result.ok) setOllamaModels(result.models);
+    } catch {
+      // ignore
+    } finally {
+      setOllamaModelsLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (!projectPath) {
@@ -1373,8 +1429,8 @@ export const InputBar = memo(function InputBar({
 
     const { text: fullText, mentionPaths, deepMentionPaths } = extractEditableContent(el);
     const trimmed = fullText.trim();
-    const hasGrabs = grabbedElements && grabbedElements.length > 0;
-    const hasSnippets = codeSnippets && codeSnippets.length > 0;
+    const hasGrabs = !!(grabbedElements && grabbedElements.length > 0);
+    const hasSnippets = !!(codeSnippets && codeSnippets.length > 0);
     if (isAwaitingAcpOptions || (!trimmed && attachments.length === 0 && !hasGrabs && !hasSnippets) || isSending) return;
 
     if (isClearCommandText(trimmed)) {
@@ -1420,6 +1476,7 @@ export const InputBar = memo(function InputBar({
     hasGrabs: boolean,
   ) => {
     const trimmed = fullText.trim();
+    const hasSnippets = !!(codeSnippets?.length);
     const currentImages = attachments.length > 0 ? [...attachments] : undefined;
     const contextParts: string[] = [];
     const grabbedElementDisplayTokens: string[] = [];
@@ -2147,6 +2204,10 @@ export const InputBar = memo(function InputBar({
               acpConfigOptionsLoading={acpConfigOptionsLoading}
               onACPConfigChange={onACPConfigChange}
               ollamaModelName={ollamaModelName}
+              ollamaModels={ollamaModels}
+              ollamaModelsLoading={ollamaModelsLoading}
+              onOllamaModelChange={handleOllamaModelChange}
+              onFetchOllamaModels={handleFetchOllamaModels}
               openclawAgentId={openclawAgentId}
               onOpenclawAgentChange={onOpenclawAgentChange}
               groups={groups}
