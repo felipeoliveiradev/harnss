@@ -581,29 +581,24 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     if (!session) return { error: "Session not found" };
 
     // ── RAG augmentation ──────────────────────────────────────────────────────
-    // Two strategies depending on intent:
-    //
-    //  EXPLAIN/SEARCH/GENERAL → single augmented user message with file
-    //    content between clear separators. Small models follow single-turn
-    //    context reliably and ignore injected multi-turn history.
-    //
-    //  EDIT/FIX/REFACTOR → simulated tool turns (model "already read" files)
-    //    so it produces structured edit_file output.
-    //
-    // If no context found → plain message, model explores via tools.
+    // Skip local RAG for explicit web/shell requests — let the model use its
+    // built-in <web_search> or <run_shell> tools directly.
+    const isWebQuery = /\b(pesquise na web|busque na web|search the web|busca online|web search|na internet|on the internet|look up online)\b/i.test(text);
+    const isShellQuery = /\b(rode|execute|run|roda)\s+(o\s+comando|command|cmd|o\s+script)\b/i.test(text);
+
     try {
-      const rag = await augmentWithRag(text, session.cwd);
+      const rag = (!isWebQuery && !isShellQuery) ? await augmentWithRag(text, session.cwd) : null;
 
       // Push original user message then inject simulated tool-result turns.
       // The model sees: user asked → it "read" the files → has real content.
       // This works for any language — the model decides whether to explain
       // or apply changes based on what the user actually asked.
       session.messages.push({ role: "user", content: text });
-      for (const turn of rag.injectedTurns ?? []) {
+      for (const turn of rag?.injectedTurns ?? []) {
         session.messages.push(turn);
       }
 
-      if (rag.contextFileCount > 0) {
+      if (rag && rag.contextFileCount > 0) {
         emit(getMainWindow, sessionId, "rag:context", {
           fileCount: rag.contextFileCount,
           intent: rag.intent.type,

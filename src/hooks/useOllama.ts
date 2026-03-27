@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from "react";
-import type { ImageAttachment, SessionMeta } from "@/types";
+import type { ImageAttachment, SessionMeta, UIMessage } from "@/types";
 import { useEngineBase } from "./useEngineBase";
 
 interface UseOllamaOptions {
@@ -32,9 +32,12 @@ export function useOllama({ sessionId, initialMessages, initialMeta }: UseOllama
   } = base;
 
   const streamingMsgId = useRef<string | null>(null);
+  // toolUseId → UIMessage id (for pairing tool:start with tool:result)
+  const toolMsgIds = useRef<Map<string, string>>(new Map());
 
   useEffect(() => {
     streamingMsgId.current = null;
+    toolMsgIds.current = new Map();
   }, [sessionId]);
 
   useEffect(() => {
@@ -79,6 +82,58 @@ export function useOllama({ sessionId, initialMessages, initialMeta }: UseOllama
             streamingMsgId.current = null;
           }
           setIsProcessing(false);
+          break;
+        }
+
+        case "tool:start": {
+          // Model started executing a tool — show a loading card
+          const { toolUseId, toolName, input } = event.payload as {
+            toolUseId: string;
+            toolName: string;
+            input: Record<string, unknown>;
+          };
+          const msgId = nextId("ollama-tool");
+          toolMsgIds.current.set(toolUseId, msgId);
+          const toolMsg: UIMessage = {
+            id: msgId,
+            role: "tool_call",
+            content: "",
+            toolName,
+            toolInput: input,
+            isStreaming: true,
+            timestamp: Date.now(),
+          };
+          setMessages(prev => [...prev, toolMsg]);
+          break;
+        }
+
+        case "tool:result": {
+          // Tool finished — update the card with the result
+          const { toolUseId, toolName, result } = event.payload as {
+            toolUseId: string;
+            toolName: string;
+            result: Record<string, unknown>;
+          };
+          const msgId = toolMsgIds.current.get(toolUseId);
+          if (msgId) {
+            setMessages(prev => prev.map(m =>
+              m.id === msgId
+                ? { ...m, isStreaming: false, toolResult: result, toolError: !!(result.error) }
+                : m
+            ));
+            toolMsgIds.current.delete(toolUseId);
+          } else {
+            // No matching start event — create a standalone result card
+            setMessages(prev => [...prev, {
+              id: nextId("ollama-tool-result"),
+              role: "tool_call",
+              content: "",
+              toolName: toolName as string,
+              toolResult: result,
+              isStreaming: false,
+              timestamp: Date.now(),
+            }]);
+          }
           break;
         }
 
