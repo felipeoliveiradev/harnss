@@ -281,10 +281,11 @@ export function useAppOrchestrator() {
   const handleNewChat = useCallback(
     async (projectId: string) => {
       setShowSettings(false);
+
       const agent = selectedAgent;
       const wantedEngine = agent?.engine ?? "claude";
       const wantedModel = settings.getModelForEngine(wantedEngine) || undefined;
-      await manager.createSession(projectId, {
+      const options = {
         model: wantedModel,
         permissionMode: settings.permissionMode,
         planMode: settings.planMode,
@@ -293,9 +294,17 @@ export function useAppOrchestrator() {
         engine: wantedEngine,
         agentId: agent?.id ?? "claude-code",
         cachedConfigOptions: agent?.cachedConfigOptions,
-      });
+      };
+
+      // In split mode with focus on pane 1: create draft in pane 1
+      if (settings.splitMode && activePaneIndexRef.current === 1) {
+        pane1.createDraft(projectId, options);
+        return;
+      }
+
+      await manager.createSession(projectId, options);
     },
-    [manager.createSession, settings.getModelForEngine, settings.permissionMode, settings.planMode, settings.thinking, getClaudeEffortForModel, selectedAgent],
+    [manager.createSession, settings.getModelForEngine, settings.permissionMode, settings.planMode, settings.thinking, settings.splitMode, getClaudeEffortForModel, selectedAgent, pane1.createDraft],
   );
 
   const handleSend = useCallback(

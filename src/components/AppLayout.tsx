@@ -194,6 +194,67 @@ export function AppLayout() {
   }, [agents, agentGroups.groups.length]);
 
 
+  // ── Pane 1 isolation: derive agent/model from pane 1's session or draft, not global state ──
+  const pane1SelectedAgent = useMemo(() => {
+    if (pane1.isDraft) {
+      const draftEngine = pane1.draftOptions.engine ?? "claude";
+      if (draftEngine === "claude") return null;
+      const draftAgentId = pane1.draftOptions.agentId;
+      return agents.find((a) => a.id === draftAgentId && a.engine === draftEngine)
+        ?? agents.find((a) => a.engine === draftEngine)
+        ?? null;
+    }
+    const session = pane1.session;
+    if (!session) return selectedAgent; // no session → follow global (empty state)
+    const sessionEngine = session.engine ?? "claude";
+    if (sessionEngine === "claude") return null; // Claude = default agent
+    return agents.find((a) => a.id === session.agentId && a.engine === sessionEngine)
+      ?? agents.find((a) => a.engine === sessionEngine)
+      ?? null;
+  }, [pane1.isDraft, pane1.draftOptions, pane1.session, agents, selectedAgent]);
+
+  const pane1Model = pane1.session?.model ?? "";
+  const pane1LockedEngine = pane1.session?.engine ?? null;
+  const pane1LockedAgentId = pane1.session?.agentId ?? null;
+
+  // ── Pane 1 draft handlers: update draft options when user changes model/agent/etc ──
+  const handlePane1ModelChange = useCallback((nextModel: string) => {
+    if (!pane1.isDraft || !pane1.draftProjectId) return;
+    pane1.createDraft(pane1.draftProjectId, {
+      ...pane1.draftOptions,
+      model: nextModel,
+    });
+  }, [pane1.isDraft, pane1.draftProjectId, pane1.draftOptions, pane1.createDraft]);
+
+  const handlePane1PlanModeChange = useCallback((enabled: boolean) => {
+    pane1.setDraftOptions((prev) => ({ ...prev, planMode: enabled }));
+  }, [pane1.setDraftOptions]);
+
+  const handlePane1PermissionModeChange = useCallback((nextMode: string) => {
+    pane1.setDraftOptions((prev) => ({ ...prev, permissionMode: nextMode }));
+  }, [pane1.setDraftOptions]);
+
+  const handlePane1AcpConfigChange = useCallback((configId: string, value: string) => {
+    // When user picks a model from ACP config options (e.g. Gemini model), update draft model
+    if (configId === "model") {
+      pane1.setDraftOptions((prev) => ({ ...prev, model: value }));
+    }
+  }, [pane1.setDraftOptions]);
+
+  const handlePane1AgentChange = useCallback((agent: InstalledAgent | null) => {
+    if (!pane1.isDraft || !pane1.draftProjectId) return;
+    const wantedEngine = agent?.engine ?? "claude";
+    const wantedModel = settings.getModelForEngine(wantedEngine) || undefined;
+    // Re-create draft with new engine/agent so the engine hook switches
+    pane1.createDraft(pane1.draftProjectId, {
+      ...pane1.draftOptions,
+      engine: wantedEngine,
+      agentId: agent?.id ?? "claude-code",
+      model: wantedModel,
+      cachedConfigOptions: agent?.cachedConfigOptions,
+    });
+  }, [pane1.isDraft, pane1.draftProjectId, pane1.draftOptions, pane1.createDraft, settings.getModelForEngine]);
+
   const [grabbedElements, setGrabbedElements] = useState<GrabbedElement[]>([]);
 
   const handleElementGrab = useCallback((element: GrabbedElement) => {
@@ -942,7 +1003,7 @@ Link: ${issue.url}`;
                   islandLayout={isIsland}
                   sidebarOpen={true}
                   isProcessing={pane1.isProcessing}
-                  model={settings.model}
+                  model={pane1Model}
                   sessionId={pane1.sessionId ?? undefined}
                   totalCost={0}
                   title={pane1.session?.title}
@@ -962,8 +1023,9 @@ Link: ${issue.url}`;
                 />
               </div>
 
-              {pane1.sessionId ? (
+              {(pane1.sessionId || pane1.isDraft) ? (
                 <>
+                {!pane1.isDraft && pane1.sessionId && (
                 <ChatView
                   messages={pane1.messages}
                   isProcessing={pane1.isProcessing}
@@ -982,9 +1044,20 @@ Link: ${issue.url}`;
                   onUnqueueQueuedMessage={NOOP}
                   sendNextId={undefined}
                   agents={agents}
-                  selectedAgent={selectedAgent}
-                  onAgentChange={handleAgentChange}
+                  selectedAgent={pane1SelectedAgent}
+                  onAgentChange={undefined}
                 />
+                )}
+                {pane1.isDraft && (
+                  <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6" style={{ paddingTop: "3rem" }}>
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-foreground/[0.03]">
+                      <MessageSquare className="h-5 w-5 text-foreground/15" />
+                    </div>
+                    <p className="text-center text-[11px] leading-relaxed text-muted-foreground/45">
+                      Nova conversa
+                    </p>
+                  </div>
+                )}
                 <div
                   className={`pointer-events-none absolute inset-x-0 bottom-0 z-[5] transition-opacity duration-200 ${isIsland ? "h-24" : "h-28"}`}
                   style={{ opacity: chatFadeStrength, background: bottomFadeBackground }}
@@ -997,25 +1070,25 @@ Link: ${issue.url}`;
                     onStop={pane1.stop}
                     isProcessing={pane1.isProcessing}
                     queuedCount={0}
-                    model={settings.model}
+                    model={pane1.isDraft ? (pane1.draftOptions.model ?? settings.model) : pane1Model}
                     claudeEffort={settings.claudeEffort}
-                    planMode={settings.planMode}
-                    permissionMode={settings.permissionMode}
-                    onModelChange={handleModelChange}
-                    onClaudeModelEffortChange={handleClaudeModelEffortChange}
-                    onPlanModeChange={handlePlanModeChange}
-                    onPermissionModeChange={handlePermissionModeChange}
+                    planMode={pane1.isDraft ? (pane1.draftOptions.planMode ?? settings.planMode) : settings.planMode}
+                    permissionMode={pane1.isDraft ? (pane1.draftOptions.permissionMode ?? settings.permissionMode) : settings.permissionMode}
+                    onModelChange={pane1.isDraft ? handlePane1ModelChange : NOOP}
+                    onClaudeModelEffortChange={NOOP}
+                    onPlanModeChange={pane1.isDraft ? handlePane1PlanModeChange : NOOP}
+                    onPermissionModeChange={pane1.isDraft ? handlePane1PermissionModeChange : NOOP}
                     projectPath={settings.pane1GitCwd ?? activeProjectPath}
                     contextUsage={undefined}
                     isCompacting={false}
                     onCompact={undefined}
                     agents={agentsWithGroups}
-                    selectedAgent={selectedAgent}
-                    onAgentChange={handleAgentChange}
+                    selectedAgent={pane1SelectedAgent}
+                    onAgentChange={pane1.isDraft ? handlePane1AgentChange : NOOP}
                     slashCommands={EMPTY_SLASH}
-                    acpConfigOptions={EMPTY_ACP_OPTIONS}
+                    acpConfigOptions={pane1.isDraft ? (pane1SelectedAgent?.cachedConfigOptions ?? EMPTY_ACP_OPTIONS) : EMPTY_ACP_OPTIONS}
                     acpConfigOptionsLoading={false}
-                    onACPConfigChange={NOOP}
+                    onACPConfigChange={pane1.isDraft ? handlePane1AcpConfigChange : NOOP}
                     acpPermissionBehavior={settings.acpPermissionBehavior}
                     onAcpPermissionBehaviorChange={settings.setAcpPermissionBehavior}
                     supportedModels={manager.supportedModels}
@@ -1027,8 +1100,8 @@ Link: ${issue.url}`;
                     onRemoveGrabbedElement={NOOP}
                     codeSnippets={codeSnippets1}
                     onRemoveCodeSnippet={handleRemoveCodeSnippet1}
-                    lockedEngine={lockedEngine}
-                    lockedAgentId={lockedAgentId}
+                    lockedEngine={pane1.isDraft ? null : pane1LockedEngine}
+                    lockedAgentId={pane1.isDraft ? null : pane1LockedAgentId}
                     isIslandLayout={isIsland}
                     openclawAgentId={openclawAgentId}
                     onOpenclawAgentChange={handleOpenclawAgentChange}
