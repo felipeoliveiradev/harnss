@@ -14,6 +14,7 @@ interface OllamaMessage {
 interface OllamaSession {
   messages: OllamaMessage[];
   cwd: string;
+  model: string;
   abortController: AbortController | null;
 }
 
@@ -332,7 +333,7 @@ async function streamOllamaResponse(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      model: getDefaultModel(),
+      model: session.model,
       messages: session.messages,
       stream: true,
       temperature: 0.1,
@@ -385,14 +386,16 @@ async function streamOllamaResponse(
 // ── IPC registration ───────────────────────────────────────────────────────────
 
 export function register(getMainWindow: () => BrowserWindow | null): void {
-  ipcMain.handle("ollama:start", async (_event, { cwd }: { cwd: string }) => {
+  ipcMain.handle("ollama:start", async (_event, { cwd, model }: { cwd: string; model?: string }) => {
     const sessionId = crypto.randomUUID();
+    const sessionModel = model || getDefaultModel();
     sessions.set(sessionId, {
       messages: [{ role: "system", content: buildSystemPrompt(cwd) }],
       cwd,
+      model: sessionModel,
       abortController: null,
     });
-    return { sessionId };
+    return { sessionId, model: sessionModel };
   });
 
   ipcMain.handle("ollama:send", async (_event, { sessionId, text }: { sessionId: string; text: string }) => {
