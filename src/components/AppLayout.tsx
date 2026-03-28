@@ -34,6 +34,7 @@ import { ToolsPanel } from "./ToolsPanel";
 import { BrowserPanel } from "./BrowserPanel";
 import { GitPanel } from "./GitPanel";
 import { McpPanel } from "./McpPanel";
+import { SkillsPanel } from "./SkillsPanel";
 import { ProjectFilesPanel } from "./ProjectFilesPanel";
 import { GroupPanel } from "./groups/GroupPanel";
 import { ExecutionsPanel } from "./ExecutionsPanel";
@@ -1307,6 +1308,9 @@ Link: ${issue.url}`;
                   onRestartWithServers={manager.restartWithMcpServers}
                 />
               ),
+              skills: (
+                <SkillsPanel projectPath={activeProjectPath ?? null} />
+              ),
               groups: (
                 <GroupPanel
                   groups={agentGroups.groups}
@@ -1524,6 +1528,9 @@ Link: ${issue.url}`;
                 onReconnect={manager.reconnectMcpServer}
                 onRestartWithServers={manager.restartWithMcpServers}
               />
+            ),
+            skills: (
+              <SkillsPanel projectPath={activeProjectPath ?? null} />
             ),
           };
 

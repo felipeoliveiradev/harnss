@@ -1,5 +1,5 @@
 import { memo, useCallback, useMemo, useState } from "react";
-import { Terminal, Globe, GitBranch, FolderTree, ListTodo, Bot, Plug, Users, SquareArrowOutUpRight, ArrowDown, ArrowRight, Play, Search } from "lucide-react";
+import { Terminal, Globe, GitBranch, FolderTree, ListTodo, Bot, Plug, Users, SquareArrowOutUpRight, ArrowDown, ArrowRight, Play, Search, Sparkles } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   DropdownMenu,
@@ -9,7 +9,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
-export type ToolId = "terminal" | "browser" | "git" | "files" | "project-files" | "tasks" | "agents" | "mcp" | "groups" | "executions" | "search";
+export type ToolId = "terminal" | "browser" | "git" | "files" | "project-files" | "tasks" | "agents" | "mcp" | "groups" | "executions" | "search" | "skills";
 
 /** SVG circular progress ring that wraps the tool icon button. */
 function ToolProgressRing({ progress, isComplete, size }: { progress: number; isComplete: boolean; size: number }) {
@@ -65,6 +65,7 @@ const TOOL_TINTS: Record<string, { idle: string; hover: string; active: string }
   groups:          { idle: "text-pink-600/70 dark:text-pink-200/50",      hover: "hover:text-pink-600/90 dark:hover:text-pink-200/70",      active: "text-pink-600 dark:text-pink-200/90" },
   executions:      { idle: "text-amber-600/70 dark:text-amber-200/50",    hover: "hover:text-amber-600/90 dark:hover:text-amber-200/70",   active: "text-amber-600 dark:text-amber-200/90" },
   search:          { idle: "text-cyan-600/70 dark:text-cyan-200/50",      hover: "hover:text-cyan-600/90 dark:hover:text-cyan-200/70",     active: "text-cyan-600 dark:text-cyan-200/90" },
+  skills:          { idle: "text-yellow-600/70 dark:text-yellow-200/50",  hover: "hover:text-yellow-600/90 dark:hover:text-yellow-200/70", active: "text-yellow-600 dark:text-yellow-200/90" },
 };
 
 interface ToolDef {
@@ -82,6 +83,7 @@ export const PANEL_TOOLS_MAP: Record<string, ToolDef> = {
   groups: { id: "groups", label: "Agent Groups", icon: Users },
   executions: { id: "executions", label: "Executions", icon: Play },
   search: { id: "search", label: "Search", icon: Search },
+  skills: { id: "skills", label: "Skills", icon: Sparkles },
 };
 
 /** Tool IDs that render in the tools column (not contextual right-panel tools). */
