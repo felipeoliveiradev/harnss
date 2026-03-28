@@ -1,5 +1,5 @@
 import { memo, useState, useCallback } from "react";
-import { Search, Package, ExternalLink, Globe, Terminal, Download, Loader2, Plug, Store, RefreshCw } from "lucide-react";
+import { Search, Package, ExternalLink, Globe, Terminal, Plus, Loader2, Plug, Store, RefreshCw, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -22,13 +22,19 @@ interface RegistryServer {
   publishedAt?: string;
 }
 
-export const McpSettings = memo(function McpSettings() {
+interface McpSettingsProps {
+  projectId: string | null;
+}
+
+export const McpSettings = memo(function McpSettings({ projectId }: McpSettingsProps) {
   const [query, setQuery] = useState("");
   const [servers, setServers] = useState<RegistryServer[]>([]);
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
   const [nextCursor, setNextCursor] = useState<string | undefined>();
   const [expandedName, setExpandedName] = useState<string | null>(null);
+  const [addingName, setAddingName] = useState<string | null>(null);
+  const [addedNames, setAddedNames] = useState<Set<string>>(new Set());
 
   const doSearch = useCallback(async (searchQuery?: string, cursor?: string) => {
     setLoading(true);
@@ -42,6 +48,24 @@ export const McpSettings = memo(function McpSettings() {
     setLoading(false);
     setSearched(true);
   }, []);
+
+  const handleAddFromRegistry = useCallback(async (server: RegistryServer, pkg: RegistryServer["packages"][0]) => {
+    if (!projectId || addingName) return;
+    const shortName = server.name.split("/").pop() ?? server.name;
+    setAddingName(server.name);
+    try {
+      await window.claude.mcp.addFromRegistry({
+        projectId,
+        name: shortName,
+        transport: pkg.transport as "stdio" | "sse" | "http",
+        registry: pkg.registry,
+        identifier: pkg.identifier,
+        envVars: pkg.envVars,
+      });
+      setAddedNames((prev) => new Set(prev).add(server.name));
+    } catch {}
+    setAddingName(null);
+  }, [projectId, addingName]);
 
   return (
     <div className="flex h-full flex-col">
@@ -150,23 +174,31 @@ export const McpSettings = memo(function McpSettings() {
                             <span className="rounded-full bg-foreground/[0.05] px-2 py-px text-[10px] text-muted-foreground/60">{mainPkg.transport}</span>
                           )}
                         </div>
-                        {mainPkg && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-7 gap-1.5 text-xs"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              const cmd = mainPkg.registry === "npm"
-                                ? `npx -y ${mainPkg.identifier}`
-                                : `uvx ${mainPkg.identifier}`;
-                              navigator.clipboard.writeText(cmd);
-                            }}
-                          >
-                            <Download className="h-3 w-3" />
-                            Copy Install
-                          </Button>
-                        )}
+                        {mainPkg && (() => {
+                          const isAdding = addingName === server.name;
+                          const isAdded = addedNames.has(server.name);
+                          return (
+                            <Button
+                              variant={isAdded ? "ghost" : "outline"}
+                              size="sm"
+                              className="h-7 gap-1.5 text-xs"
+                              disabled={!projectId || isAdding || isAdded}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleAddFromRegistry(server, mainPkg);
+                              }}
+                            >
+                              {isAdding ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : isAdded ? (
+                                <Check className="h-3 w-3 text-emerald-500" />
+                              ) : (
+                                <Plus className="h-3 w-3" />
+                              )}
+                              {isAdding ? "Adding..." : isAdded ? "Added" : "Add"}
+                            </Button>
+                          );
+                        })()}
                       </div>
 
                       {isExpanded && (

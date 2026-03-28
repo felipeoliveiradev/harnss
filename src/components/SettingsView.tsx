@@ -90,6 +90,7 @@ interface SettingsViewProps {
   onToggleSidebar?: () => void;
   /** Resets the welcome wizard so it shows again. Dev-only. */
   onReplayWelcome: () => void;
+  projectId?: string | null;
 }
 
 // ── Component ──
@@ -119,6 +120,7 @@ export const SettingsView = memo(function SettingsView({
   sidebarOpen = false,
   onToggleSidebar,
   onReplayWelcome,
+  projectId,
 }: SettingsViewProps) {
   const [activeSection, setActiveSection] = useState<SettingsSection>("general");
   const macIslandTitlebarOffsetClass = "";
@@ -204,7 +206,7 @@ export const SettingsView = memo(function SettingsView({
           />
         );
       case "mcp":
-        return <McpSettings />;
+        return <McpSettings projectId={projectId ?? null} />;
       case "engines":
         return (
           <AdvancedSettings

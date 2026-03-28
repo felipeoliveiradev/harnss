@@ -369,6 +369,11 @@ contextBridge.exposeInMainWorld("claude", {
     authenticate: (serverName: string, serverUrl: string) => ipcRenderer.invoke("mcp:authenticate", { serverName, serverUrl }),
     authStatus: (serverName: string) => ipcRenderer.invoke("mcp:auth-status", serverName),
     probe: (servers: unknown[]) => ipcRenderer.invoke("mcp:probe", servers),
+    addFromRegistry: (payload: {
+      projectId: string; name: string; transport: string;
+      registry?: string; identifier?: string; command?: string; args?: string[];
+      url?: string; envVars?: Array<{ name: string; description: string; isRequired: boolean }>;
+    }) => ipcRenderer.invoke("mcp:add-from-registry", payload),
   },
   agents: {
     list: () => ipcRenderer.invoke("agents:list"),

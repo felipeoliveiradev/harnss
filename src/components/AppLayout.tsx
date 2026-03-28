@@ -771,6 +771,7 @@ Link: ${issue.url}`;
             sidebarOpen={sidebar.isOpen}
             onToggleSidebar={sidebar.toggle}
             onReplayWelcome={handleReplayWelcome}
+            projectId={activeProjectId}
           />
         )}
         <div className={showSettings ? "hidden" : "flex min-h-0 flex-1 flex-col"}>

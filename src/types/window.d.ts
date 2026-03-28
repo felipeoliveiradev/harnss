@@ -380,6 +380,11 @@ declare global {
         authenticate: (serverName: string, serverUrl: string) => Promise<{ ok?: boolean; error?: string }>;
         authStatus: (serverName: string) => Promise<{ hasToken: boolean; expiresAt?: number }>;
         probe: (servers: McpServerConfig[]) => Promise<Array<{ name: string; status: "connected" | "needs-auth" | "failed"; error?: string }>>;
+        addFromRegistry: (payload: {
+          projectId: string; name: string; transport: string;
+          registry?: string; identifier?: string; command?: string; args?: string[];
+          url?: string; envVars?: Array<{ name: string; description: string; isRequired: boolean }>;
+        }) => Promise<{ ok?: boolean; error?: string }>;
       };
       agents: {
         list: () => Promise<InstalledAgent[]>;
