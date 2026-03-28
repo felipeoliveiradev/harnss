@@ -390,6 +390,12 @@ contextBridge.exposeInMainWorld("claude", {
     clearExpired: () => ipcRenderer.invoke("web-search:clear-expired"),
     clearAll: () => ipcRenderer.invoke("web-search:clear-all"),
   },
+  crawler: {
+    test: (providerId: string) => ipcRenderer.invoke("crawler:test", providerId),
+    history: (limit?: number) => ipcRenderer.invoke("crawler:history", limit),
+    stats: () => ipcRenderer.invoke("crawler:stats"),
+    clearAll: () => ipcRenderer.invoke("crawler:clear-all"),
+  },
   jira: {
     getConfig: (projectId: string) => ipcRenderer.invoke("jira:get-config", projectId),
     saveConfig: (projectId: string, config: unknown) =>

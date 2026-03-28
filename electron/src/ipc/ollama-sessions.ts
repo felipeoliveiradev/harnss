@@ -8,6 +8,7 @@ import { getAppSetting } from "../lib/app-settings";
 import { log } from "../lib/logger";
 import { triggerIndex, compressConversation } from "../lib/rag/index";
 import { webSearch, formatWebResults } from "../lib/rag/web-search";
+import { crawlUrl } from "../lib/rag/web-crawl";
 import { filterFiles } from "../lib/harnssignore";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -197,6 +198,20 @@ const OLLAMA_TOOLS = [
         required: ["query"],
         properties: {
           query: { type: "string", description: "Search query" },
+        },
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "read_url",
+      description: "Read a web page and extract its content as markdown. Use after web_search to read a specific result page.",
+      parameters: {
+        type: "object",
+        required: ["url"],
+        properties: {
+          url: { type: "string", description: "Full URL to read (https://...)" },
         },
       },
     },
@@ -598,6 +613,24 @@ async function executeToolCall(
         const msg = (err as Error).message;
         emitResult("WebSearch", { error: msg });
         return { toolName: "WebSearch", input: { query }, result: msg, content: `Web search failed: ${msg}` };
+      }
+    }
+
+    case "read_url": {
+      const targetUrl = args.url ?? "";
+      emitStart("WebFetch", { url: targetUrl });
+      try {
+        const crawlResult = await crawlUrl(targetUrl);
+        const truncated = crawlResult.content.length > 50000
+          ? crawlResult.content.slice(0, 50000) + "\n\n... (truncated, content too long)"
+          : crawlResult.content;
+        log("OLLAMA_TOOL", `read_url "${targetUrl}" (${crawlResult.content.length} chars, provider=${crawlResult.provider})`);
+        emitResult("WebFetch", { url: targetUrl, title: crawlResult.title, contentLength: crawlResult.content.length, provider: crawlResult.provider });
+        return { toolName: "WebFetch", input: { url: targetUrl }, result: `Read URL: ${crawlResult.title} (${crawlResult.content.length} chars)`, content: truncated };
+      } catch (err) {
+        const msg = (err as Error).message;
+        emitResult("WebFetch", { error: msg });
+        return { toolName: "WebFetch", input: { url: targetUrl }, result: msg, content: `Failed to read URL: ${msg}` };
       }
     }
 

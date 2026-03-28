@@ -13,6 +13,7 @@ import {
   BarChart3,
   PanelLeft,
   Globe,
+  Scan,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -26,6 +27,7 @@ import { PlaceholderSection } from "@/components/settings/PlaceholderSection";
 import { AboutSettings } from "@/components/settings/AboutSettings";
 import { AnalyticsSettings } from "@/components/settings/AnalyticsSettings";
 import { WebSearchSettings } from "@/components/settings/WebSearchSettings";
+import { CrawlerSettings } from "@/components/settings/CrawlerSettings";
 import { isMac } from "@/lib/utils";
 import type { InstalledAgent, ThemeOption } from "@/types";
 import type { AppSettings } from "@/types/ui";
@@ -33,7 +35,7 @@ import { useEditorTheme } from "@/hooks/useEditorTheme";
 
 // ── Section definitions ──
 
-type SettingsSection = "general" | "appearance" | "notifications" | "analytics" | "agents" | "mcp" | "engines" | "web-search" | "skills" | "custom-agents" | "advanced" | "about";
+type SettingsSection = "general" | "appearance" | "notifications" | "analytics" | "agents" | "mcp" | "engines" | "web-search" | "crawler" | "skills" | "custom-agents" | "advanced" | "about";
 
 interface NavItem {
   id: SettingsSection;
@@ -52,6 +54,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: "mcp", label: "MCP Servers", icon: Plug },
   { id: "engines", label: "Engines", icon: Cpu },
   { id: "web-search", label: "Web Search", icon: Globe },
+  { id: "crawler", label: "Crawler", icon: Scan },
   { id: "skills", label: "Skills", icon: Sparkles, comingSoon: true },
   { id: "custom-agents", label: "Agents", icon: Users, comingSoon: true },
   { id: "advanced", label: "Advanced", icon: Wrench },
@@ -213,6 +216,13 @@ export const SettingsView = memo(function SettingsView({
       case "web-search":
         return (
           <WebSearchSettings
+            appSettings={appSettings}
+            onUpdateAppSettings={updateAppSettings}
+          />
+        );
+      case "crawler":
+        return (
+          <CrawlerSettings
             appSettings={appSettings}
             onUpdateAppSettings={updateAppSettings}
           />

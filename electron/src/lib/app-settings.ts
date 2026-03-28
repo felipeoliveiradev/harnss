@@ -47,6 +47,20 @@ export interface WebSearchSettings {
   timeout: number;
 }
 
+export type CrawlerProviderId = "jina-reader" | "crawl4ai" | "firecrawl";
+
+export interface CrawlerProviderConfig {
+  id: CrawlerProviderId;
+  enabled: boolean;
+  baseUrl?: string;
+  apiKey?: string;
+}
+
+export interface CrawlerSettings {
+  providers: CrawlerProviderConfig[];
+  timeout: number;
+}
+
 export interface AppSettings {
   /** Include pre-release versions when checking for updates (default: false) */
   allowPrereleaseUpdates: boolean;
@@ -97,7 +111,18 @@ export interface AppSettings {
   ignorePatterns: string[];
   /** Disable default ignore patterns (only use .harnssignore file + custom patterns) */
   ignoreDefaultsDisabled: boolean;
+  /** Crawler provider configuration with priority ordering */
+  crawler: CrawlerSettings;
 }
+
+const CRAWLER_DEFAULTS: CrawlerSettings = {
+  providers: [
+    { id: "jina-reader", enabled: true },
+    { id: "crawl4ai", enabled: false, baseUrl: "http://localhost:11235" },
+    { id: "firecrawl", enabled: false, baseUrl: "http://localhost:3002" },
+  ],
+  timeout: 15000,
+};
 
 const WEB_SEARCH_DEFAULTS: WebSearchSettings = {
   providers: [
@@ -145,6 +170,7 @@ const DEFAULTS: AppSettings = {
   webSearch: WEB_SEARCH_DEFAULTS,
   ignorePatterns: [],
   ignoreDefaultsDisabled: false,
+  crawler: CRAWLER_DEFAULTS,
 };
 
 // ── Internal state ──

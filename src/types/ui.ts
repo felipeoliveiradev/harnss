@@ -66,6 +66,21 @@ export interface AppSettings {
     webSearch: WebSearchSettings;
     ignorePatterns: string[];
     ignoreDefaultsDisabled: boolean;
+    crawler: CrawlerSettings;
+}
+
+export type CrawlerProviderId = "jina-reader" | "crawl4ai" | "firecrawl";
+
+export interface CrawlerProviderConfig {
+  id: CrawlerProviderId;
+  enabled: boolean;
+  baseUrl?: string;
+  apiKey?: string;
+}
+
+export interface CrawlerSettings {
+  providers: CrawlerProviderConfig[];
+  timeout: number;
 }
 
 export interface SpaceColor {

@@ -133,4 +133,32 @@ export function register(): void {
     cacheModule?.clearAll();
     return { ok: true };
   });
+
+  ipcMain.handle("crawler:test", async (_event, providerId: string) => {
+    const { crawlUrl: doCrawl } = await import("../lib/rag/web-crawl");
+    const testUrl = "https://example.com";
+    try {
+      const start = Date.now();
+      const result = await doCrawl(testUrl);
+      return { ok: true, chars: result.content.length, ms: Date.now() - start, provider: result.provider };
+    } catch (err) {
+      return { ok: false, error: (err as Error).message };
+    }
+  });
+
+  let crawlCacheModule: typeof import("../lib/rag/crawl-cache") | null = null;
+  try { crawlCacheModule = require("../lib/rag/crawl-cache") as typeof import("../lib/rag/crawl-cache"); } catch {}
+
+  ipcMain.handle("crawler:history", async (_event, limit?: number) => {
+    return crawlCacheModule?.getCrawlHistory(limit ?? 30) ?? [];
+  });
+
+  ipcMain.handle("crawler:stats", async () => {
+    return crawlCacheModule?.getCrawlStats() ?? { totalEntries: 0, totalChars: 0, dbSizeBytes: 0 };
+  });
+
+  ipcMain.handle("crawler:clear-all", async () => {
+    crawlCacheModule?.clearAll();
+    return { ok: true };
+  });
 }
