@@ -406,6 +406,14 @@ declare global {
         clearExpired: () => Promise<{ removed: number }>;
         clearAll: () => Promise<{ ok: boolean }>;
       };
+      skillsRegistry: {
+        search: (query?: string, limit?: number) => Promise<{
+          ok: boolean;
+          skills: Array<{ id: string; skillId: string; name: string; installs: number; source: string }>;
+          count?: number;
+          error?: string;
+        }>;
+      };
       mcpRegistry: {
         search: (query?: string, cursor?: string) => Promise<{
           ok: boolean;

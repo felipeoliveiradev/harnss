@@ -51,6 +51,7 @@ import * as webSearchIpc from "./ipc/web-search";
 import * as openclawSessionsIpc from "./ipc/openclaw-sessions";
 import * as mcpIpc from "./ipc/mcp";
 import * as mcpRegistryIpc from "./ipc/mcp-registry";
+import * as skillsRegistryIpc from "./ipc/skills-registry";
 import { registerGroupSessionHandlers } from "./ipc/group-sessions";
 import * as settingsIpc from "./ipc/settings";
 import * as jiraIpc from "./ipc/jira";
@@ -332,6 +333,7 @@ openclawSessionsIpc.register(getMainWindow);
 registerGroupSessionHandlers(getMainWindow);
 mcpIpc.register();
 mcpRegistryIpc.register();
+skillsRegistryIpc.register();
 settingsIpc.register();
 jiraIpc.register();
 
