@@ -6,6 +6,8 @@ interface UseOllamaOptions {
   sessionId: string | null;
   initialMessages?: import("@/types").UIMessage[];
   initialMeta?: SessionMeta | null;
+  cwd?: string;
+  model?: string;
 }
 
 type OllamaEvent = {
@@ -18,7 +20,7 @@ function nextId(prefix: string): string {
   return `${prefix}-${crypto.randomUUID()}`;
 }
 
-export function useOllama({ sessionId, initialMessages, initialMeta }: UseOllamaOptions) {
+export function useOllama({ sessionId, initialMessages, initialMeta, cwd, model }: UseOllamaOptions) {
   const base = useEngineBase({ sessionId, initialMessages, initialMeta, initialPermission: null });
   const {
     messages, setMessages,
@@ -27,7 +29,7 @@ export function useOllama({ sessionId, initialMessages, initialMeta }: UseOllama
     sessionInfo, setSessionInfo,
     totalCost, setTotalCost,
     pendingPermission, setPendingPermission,
-    contextUsage,
+    contextUsage, setContextUsage,
     sessionIdRef,
   } = base;
 
@@ -80,14 +82,20 @@ export function useOllama({ sessionId, initialMessages, initialMeta }: UseOllama
               m.id === id ? { ...m, content: finalMsg, isStreaming: false } : m
             ));
             streamingMsgId.current = null;
+          } else if (finalMsg) {
+            setMessages(prev => [...prev, {
+              id: nextId("ollama-final"),
+              role: "assistant" as const,
+              content: finalMsg,
+              isStreaming: false,
+              timestamp: Date.now(),
+            }]);
           }
           setIsProcessing(false);
           break;
         }
 
         case "chat:mid-final": {
-          // Model wrote text AND used tools — finalize the streaming msg
-          // but DON'T set isProcessing=false (tool loop continues).
           const midMsg = (event.payload.message as string) ?? "";
           const midId = streamingMsgId.current;
           if (midId) {
@@ -95,6 +103,14 @@ export function useOllama({ sessionId, initialMessages, initialMeta }: UseOllama
               m.id === midId ? { ...m, content: midMsg, isStreaming: false } : m
             ));
             streamingMsgId.current = null;
+          } else if (midMsg) {
+            setMessages(prev => [...prev, {
+              id: nextId("ollama-mid"),
+              role: "assistant" as const,
+              content: midMsg,
+              isStreaming: false,
+              timestamp: Date.now(),
+            }]);
           }
           break;
         }
@@ -161,6 +177,18 @@ export function useOllama({ sessionId, initialMessages, initialMeta }: UseOllama
           break;
         }
 
+        case "context:usage": {
+          const { used, limit } = event.payload as { used: number; limit: number };
+          setContextUsage({
+            inputTokens: used,
+            outputTokens: 0,
+            cacheReadTokens: 0,
+            cacheCreationTokens: 0,
+            contextWindow: limit,
+          });
+          break;
+        }
+
         case "chat:error": {
           // Finalize any in-progress message
           if (streamingMsgId.current) {
@@ -210,7 +238,7 @@ export function useOllama({ sessionId, initialMessages, initialMeta }: UseOllama
 
     setIsProcessing(true);
 
-    const result = await window.claude.ollama.send(sessionIdRef.current, text);
+    const result = await window.claude.ollama.send(sessionIdRef.current, text, cwd, model);
     if (result?.error) {
       setIsProcessing(false);
       setMessages(prev => [...prev, {
@@ -221,7 +249,7 @@ export function useOllama({ sessionId, initialMessages, initialMeta }: UseOllama
         timestamp: Date.now(),
       }]);
     }
-  }, [sessionIdRef, setIsProcessing, setMessages]);
+  }, [sessionIdRef, setIsProcessing, setMessages, cwd, model]);
 
   const stop = useCallback(async () => {
     if (!sessionIdRef.current) return;

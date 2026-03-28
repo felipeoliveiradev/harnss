@@ -353,7 +353,7 @@ declare global {
       };
       ollama: {
         start: (options: { cwd: string; model?: string }) => Promise<{ sessionId: string; error?: string }>;
-        send: (sessionId: string, text: string) => Promise<{ ok?: boolean; error?: string }>;
+        send: (sessionId: string, text: string, cwd?: string, model?: string) => Promise<{ ok?: boolean; error?: string }>;
         stop: (sessionId: string) => Promise<{ ok?: boolean; error?: string }>;
         interrupt: (sessionId: string) => Promise<{ ok?: boolean; error?: string }>;
         status: () => Promise<{ available: boolean; error?: string }>;
@@ -393,6 +393,13 @@ declare global {
       settings: {
         get: () => Promise<AppSettings>;
         set: (patch: Partial<AppSettings>) => Promise<{ ok?: boolean; error?: string }>;
+      };
+      webSearch: {
+        test: (providerId: string) => Promise<{ ok: boolean; count?: number; ms?: number; error?: string }>;
+        history: (limit?: number) => Promise<Array<{ id: number; query: string; provider: string; resultCount: number; cachedAt: number; hitCount: number; expired: boolean }>>;
+        stats: () => Promise<{ totalEntries: number; totalSearches: number; cacheHits: number; cacheMisses: number; hitRate: string; providerBreakdown: Array<{ provider: string; count: number; avgResults: number }>; dbSizeBytes: number }>;
+        clearExpired: () => Promise<{ removed: number }>;
+        clearAll: () => Promise<{ ok: boolean }>;
       };
       jira: {
         getConfig: (projectId: string) => Promise<JiraProjectConfig | null>;

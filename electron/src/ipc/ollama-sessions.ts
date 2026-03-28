@@ -8,6 +8,7 @@ import { getAppSetting } from "../lib/app-settings";
 import { log } from "../lib/logger";
 import { triggerIndex, compressConversation } from "../lib/rag/index";
 import { webSearch, formatWebResults } from "../lib/rag/web-search";
+import { filterFiles } from "../lib/harnssignore";
 
 interface OllamaMessage {
   role: "user" | "assistant" | "system";
@@ -20,12 +21,15 @@ interface SessionState {
   filesCreated: string[];
   originalRequest: string;
   toolCallCount: number;
+  recentToolSignatures: string[];
+  pendingPages: Map<string, string[]>;
 }
 
 interface OllamaSession {
   messages: OllamaMessage[];
   cwd: string;
   model: string;
+  contextSize: number;
   abortController: AbortController | null;
   state: SessionState;
 }
@@ -33,7 +37,8 @@ interface OllamaSession {
 const sessions = new Map<string, OllamaSession>();
 
 const MAX_FILE_READ_BYTES = 200_000;
-const MAX_TOOL_LOOPS = 6;
+const LOOP_WARN_THRESHOLD = 6;
+const MAX_TOOL_LOOPS = 12;
 const MAX_TOOL_OPS = MAX_TOOL_LOOPS * 2;
 const MAX_SHELL_OUTPUT_BYTES = 16_000;
 const SHELL_TIMEOUT_MS = 15_000;
@@ -57,8 +62,163 @@ function emit(
   safeSend(getMainWindow, "ollama:event", { _sessionId: sessionId, type, payload, _seq: 0 });
 }
 
+const PAGE_SIZE = 50;
+const TREE_COLLAPSE_THRESHOLD = 30;
+
+function filesToTree(files: string[]): string {
+  const byDir = new Map<string, string[]>();
+  for (const file of files) {
+    const lastSlash = file.lastIndexOf("/");
+    const dir = lastSlash === -1 ? "." : file.slice(0, lastSlash);
+    const name = file.slice(lastSlash + 1);
+    if (!byDir.has(dir)) byDir.set(dir, []);
+    byDir.get(dir)!.push(name);
+  }
+
+  const lines: string[] = [];
+
+  const groupByExt = (names: string[]): string[] => {
+    const extMap = new Map<string, string[]>();
+    for (const name of names.sort()) {
+      const dotIdx = name.lastIndexOf(".");
+      const ext = dotIdx !== -1 ? name.slice(dotIdx) : "";
+      const base = dotIdx !== -1 ? name.slice(0, dotIdx) : name;
+      if (!extMap.has(ext)) extMap.set(ext, []);
+      extMap.get(ext)!.push(base);
+    }
+    const parts: string[] = [];
+    for (const [ext, bases] of extMap) {
+      if (bases.length === 1) {
+        parts.push(`${bases[0]}${ext}`);
+      } else {
+        parts.push(`[${bases.join(",")}]${ext}`);
+      }
+    }
+    return parts;
+  };
+
+  const mergeDirs = (dirs: string[]): Map<string, string[]> => {
+    const parentMap = new Map<string, Map<string, string[]>>();
+    for (const dir of dirs) {
+      const lastSlash = dir.lastIndexOf("/");
+      if (lastSlash === -1) continue;
+      const parent = dir.slice(0, lastSlash);
+      const child = dir.slice(lastSlash + 1);
+      const childFiles = byDir.get(dir)!;
+      if (childFiles.length === 1 && childFiles[0] === "index.ts") {
+        if (!parentMap.has(parent)) parentMap.set(parent, new Map());
+        const pm = parentMap.get(parent)!;
+        if (!pm.has("index.ts")) pm.set("index.ts", []);
+        pm.get("index.ts")!.push(child);
+      }
+    }
+    return new Map([...parentMap.entries()].filter(([, v]) => v.size > 0).map(([k, v]) => [k, [...v.values()].flat()]));
+  };
+
+  const sortedDirs = [...byDir.keys()].sort();
+  const indexOnlyDirs = mergeDirs(sortedDirs);
+  const rendered = new Set<string>();
+
+  for (const dir of sortedDirs) {
+    if (rendered.has(dir)) continue;
+    const names = byDir.get(dir)!;
+
+    const parentMerge = [...indexOnlyDirs.entries()].find(([parent]) => dir.startsWith(parent + "/") || dir === parent);
+    if (parentMerge) {
+      const [parent, children] = parentMerge;
+      if (dir !== parent && names.length === 1 && names[0] === "index.ts") {
+        continue;
+      }
+    }
+
+    if (indexOnlyDirs.has(dir)) {
+      const children = indexOnlyDirs.get(dir)!;
+      const remaining = names.filter((n) => n !== "index.ts" || !children.includes(dir.split("/").pop()!));
+      if (remaining.length > 0) {
+        lines.push(`${dir}/ ${groupByExt(remaining).join(", ")}`);
+      }
+      lines.push(`${dir}/[${children.sort().join(",")}]/index.ts`);
+      for (const child of children) {
+        rendered.add(`${dir}/${child}`);
+      }
+    } else {
+      const grouped = groupByExt(names);
+      lines.push(dir === "." ? grouped.join(", ") : `${dir}/ ${grouped.join(", ")}`);
+    }
+  }
+
+  lines.push("");
+  lines.push("Expand [a,b,c] to get individual paths. Example: src/[foo,bar].ts = src/foo.ts, src/bar.ts");
+  return lines.join("\n");
+}
+
+function estimateTokens(messages: OllamaMessage[]): number {
+  let chars = 0;
+  for (const m of messages) chars += m.content.length;
+  return Math.ceil(chars / 4);
+}
+
+async function fetchModelContextSize(model: string): Promise<number> {
+  try {
+    const response = await fetch(`${getBaseUrl()}/api/show`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model }),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) {
+      log("OLLAMA", `api/show HTTP ${response.status} for ${model}, using default 32768`);
+      return 32768;
+    }
+    const data = (await response.json()) as { model_info?: Record<string, unknown>; parameters?: string };
+    if (data.model_info) {
+      for (const [key, val] of Object.entries(data.model_info)) {
+        if (key.endsWith(".context_length") && typeof val === "number" && val > 0) {
+          log("OLLAMA", `model ${model} ${key}=${val} (from api/show)`);
+          return val;
+        }
+      }
+    }
+    const numCtxMatch = data.parameters?.match(/num_ctx\s+(\d+)/);
+    if (numCtxMatch) {
+      const numCtx = parseInt(numCtxMatch[1]);
+      log("OLLAMA", `model ${model} num_ctx=${numCtx} (from parameters)`);
+      return numCtx;
+    }
+    log("OLLAMA", `model ${model} no context_length in api/show, using default 32768`);
+  } catch (err) {
+    log("OLLAMA", `fetchModelContextSize failed: ${(err as Error).message}, using default 32768`);
+  }
+  return 32768;
+}
+
+function emitContextUsage(
+  getMainWindow: () => BrowserWindow | null,
+  sessionId: string,
+  session: OllamaSession,
+): void {
+  const used = estimateTokens(session.messages);
+  emit(getMainWindow, sessionId, "context:usage", { used, limit: session.contextSize });
+}
+
 function freshState(): SessionState {
-  return { filesRead: [], filesModified: [], filesCreated: [], originalRequest: "", toolCallCount: 0 };
+  return { filesRead: [], filesModified: [], filesCreated: [], originalRequest: "", toolCallCount: 0, recentToolSignatures: [], pendingPages: new Map() };
+}
+
+function toolSignature(requests: ToolRequest[]): string {
+  return requests.map((r) => `${r.tool}:${r.path ?? r.command ?? r.query ?? r.pattern ?? ""}`).sort().join("|");
+}
+
+function detectLoop(state: SessionState, requests: ToolRequest[]): boolean {
+  const sig = toolSignature(requests);
+  state.recentToolSignatures.push(sig);
+  if (state.recentToolSignatures.length > 6) {
+    state.recentToolSignatures.shift();
+  }
+  const recent = state.recentToolSignatures;
+  if (recent.length < 3) return false;
+  const last3 = recent.slice(-3);
+  return last3[0] === last3[1] && last3[1] === last3[2];
 }
 
 // ── System prompt ──────────────────────────────────────────────────────────────
@@ -91,6 +251,7 @@ new replacement text
 6. {"tools":[{"tool":"search_files","pattern":"text","path":"."}]}
 7. {"tools":[{"tool":"run_shell","command":"command here"}]}
 8. {"tools":[{"tool":"web_search","query":"search terms"}]}
+9. {"tools":[{"tool":"continue"}]}  — get next page of results when "has_more" is true
 
 RULES:
 1. Start your response with a JSON object on the first line. No markdown fences.
@@ -382,7 +543,8 @@ function searchFiles(pattern: string, cwd: string, relPath: string): Promise<str
   if (!resolved.startsWith(cwd + path.sep) && resolved !== cwd) {
     return Promise.reject(new Error("path outside project"));
   }
-  return listFilesGit(cwd).then((files) => {
+  return listFilesGit(cwd).then((rawFiles) => {
+    const files = filterFiles(rawFiles, cwd);
     const normalizedBase = relPath === "." ? "" : `${relPath.replace(/\/$/, "")}/`;
     const matches: string[] = [];
     for (const file of files) {
@@ -580,18 +742,38 @@ async function executeToolRequests(
         const id = `ollama-glob-${crypto.randomUUID().slice(0, 8)}`;
         emitToolStart(id, "Glob", { path: rel, pattern });
         try {
-          const files = await listFilesGit(cwd);
+          const rawFiles = await listFilesGit(cwd);
           const normalizedBase = rel === "." ? "" : `${rel.replace(/\/$/, "")}/`;
-          const filtered = files
+          const allFiltered = filterFiles(rawFiles, cwd)
             .filter((file) => !normalizedBase || file === rel || file.startsWith(normalizedBase))
-            .filter((file) => !pattern || file.includes(pattern.replace(/\*/g, "")))
-            .slice(0, MAX_LIST_FILES);
-          results.push({
-            toolName: "Glob",
-            input: { path: rel, pattern },
-            result: `List ${rel}: OK (${filtered.length} file${filtered.length === 1 ? "" : "s"})`,
-          });
-          emitToolResult(id, "Glob", { filenames: filtered, numFiles: filtered.length, mode: "files_with_matches" });
+            .filter((file) => !pattern || file.includes(pattern.replace(/\*/g, "")));
+
+          if (allFiltered.length > TREE_COLLAPSE_THRESHOLD) {
+            const tree = filesToTree(allFiltered);
+            const summary = `List ${rel}: ${allFiltered.length} files (tree view)`;
+            results.push({
+              toolName: "Glob", input: { path: rel, pattern }, result: summary,
+              attachment: { path: `tree:${rel}`, content: tree },
+            });
+            emitToolResult(id, "Glob", {
+              filenames: allFiltered.slice(0, PAGE_SIZE), numFiles: allFiltered.length,
+              showing: Math.min(PAGE_SIZE, allFiltered.length),
+              has_more: allFiltered.length > PAGE_SIZE,
+              mode: "files_with_matches",
+            });
+
+            if (allFiltered.length > PAGE_SIZE) {
+              sessionState.pendingPages.set(`list:${rel}:${pattern}`, allFiltered.slice(PAGE_SIZE));
+            }
+          } else {
+            const summary = `List ${rel}: OK (${allFiltered.length} file${allFiltered.length === 1 ? "" : "s"})`;
+            results.push({ toolName: "Glob", input: { path: rel, pattern }, result: summary });
+            emitToolResult(id, "Glob", {
+              filenames: allFiltered, numFiles: allFiltered.length,
+              showing: allFiltered.length, has_more: false,
+              mode: "files_with_matches",
+            });
+          }
         } catch (err) {
           const error = (err as Error).message;
           results.push({ toolName: "Glob", input: { path: rel, pattern }, result: `List ${rel}: ${error}` });
@@ -606,18 +788,68 @@ async function executeToolRequests(
         const id = `ollama-grep-${crypto.randomUUID().slice(0, 8)}`;
         emitToolStart(id, "Grep", { pattern, path: rel });
         try {
-          const matches = await searchFiles(pattern, cwd, rel);
-          results.push({
-            toolName: "Grep",
-            input: { pattern, path: rel },
-            result: `Search "${pattern}" in ${rel}: OK (${matches.length} match${matches.length === 1 ? "" : "es"})`,
+          const allMatches = await searchFiles(pattern, cwd, rel);
+          const page = allMatches.slice(0, PAGE_SIZE);
+          const remaining = allMatches.slice(PAGE_SIZE);
+          const hasMore = remaining.length > 0;
+
+          if (hasMore) {
+            const pageKey = `search:${rel}:${pattern}`;
+            sessionState.pendingPages.set(pageKey, remaining);
+          }
+
+          const summary = hasMore
+            ? `Search "${pattern}" in ${rel}: showing ${page.length} of ${allMatches.length} matches (use "continue" to see more)`
+            : `Search "${pattern}" in ${rel}: OK (${page.length} match${page.length === 1 ? "" : "es"})`;
+
+          results.push({ toolName: "Grep", input: { pattern, path: rel }, result: summary });
+          emitToolResult(id, "Grep", {
+            filenames: page, numFiles: allMatches.length,
+            showing: page.length, has_more: hasMore,
+            mode: "files_with_matches",
           });
-          emitToolResult(id, "Grep", { filenames: matches, numFiles: matches.length, mode: "files_with_matches" });
         } catch (err) {
           const error = (err as Error).message;
           results.push({ toolName: "Grep", input: { pattern, path: rel }, result: `Search "${pattern}" in ${rel}: ${error}` });
           emitToolResult(id, "Grep", { error });
         }
+        break;
+      }
+
+      case "continue": {
+        const id = `ollama-continue-${crypto.randomUUID().slice(0, 8)}`;
+        const entries = [...sessionState.pendingPages.entries()];
+        if (entries.length === 0) {
+          emitToolStart(id, "Continue", {});
+          results.push({ toolName: "Continue", input: {}, result: "No pending pages to continue" });
+          emitToolResult(id, "Continue", { error: "nothing to continue" });
+          break;
+        }
+
+        const [pageKey, remaining] = entries[0];
+        const page = remaining.slice(0, PAGE_SIZE);
+        const rest = remaining.slice(PAGE_SIZE);
+
+        if (rest.length > 0) {
+          sessionState.pendingPages.set(pageKey, rest);
+        } else {
+          sessionState.pendingPages.delete(pageKey);
+        }
+
+        const hasMore = rest.length > 0;
+        const toolName = pageKey.startsWith("list:") ? "Glob" : "Grep";
+        emitToolStart(id, toolName, { continued: true });
+
+        const summary = hasMore
+          ? `Continued ${pageKey}: showing ${page.length} more (${rest.length} remaining, use "continue" again)`
+          : `Continued ${pageKey}: last ${page.length} items`;
+
+        results.push({ toolName, input: { continued: true }, result: summary });
+        emitToolResult(id, toolName, {
+          filenames: page, showing: page.length,
+          remaining: rest.length, has_more: hasMore,
+          mode: "files_with_matches",
+        });
         break;
       }
 
@@ -712,6 +944,7 @@ async function streamOllamaResponse(
       model: session.model,
       messages: compressConversation(session.messages),
       stream: true,
+      stream_options: { include_usage: true },
       temperature: 0.1,
     }),
     signal: controller.signal,
@@ -727,6 +960,7 @@ async function streamOllamaResponse(
   const decoder = new TextDecoder();
   let fullText = "";
   let sseBuffer = "";
+  let isToolCall: boolean | null = null;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -744,11 +978,36 @@ async function streamOllamaResponse(
       try {
         const parsed = JSON.parse(data) as {
           choices?: Array<{ delta?: { content?: string }; finish_reason?: string | null }>;
+          usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
         };
+
+        if (parsed.usage) {
+          const used = parsed.usage.prompt_tokens ?? 0;
+          const generated = parsed.usage.completion_tokens ?? 0;
+          emit(getMainWindow, sessionId, "context:usage", {
+            used: used + generated,
+            limit: session.contextSize,
+            promptTokens: used,
+            completionTokens: generated,
+          });
+        }
+
         const delta = parsed.choices?.[0]?.delta?.content;
         if (delta) {
           fullText += delta;
-          emit(getMainWindow, sessionId, "chat:delta", { text: fullText });
+
+          if (isToolCall === null) {
+            const trimmedFull = fullText.trimStart();
+            if (trimmedFull.startsWith("{") || trimmedFull.startsWith("<")) {
+              isToolCall = true;
+            } else if (trimmedFull.length > 2) {
+              isToolCall = false;
+            }
+          }
+
+          if (isToolCall !== true) {
+            emit(getMainWindow, sessionId, "chat:delta", { text: fullText });
+          }
         }
       } catch {
       }
@@ -761,7 +1020,16 @@ async function streamOllamaResponse(
 // ── Extract display text from model response ────────────────────────────────────
 
 function extractDisplayText(fullText: string, parsed: ModelResponse | null): string {
-  if (parsed?.response) return parsed.response;
+  if (parsed?.response) {
+    return parsed.response
+      .replace(/\\n/g, "\n")
+      .replace(/\\t/g, "\t")
+      .replace(/\\"/g, '"')
+      .replace(/END_CONTENT\s*$/g, "")
+      .replace(/^[\s`"',;]+/, "")
+      .replace(/[\s`"',;]+$/, "")
+      .trim();
+  }
 
   let cleaned = fullText;
 
@@ -796,10 +1064,12 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
   ipcMain.handle("ollama:start", async (_event, { cwd, model }: { cwd: string; model?: string }) => {
     const sessionId = crypto.randomUUID();
     const sessionModel = model || getDefaultModel();
+    const contextSize = await fetchModelContextSize(sessionModel);
     sessions.set(sessionId, {
       messages: [{ role: "system", content: buildSystemPrompt(cwd) }],
       cwd,
       model: sessionModel,
+      contextSize,
       abortController: null,
       state: freshState(),
     });
@@ -809,9 +1079,23 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     return { sessionId, model: sessionModel };
   });
 
-  ipcMain.handle("ollama:send", async (_event, { sessionId, text }: { sessionId: string; text: string }) => {
-    const session = sessions.get(sessionId);
-    if (!session) return { error: "Session not found" };
+  ipcMain.handle("ollama:send", async (_event, { sessionId, text, cwd, model }: { sessionId: string; text: string; cwd?: string; model?: string }) => {
+    let session = sessions.get(sessionId);
+    if (!session && cwd) {
+      const sessionModel = model || getDefaultModel();
+      session = {
+        messages: [{ role: "system", content: buildSystemPrompt(cwd) }],
+        cwd,
+        model: sessionModel,
+        contextSize: await fetchModelContextSize(sessionModel),
+        abortController: null,
+        state: freshState(),
+      };
+      sessions.set(sessionId, session);
+      triggerIndex(cwd);
+      log("OLLAMA", `auto-revived session ${sessionId} (cwd=${cwd}, model=${sessionModel})`);
+    }
+    if (!session) return { error: "Session expired — please start a new chat" };
 
     session.state.originalRequest = text;
 
@@ -858,6 +1142,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     session.abortController = controller;
 
     emit(getMainWindow, sessionId, "lifecycle:start", {});
+    emitContextUsage(getMainWindow, sessionId, session);
 
     try {
       let loopCount = 0;
@@ -896,6 +1181,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
               }),
             });
             emit(getMainWindow, sessionId, "lifecycle:start", {});
+        emitContextUsage(getMainWindow, sessionId, session);
             continue;
           }
 
@@ -917,13 +1203,35 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
         const results = await executeToolRequests(toolRequests, session.cwd, session.state, getMainWindow, sessionId);
 
         const feedback = buildToolFeedback(results, session.state);
-        session.messages.push({ role: "user", content: feedback });
+        const isLoop = detectLoop(session.state, toolRequests);
+
+        if (isLoop) {
+          log("OLLAMA", `repetitive loop detected at iteration ${loopCount} — asking model to reconsider`);
+          const loopWarning = JSON.stringify({
+            type: "loop_warning",
+            message: "You are repeating the same tool calls with the same arguments. You are stuck in a loop.",
+            instruction: "Stop and think from a different perspective. Summarize what you have done so far, what is not working, and try a completely different approach. If you have enough information, just answer the user's question now.",
+            repeated_tool: toolSignature(toolRequests),
+            loops_used: loopCount,
+            tools_called: session.state.toolCallCount,
+            files_read: session.state.filesRead,
+            files_modified: session.state.filesModified,
+            original_request: session.state.originalRequest,
+          });
+          session.messages.push({ role: "user", content: feedback + "\n\n" + loopWarning });
+        } else {
+          session.messages.push({ role: "user", content: feedback });
+        }
 
         emit(getMainWindow, sessionId, "lifecycle:start", {});
+        emitContextUsage(getMainWindow, sessionId, session);
       }
 
       if (loopCount >= MAX_TOOL_LOOPS) {
-        emit(getMainWindow, sessionId, "chat:error", { message: "Limite de chamadas de ferramentas atingido (6 loops)" });
+        log("OLLAMA", `hard limit reached (${MAX_TOOL_LOOPS})`);
+        emit(getMainWindow, sessionId, "chat:final", {
+          message: session.messages.filter((m) => m.role === "assistant").pop()?.content ?? "",
+        });
       }
     } catch (err) {
       if ((err as Error).name === "AbortError") {

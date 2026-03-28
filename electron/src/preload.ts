@@ -322,8 +322,8 @@ contextBridge.exposeInMainWorld("claude", {
   ollama: {
     start: (options: { cwd: string; model?: string }) =>
       ipcRenderer.invoke("ollama:start", options),
-    send: (sessionId: string, text: string) =>
-      ipcRenderer.invoke("ollama:send", { sessionId, text }),
+    send: (sessionId: string, text: string, cwd?: string, model?: string) =>
+      ipcRenderer.invoke("ollama:send", { sessionId, text, cwd, model }),
     stop: (sessionId: string) => ipcRenderer.invoke("ollama:stop", sessionId),
     interrupt: (sessionId: string) => ipcRenderer.invoke("ollama:interrupt", sessionId),
     status: () => ipcRenderer.invoke("ollama:status"),
@@ -382,6 +382,13 @@ contextBridge.exposeInMainWorld("claude", {
   settings: {
     get: () => ipcRenderer.invoke("settings:get"),
     set: (patch: Record<string, unknown>) => ipcRenderer.invoke("settings:set", patch),
+  },
+  webSearch: {
+    test: (providerId: string) => ipcRenderer.invoke("web-search:test", providerId),
+    history: (limit?: number) => ipcRenderer.invoke("web-search:history", limit),
+    stats: () => ipcRenderer.invoke("web-search:stats"),
+    clearExpired: () => ipcRenderer.invoke("web-search:clear-expired"),
+    clearAll: () => ipcRenderer.invoke("web-search:clear-all"),
   },
   jira: {
     getConfig: (projectId: string) => ipcRenderer.invoke("jira:get-config", projectId),
