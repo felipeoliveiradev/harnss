@@ -678,7 +678,13 @@ async function streamOllamaChat(
 
         if (parsed.message?.content) {
           fullContent += parsed.message.content;
-          emit(getMainWindow, sessionId, "chat:delta", { text: fullContent });
+          const visible = fullContent
+            .replace(/<think>[\s\S]*?<\/think>/g, "")
+            .replace(/<think>[\s\S]*$/, "")
+            .trim();
+          if (visible) {
+            emit(getMainWindow, sessionId, "chat:delta", { text: visible });
+          }
         }
 
         if (parsed.message?.tool_calls) {
@@ -701,7 +707,12 @@ async function streamOllamaChat(
     }
   }
 
-  return { content: fullContent, toolCalls, promptTokens, completionTokens };
+  const cleanContent = fullContent
+    .replace(/<think>[\s\S]*?<\/think>/g, "")
+    .replace(/<\/?think>/g, "")
+    .trim();
+
+  return { content: cleanContent, toolCalls, promptTokens, completionTokens };
 }
 
 // ── IPC registration ───────────────────────────────────────────────────────────
