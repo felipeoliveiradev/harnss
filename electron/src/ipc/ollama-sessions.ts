@@ -10,6 +10,7 @@ import { triggerIndex, compressConversation } from "../lib/rag/index";
 import { webSearch, formatWebResults } from "../lib/rag/web-search";
 import { crawlUrl } from "../lib/rag/web-crawl";
 import { filterFiles } from "../lib/harnssignore";
+import { getMcpToolsForOllama, executeMcpTool, disconnectMcpBridge, type McpBridgeState } from "../lib/mcp-bridge";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -40,6 +41,8 @@ interface OllamaSession {
   contextSize: number;
   abortController: AbortController | null;
   state: SessionState;
+  mcpBridge: McpBridgeState | null;
+  mcpTools: Array<{ type: "function"; function: { name: string; description: string; parameters: { type: "object"; properties: Record<string, unknown>; required?: string[] } } }>;
 }
 
 interface ToolResult {
@@ -649,6 +652,31 @@ async function executeToolCall(
   }
 }
 
+async function executeMcpToolCall(
+  call: OllamaToolCall,
+  session: OllamaSession,
+  getMainWindow: () => BrowserWindow | null,
+  sessionId: string,
+): Promise<ToolResult> {
+  const name = call.function.name;
+  const args = call.function.arguments as Record<string, unknown>;
+  const toolId = `ollama-mcp-${crypto.randomUUID().slice(0, 8)}`;
+  const mapping = session.mcpBridge?.toolMap.get(name);
+  const displayName = mapping ? `mcp__${mapping.serverName}__${mapping.originalName}` : name;
+
+  safeSend(getMainWindow, "ollama:event", { _sessionId: sessionId, type: "tool:start", payload: { toolUseId: toolId, toolName: displayName, input: args }, _seq: 0 });
+
+  try {
+    const result = await executeMcpTool(session.mcpBridge!, name, args);
+    safeSend(getMainWindow, "ollama:event", { _sessionId: sessionId, type: "tool:result", payload: { toolUseId: toolId, toolName: displayName, result: { content: result.slice(0, 500) + (result.length > 500 ? "\n..." : "") } }, _seq: 0 });
+    return { toolName: displayName, input: args as Record<string, string>, result: `${displayName}: OK`, content: result };
+  } catch (err) {
+    const msg = (err as Error).message;
+    safeSend(getMainWindow, "ollama:event", { _sessionId: sessionId, type: "tool:result", payload: { toolUseId: toolId, toolName: displayName, result: { error: msg } }, _seq: 0 });
+    return { toolName: displayName, input: args as Record<string, string>, result: msg, content: `Error: ${msg}` };
+  }
+}
+
 // ── Native streaming ───────────────────────────────────────────────────────────
 
 interface StreamResult {
@@ -671,7 +699,7 @@ async function streamOllamaChat(
     body: JSON.stringify({
       model: session.model,
       messages: compressConversation(session.messages as Array<{ role: string; content: string }>),
-      tools: OLLAMA_TOOLS,
+      tools: [...OLLAMA_TOOLS, ...session.mcpTools],
       think: true,
       stream: true,
     }),
@@ -759,10 +787,27 @@ async function streamOllamaChat(
 // ── IPC registration ───────────────────────────────────────────────────────────
 
 export function register(getMainWindow: () => BrowserWindow | null): void {
-  ipcMain.handle("ollama:start", async (_event, { cwd, model }: { cwd: string; model?: string }) => {
+  ipcMain.handle("ollama:start", async (_event, { cwd, model, projectId }: { cwd: string; model?: string; projectId?: string }) => {
     const sessionId = crypto.randomUUID();
     const sessionModel = model || getDefaultModel();
     const contextSize = await fetchModelContextSize(sessionModel);
+
+    let mcpBridge: McpBridgeState | null = null;
+    let mcpTools: OllamaSession["mcpTools"] = [];
+
+    if (projectId) {
+      try {
+        const result = await getMcpToolsForOllama(projectId);
+        mcpBridge = result.state;
+        mcpTools = result.tools;
+        if (mcpTools.length > 0) {
+          log("OLLAMA", `session ${sessionId}: ${mcpTools.length} MCP tool(s) loaded`);
+        }
+      } catch (err) {
+        log("OLLAMA", `MCP init failed (continuing without): ${(err as Error).message}`);
+      }
+    }
+
     sessions.set(sessionId, {
       messages: [{ role: "system", content: buildSystemPrompt(cwd) }],
       cwd,
@@ -770,6 +815,8 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
       contextSize,
       abortController: null,
       state: freshState(),
+      mcpBridge,
+      mcpTools,
     });
 
     triggerIndex(cwd);
@@ -788,6 +835,8 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
         contextSize: await fetchModelContextSize(sessionModel),
         abortController: null,
         state: freshState(),
+        mcpBridge: null,
+        mcpTools: [],
       };
       sessions.set(sessionId, session);
       triggerIndex(cwd);
@@ -872,7 +921,10 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
         for (const call of streamResult.toolCalls) {
           if (ops >= MAX_TOOL_OPS) break;
           ops++;
-          const result = await executeToolCall(call, session.cwd, session.state, getMainWindow, sessionId);
+          const isMcp = call.function.name.startsWith("mcp_") && session.mcpBridge?.toolMap.has(call.function.name);
+          const result = isMcp
+            ? await executeMcpToolCall(call, session, getMainWindow, sessionId)
+            : await executeToolCall(call, session.cwd, session.state, getMainWindow, sessionId);
           session.messages.push({ role: "tool", content: result.content });
         }
 
@@ -914,6 +966,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     const session = sessions.get(sessionId);
     if (session) {
       session.abortController?.abort();
+      if (session.mcpBridge) disconnectMcpBridge(session.mcpBridge);
       sessions.delete(sessionId);
     }
     safeSend(getMainWindow, "ollama:exit", { _sessionId: sessionId });

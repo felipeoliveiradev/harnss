@@ -531,6 +531,7 @@ export function useDraftMaterialization({
 
         const result = await window.claude.ollama.start({
           cwd: getProjectCwd(project),
+          projectId: project.id,
           ...(options.model ? { model: options.model } : {}),
         });
 

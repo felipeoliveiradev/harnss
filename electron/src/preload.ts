@@ -320,7 +320,7 @@ contextBridge.exposeInMainWorld("claude", {
     },
   },
   ollama: {
-    start: (options: { cwd: string; model?: string }) =>
+    start: (options: { cwd: string; model?: string; projectId?: string }) =>
       ipcRenderer.invoke("ollama:start", options),
     send: (sessionId: string, text: string, cwd?: string, model?: string) =>
       ipcRenderer.invoke("ollama:send", { sessionId, text, cwd, model }),

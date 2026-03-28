@@ -233,6 +233,7 @@ export function useSecondaryPane(): SecondaryPaneState {
       } else if (draftEngine === "ollama") {
         const result = await window.claude.ollama.start({
           cwd: await getProjectCwd(projectId),
+          projectId,
           ...(options?.model ? { model: options.model } : {}),
         });
         if (result.error || !result.sessionId) {

@@ -352,7 +352,7 @@ declare global {
         onExit: (callback: (data: CodexExitEvent) => void) => () => void;
       };
       ollama: {
-        start: (options: { cwd: string; model?: string }) => Promise<{ sessionId: string; error?: string }>;
+        start: (options: { cwd: string; model?: string; projectId?: string }) => Promise<{ sessionId: string; error?: string }>;
         send: (sessionId: string, text: string, cwd?: string, model?: string) => Promise<{ ok?: boolean; error?: string }>;
         stop: (sessionId: string) => Promise<{ ok?: boolean; error?: string }>;
         interrupt: (sessionId: string) => Promise<{ ok?: boolean; error?: string }>;
