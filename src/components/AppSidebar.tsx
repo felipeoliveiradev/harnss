@@ -5,10 +5,12 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { ChatSession, InstalledAgent, Project, Space } from "@/types";
 import { APP_SIDEBAR_WIDTH } from "@/lib/layout-constants";
+import type { WorkspaceMode } from "@/hooks/useSettings";
 import { SidebarSearch } from "./SidebarSearch";
 import { SpaceBar } from "./SpaceBar";
 import { UpdateBanner } from "./UpdateBanner";
 import { ProjectSection } from "./sidebar/ProjectSection";
+import { WorkspaceModeToggle } from "./sidebar/WorkspaceModeToggle";
 
 interface AppSidebarProps {
   isOpen: boolean;
@@ -39,7 +41,13 @@ interface AppSidebarProps {
   onEditSpace: (space: Space) => void;
   onDeleteSpace: (id: string) => void;
   onOpenSettings: () => void;
+  workspaceMode: WorkspaceMode;
+  onWorkspaceModeChange: (mode: WorkspaceMode) => void;
   agents?: InstalledAgent[];
+  /** Session ID open in pane 0 (primary) — for split chat badges */
+  pane0SessionId?: string | null;
+  /** Session ID open in pane 1 (secondary) — for split chat badges */
+  pane1SessionId?: string | null;
 }
 
 export const AppSidebar = memo(function AppSidebar({
@@ -71,7 +79,11 @@ export const AppSidebar = memo(function AppSidebar({
   onEditSpace,
   onDeleteSpace,
   onOpenSettings,
+  workspaceMode,
+  onWorkspaceModeChange,
   agents,
+  pane0SessionId,
+  pane1SessionId,
 }: AppSidebarProps) {
   // Load default chat limit from main-process settings
   const [defaultChatLimit, setDefaultChatLimit] = useState(10);
@@ -208,6 +220,10 @@ export const AppSidebar = memo(function AppSidebar({
         onNavigateToMessage={onNavigateToMessage}
         onSelectSession={onSelectSession}
       />
+      <WorkspaceModeToggle
+        mode={workspaceMode}
+        onChange={onWorkspaceModeChange}
+      />
 
       <div
         className="min-h-0 flex-1"
@@ -251,6 +267,8 @@ export const AppSidebar = memo(function AppSidebar({
                   }
                   defaultChatLimit={defaultChatLimit}
                   agents={agents}
+                  pane0SessionId={pane0SessionId}
+                  pane1SessionId={pane1SessionId}
                 />
               );
             })}

@@ -1,6 +1,6 @@
 {
   "name": "harnss",
-  "version": "0.21.4",
+  "version": "0.21.5",
   "productName": "Harnss",
   "description": "Harness your AI coding agents — one desktop app for Claude Code, Codex, and any ACP agent",
   "author": {
@@ -37,8 +37,9 @@
     "@monaco-editor/react": "^4.7.0",
     "@posthog/react": "^1.8.2",
     "@tanstack/react-virtual": "^3.13.22",
+    "better-sqlite3": "^12.8.0",
     "electron-context-menu": "^4.1.1",
-    "electron-liquid-glass": "^1.1.1",
+    "electron-liquid-glass": "github:darkkatarsis/electron-liquid-glass",
     "electron-updater": "^6.8.3",
     "konva": "^10.2.0",
     "mermaid": "^11.13.0",
@@ -48,17 +49,20 @@
     "posthog-node": "^4.3.1",
     "react-konva": "^19.2.3",
     "refractor": "^5.0.0",
-    "sonner": "^2.0.7"
+    "sonner": "^2.0.7",
+    "ws": "^8.19.0"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.3",
     "@tailwindcss/typography": "^0.5.19",
     "@tailwindcss/vite": "^4.1.18",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/hast": "^3.0.4",
     "@types/node": "^25.2.3",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@types/react-syntax-highlighter": "^15.5.13",
+    "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^5.1.4",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",

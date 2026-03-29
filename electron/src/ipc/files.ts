@@ -103,8 +103,7 @@ async function listProjectFiles(cwd: string): Promise<string[]> {
   }
 }
 
-/** Dirs to skip in the full filesystem walk (VCS internals + massive dependency dirs). */
-const EXPLORER_SKIP = new Set([".git", ".hg", ".svn", "node_modules"]);
+// EXPLORER_DEEP_SKIP is defined inside listAllFiles below
 
 // ── Recursive file watcher ──
 // Uses a single fs.watch(cwd, { recursive: true }) per project root.
@@ -170,18 +169,32 @@ function stopProjectWatcher(cwd: string): void {
 }
 
 /**
- * Walk the filesystem including gitignored files.
- * Only skips VCS internals and node_modules (too massive).
- * Used by the "Project Files" explorer panel.
+ * Directories whose children are never pre-loaded (too large to scan upfront).
+ * They still appear in the tree as expandable nodes.
+ * Mirrors VS Code's behavior with node_modules and common dependency dirs.
  */
-async function listAllFiles(cwd: string, maxFiles = 10000): Promise<string[]> {
-  const files: string[] = [];
-  const queue: string[] = [""];
-  let visitedDirs = 0;
+const EXPLORER_DEEP_SKIP = new Set([
+  "node_modules",
+  "vendor",       // PHP / Composer
+  ".git", ".hg", ".svn",
+]);
 
-  while (queue.length > 0 && files.length < maxFiles) {
+/**
+ * Walk the filesystem including gitignored files.
+ * Directory structure is always fully discovered (no depth/count limit on dirs).
+ * Files inside EXPLORER_DEEP_SKIP dirs are not pre-loaded (dirs still appear in tree).
+ * Matches VS Code explorer behavior: shows all files + empty directories + symlinked files.
+ */
+async function listAllFiles(cwd: string, maxFiles = 50000): Promise<{ files: string[]; emptyDirs: string[] }> {
+  const files: string[] = [];
+  const visitedDirSet = new Set<string>(); // all non-root dirs we entered
+  const queue: string[] = [""];
+  let visited = 0;
+
+  while (queue.length > 0) {
     const rel = queue.shift()!;
     const abs = rel ? path.join(cwd, rel) : cwd;
+    if (rel) visitedDirSet.add(rel);
 
     let entries: fs.Dirent[];
     try {
@@ -194,20 +207,42 @@ async function listAllFiles(cwd: string, maxFiles = 10000): Promise<string[]> {
       const entryRel = rel ? `${rel}/${entry.name}` : entry.name;
 
       if (entry.isDirectory()) {
-        if (EXPLORER_SKIP.has(entry.name)) continue;
+        if (EXPLORER_DEEP_SKIP.has(entry.name)) {
+          // Show the dir in the tree but don't recurse into it
+          visitedDirSet.add(entryRel);
+          continue;
+        }
         queue.push(entryRel);
       } else if (entry.isFile()) {
-        files.push(entryRel);
+        if (files.length < maxFiles) files.push(entryRel);
+      } else if (entry.isSymbolicLink()) {
+        // Follow file symlinks only (skip dir symlinks to avoid infinite loops)
+        try {
+          const stat = await fsPromises.stat(path.join(abs, entry.name));
+          if (stat.isFile() && files.length < maxFiles) files.push(entryRel);
+        } catch {
+          // Broken symlink — skip silently
+        }
       }
     }
 
-    visitedDirs += 1;
-    if (visitedDirs % 25 === 0) {
+    visited += 1;
+    if (visited % 25 === 0) {
       await yieldToEventLoop();
     }
   }
 
-  return files.sort();
+  // Find dirs that have NO files inside them at any depth (empty dirs)
+  const dirsWithFiles = new Set<string>();
+  for (const f of files) {
+    const parts = f.split("/");
+    for (let i = 1; i < parts.length; i++) {
+      dirsWithFiles.add(parts.slice(0, i).join("/"));
+    }
+  }
+  const emptyDirs = [...visitedDirSet].filter((d) => !dirsWithFiles.has(d)).sort();
+
+  return { files: files.sort(), emptyDirs };
 }
 
 interface TreeNode {
@@ -262,6 +297,17 @@ function buildFolderTree(dirPrefix: string, filePaths: string[]): string {
   return dirPrefix + "\n" + lines.join("\n");
 }
 
+function resolveProjectPath(cwd: string, relPath: string): { absPath?: string; error?: string } {
+  const projectRoot = path.resolve(cwd);
+  const candidate = relPath.trim();
+  if (!candidate) return { error: "Path is required" };
+  const absPath = path.resolve(projectRoot, candidate);
+  if (!absPath.startsWith(projectRoot + path.sep) && absPath !== projectRoot) {
+    return { error: "Path outside project directory" };
+  }
+  return { absPath };
+}
+
 export function register(getMainWindow: () => BrowserWindow | null): void {
   ipcMain.handle("shell:open-external", async (_event, url: string) => {
     try {
@@ -293,16 +339,8 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
 
   ipcMain.handle("files:list-all", async (_event, cwd: string) => {
     try {
-      const files = await listAllFiles(cwd);
-      const dirSet = new Set<string>();
-      for (const file of files) {
-        const parts = file.split("/");
-        for (let i = 1; i < parts.length; i++) {
-          dirSet.add(parts.slice(0, i).join("/") + "/");
-        }
-      }
-      const dirs = Array.from(dirSet).sort();
-      return { files, dirs };
+      const { files, emptyDirs } = await listAllFiles(cwd);
+      return { files, dirs: emptyDirs };
     } catch (err) {
       reportError("FILES:LIST_ALL_ERR", err);
       return { files: [], dirs: [] };
@@ -479,6 +517,120 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
       }
     }
     return results;
+  });
+
+  ipcMain.handle("files:create-file", async (_event, { cwd, path: relPath, content }: { cwd: string; path: string; content?: string }) => {
+    const resolved = resolveProjectPath(cwd, relPath);
+    if (resolved.error) return { error: resolved.error };
+    const absPath = resolved.absPath!;
+
+    try {
+      await fs.promises.mkdir(path.dirname(absPath), { recursive: true });
+      const exists = fs.existsSync(absPath);
+      if (exists) return { error: "File already exists" };
+      await fs.promises.writeFile(absPath, content ?? "", "utf-8");
+      return { ok: true };
+    } catch (err) {
+      const errMsg = reportError("FILES:CREATE_FILE_ERR", err, { cwd, relPath });
+      return { error: errMsg };
+    }
+  });
+
+  ipcMain.handle("files:create-directory", async (_event, { cwd, path: relPath }: { cwd: string; path: string }) => {
+    const resolved = resolveProjectPath(cwd, relPath);
+    if (resolved.error) return { error: resolved.error };
+    const absPath = resolved.absPath!;
+
+    try {
+      if (fs.existsSync(absPath)) return { error: "Directory already exists" };
+      await fs.promises.mkdir(absPath, { recursive: true });
+      return { ok: true };
+    } catch (err) {
+      const errMsg = reportError("FILES:CREATE_DIRECTORY_ERR", err, { cwd, relPath });
+      return { error: errMsg };
+    }
+  });
+
+  ipcMain.handle("files:write-file", async (_event, { cwd, path: relPath, content }: { cwd: string; path: string; content: string }) => {
+    const resolved = resolveProjectPath(cwd, relPath);
+    if (resolved.error) return { error: resolved.error };
+    const absPath = resolved.absPath!;
+
+    try {
+      const stat = await fs.promises.stat(absPath);
+      if (!stat.isFile()) return { error: "Target is not a file" };
+      await fs.promises.writeFile(absPath, content, "utf-8");
+      return { ok: true };
+    } catch (err) {
+      const errMsg = reportError("FILES:WRITE_FILE_ERR", err, { cwd, relPath });
+      return { error: errMsg };
+    }
+  });
+
+  ipcMain.handle("files:rename", async (_event, { cwd, fromPath, toPath }: { cwd: string; fromPath: string; toPath: string }) => {
+    const resolvedFrom = resolveProjectPath(cwd, fromPath);
+    if (resolvedFrom.error) return { error: resolvedFrom.error };
+    const resolvedTo = resolveProjectPath(cwd, toPath);
+    if (resolvedTo.error) return { error: resolvedTo.error };
+
+    const absFrom = resolvedFrom.absPath!;
+    const absTo = resolvedTo.absPath!;
+
+    try {
+      if (!fs.existsSync(absFrom)) return { error: "Source path does not exist" };
+      if (fs.existsSync(absTo)) return { error: "Destination path already exists" };
+      await fs.promises.mkdir(path.dirname(absTo), { recursive: true });
+      await fs.promises.rename(absFrom, absTo);
+      return { ok: true };
+    } catch (err) {
+      const errMsg = reportError("FILES:RENAME_ERR", err, { cwd, fromPath, toPath });
+      return { error: errMsg };
+    }
+  });
+
+  ipcMain.handle("files:copy", async (_event, { cwd, fromPath, toPath }: { cwd: string; fromPath: string; toPath: string }) => {
+    const resolvedFrom = resolveProjectPath(cwd, fromPath);
+    if (resolvedFrom.error) return { error: resolvedFrom.error };
+    const resolvedTo = resolveProjectPath(cwd, toPath);
+    if (resolvedTo.error) return { error: resolvedTo.error };
+
+    const absFrom = resolvedFrom.absPath!;
+    const absTo = resolvedTo.absPath!;
+
+    try {
+      if (!fs.existsSync(absFrom)) return { error: "Source path does not exist" };
+      if (fs.existsSync(absTo)) return { error: "Destination path already exists" };
+      await fs.promises.mkdir(path.dirname(absTo), { recursive: true });
+      const stat = await fs.promises.stat(absFrom);
+      if (stat.isDirectory()) {
+        await fs.promises.cp(absFrom, absTo, { recursive: true, errorOnExist: true, force: false });
+      } else {
+        await fs.promises.copyFile(absFrom, absTo, fs.constants.COPYFILE_EXCL);
+      }
+      return { ok: true };
+    } catch (err) {
+      const errMsg = reportError("FILES:COPY_ERR", err, { cwd, fromPath, toPath });
+      return { error: errMsg };
+    }
+  });
+
+  ipcMain.handle("files:delete", async (_event, { cwd, path: relPath }: { cwd: string; path: string }) => {
+    const resolved = resolveProjectPath(cwd, relPath);
+    if (resolved.error) return { error: resolved.error };
+    const absPath = resolved.absPath!;
+
+    try {
+      const stat = await fs.promises.stat(absPath);
+      if (stat.isDirectory()) {
+        await fs.promises.rm(absPath, { recursive: true, force: false });
+      } else {
+        await fs.promises.unlink(absPath);
+      }
+      return { ok: true };
+    } catch (err) {
+      const errMsg = reportError("FILES:DELETE_ERR", err, { cwd, relPath });
+      return { error: errMsg };
+    }
   });
 
   ipcMain.handle("file:read", async (_event, filePath: string) => {

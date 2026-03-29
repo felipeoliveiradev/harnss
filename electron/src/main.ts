@@ -1,5 +1,7 @@
 import { execSync } from "child_process";
-import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, Menu, session, shell, systemPreferences } from "electron";
+import { createHash } from "crypto";
+import fs from "fs";
+import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, Menu, nativeTheme, session, shell, systemPreferences } from "electron";
 import path from "path";
 import http from "http";
 import contextMenu from "electron-context-menu";
@@ -22,7 +24,7 @@ if (process.platform !== "win32") {
 import { log } from "./lib/logger";
 import { reportError } from "./lib/error-utils";
 import { migrateFromOpenAcpUi } from "./lib/migration";
-import { glassEnabled, liquidGlass } from "./lib/glass";
+import { glassEnabled, applyGlass, setGlassTint } from "./lib/glass";
 import { initAutoUpdater, getIsInstallingUpdate } from "./lib/updater";
 import { initPostHog, shutdownPostHog, reinitPostHog, captureEvent } from "./lib/posthog";
 import { sessions } from "./ipc/claude-sessions";
@@ -40,10 +42,18 @@ import * as claudeSessionsIpc from "./ipc/claude-sessions";
 import * as titleGenIpc from "./ipc/title-gen";
 import * as terminalIpc from "./ipc/terminal";
 import * as gitIpc from "./ipc/git";
+import * as executionsIpc from "./ipc/executions";
+import * as searchIpc from "./ipc/search";
 import * as agentRegistryIpc from "./ipc/agent-registry";
 import * as acpSessionsIpc from "./ipc/acp-sessions";
 import * as codexSessionsIpc from "./ipc/codex-sessions";
+import * as ollamaSessionsIpc from "./ipc/ollama-sessions";
+import * as webSearchIpc from "./ipc/web-search";
+import * as openclawSessionsIpc from "./ipc/openclaw-sessions";
 import * as mcpIpc from "./ipc/mcp";
+import * as mcpRegistryIpc from "./ipc/mcp-registry";
+import * as skillsRegistryIpc from "./ipc/skills-registry";
+import { registerGroupSessionHandlers } from "./ipc/group-sessions";
 import * as settingsIpc from "./ipc/settings";
 import * as jiraIpc from "./ipc/jira";
 import * as previewIpc from "./ipc/preview";
@@ -56,12 +66,26 @@ app.commandLine.appendSwitch("ignore-gpu-blocklist"); // use GPU even on blockli
 app.commandLine.appendSwitch("enable-features", "CanvasOopRasterization"); // off-main-thread canvas
 
 // --- Liquid Glass command-line switches ---
+const remoteDebugPort = process.env.ELECTRON_REMOTE_DEBUG_PORT
+  ? process.env.ELECTRON_REMOTE_DEBUG_PORT
+  : String(9222 + (process.pid % 1000));
+
 if (glassEnabled) {
-  app.commandLine.appendSwitch("remote-debugging-port", "9222");
+  // Avoid collisions when multiple local clones are running in parallel.
+  app.commandLine.appendSwitch("remote-debugging-port", remoteDebugPort);
   app.commandLine.appendSwitch("remote-allow-origins", "*");
 }
 
 let mainWindow: BrowserWindow | null = null;
+let appQuitting = false;
+
+if (!app.isPackaged) {
+  // Isolate Electron profile per local clone to avoid cross-clone collisions.
+  const cloneHash = createHash("sha1").update(process.cwd()).digest("hex").slice(0, 8);
+  const userDataPath = path.join(app.getPath("appData"), `Harnss-dev-${cloneHash}`);
+  fs.mkdirSync(userDataPath, { recursive: true });
+  app.setPath("userData", userDataPath);
+}
 
 function getMainWindow(): BrowserWindow | null {
   return mainWindow;
@@ -111,10 +135,52 @@ function createWindow(): void {
   }
 
   mainWindow = new BrowserWindow(windowOptions);
+  const isDev = !app.isPackaged;
 
   mainWindow.once("ready-to-show", () => {
     mainWindow?.show();
+    mainWindow?.focus();
   });
+  mainWindow.webContents.on("did-finish-load", () => {
+    log("WINDOW", "Renderer did-finish-load");
+  });
+  mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
+    log("WINDOW", `did-fail-load code=${errorCode} desc=${errorDescription} url=${validatedURL}`);
+    // Keep window visible even when renderer load fails, so the user can see error state.
+    if (mainWindow && !mainWindow.isVisible()) {
+      mainWindow.show();
+    }
+  });
+  mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    log("WINDOW", `render-process-gone reason=${details.reason} exitCode=${details.exitCode}`);
+  });
+  mainWindow.on("unresponsive", () => {
+    log("WINDOW", "window became unresponsive");
+  });
+  mainWindow.on("closed", () => {
+    log("WINDOW", "main window closed");
+    mainWindow = null;
+    if (!appQuitting && !app.isPackaged) {
+      // In dev, auto-recover if the window disappears unexpectedly.
+      setTimeout(() => {
+        if (!mainWindow) {
+          log("WINDOW", "recreating window after unexpected close (dev)");
+          createWindow();
+        }
+      }, 200);
+    }
+  });
+
+  if (isDev) {
+    // In dev, force visibility in case ready-to-show never fires (e.g. bad URL/port race).
+    setTimeout(() => {
+      if (mainWindow && !mainWindow.isVisible()) {
+        log("WINDOW", "Forcing show() fallback in dev");
+        mainWindow.show();
+        mainWindow.focus();
+      }
+    }, 2000);
+  }
 
   contextMenu({
     window: mainWindow,
@@ -123,9 +189,8 @@ function createWindow(): void {
     showInspectElement: false,
   });
 
-  const isDev = !app.isPackaged;
   if (isDev) {
-    mainWindow.loadURL("http://localhost:5173");
+    void loadDevServerURL(mainWindow);
   } else {
     mainWindow.loadFile(path.join(__dirname, "../../dist/index.html"));
   }
@@ -143,13 +208,56 @@ function createWindow(): void {
   if (glassEnabled) {
     // macOS: apply liquid glass after content loads
     mainWindow.webContents.once("did-finish-load", () => {
-      const glassId = liquidGlass!.addView(mainWindow!.getNativeWindowHandle(), {});
+      const glassId = applyGlass(mainWindow!.getNativeWindowHandle());
       if (glassId === -1) {
         log("GLASS", "addView returned -1 — native addon failed, glass will not be visible");
       } else {
         log("GLASS", `Liquid glass applied, viewId=${glassId}`);
       }
     });
+
+  }
+}
+
+function checkURL(url: string, timeoutMs = 1200): Promise<boolean> {
+  return new Promise((resolve) => {
+    const req = http.get(url, (res) => {
+      const ok = (res.statusCode ?? 0) >= 200 && (res.statusCode ?? 0) < 500;
+      res.resume();
+      resolve(ok);
+    });
+    req.on("error", () => resolve(false));
+    req.setTimeout(timeoutMs, () => {
+      req.destroy();
+      resolve(false);
+    });
+  });
+}
+
+async function resolveDevServerURL(): Promise<string> {
+  const envURL = process.env.VITE_DEV_SERVER_URL?.trim();
+  if (envURL && await checkURL(envURL)) {
+    return envURL;
+  }
+
+  // Vite defaults to 5173 and auto-increments when occupied.
+  for (let port = 5173; port <= 5200; port += 1) {
+    const candidate = `http://localhost:${port}`;
+    if (await checkURL(candidate)) {
+      return candidate;
+    }
+  }
+
+  return "http://localhost:5173";
+}
+
+async function loadDevServerURL(window: BrowserWindow): Promise<void> {
+  const url = await resolveDevServerURL();
+  try {
+    await window.loadURL(url);
+    log("DEV_SERVER", `Loaded renderer from ${url}`);
+  } catch (err) {
+    reportError("DEV_SERVER", err, { url });
   }
 }
 
@@ -183,6 +291,29 @@ ipcMain.on("app:set-min-width", (_event, minWidth: number) => {
   }
 });
 
+// Native glass tint — re-creates glass view with updated tintColor.
+// The C++ addon auto-cleans previous views in a single dispatch_sync block.
+const GLASS_TINT_RE = /^#[0-9a-fA-F]{8}$/;
+ipcMain.on("glass:set-tint-color", (_event, tintColor: string | null) => {
+  if (!glassEnabled) return;
+  if (tintColor !== null && (typeof tintColor !== "string" || !GLASS_TINT_RE.test(tintColor))) {
+    log("GLASS", `Ignoring invalid tintColor: ${String(tintColor)}`);
+    return;
+  }
+  const viewId = setGlassTint(tintColor);
+  if (viewId >= 0) {
+    log("GLASS", `setTintColor=${tintColor}, viewId=${viewId}`);
+  }
+});
+
+// Glass appearance — force light/dark/system on the native layer so the
+// glass effect follows the app's theme setting, not just the OS preference.
+ipcMain.on("glass:set-theme", (_event, theme: string) => {
+  if (theme === "light" || theme === "dark" || theme === "system") {
+    nativeTheme.themeSource = theme;
+  }
+});
+
 // --- Register all IPC modules ---
 spacesIpc.register();
 projectsIpc.register(getMainWindow);
@@ -193,10 +324,18 @@ claudeSessionsIpc.register(getMainWindow);
 titleGenIpc.register();
 terminalIpc.register(getMainWindow);
 gitIpc.register();
+executionsIpc.register();
+searchIpc.register();
 agentRegistryIpc.register();
 acpSessionsIpc.register(getMainWindow);
 codexSessionsIpc.register(getMainWindow);
+ollamaSessionsIpc.register(getMainWindow);
+webSearchIpc.register();
+openclawSessionsIpc.register(getMainWindow);
+registerGroupSessionHandlers(getMainWindow);
 mcpIpc.register();
+mcpRegistryIpc.register();
+skillsRegistryIpc.register();
 settingsIpc.register();
 jiraIpc.register();
 previewIpc.register();
@@ -241,7 +380,7 @@ function openDevToolsWindow(): void {
     return;
   }
 
-  http.get("http://127.0.0.1:9222/json", (res) => {
+  http.get(`http://127.0.0.1:${remoteDebugPort}/json`, (res) => {
     let body = "";
     res.on("data", (chunk: Buffer) => { body += chunk; });
     res.on("end", () => {
@@ -358,6 +497,20 @@ app.whenReady().then(() => {
   }
 });
 
+app.on("activate", () => {
+  if (BrowserWindow.getAllWindows().length === 0) {
+    createWindow();
+  } else {
+    const focused = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+    focused?.show();
+    focused?.focus();
+  }
+});
+
+app.on("before-quit", () => {
+  appQuitting = true;
+});
+
 app.on("will-quit", (event) => {
   globalShortcut.unregisterAll();
 
@@ -382,6 +535,19 @@ app.on("will-quit", (event) => {
 });
 
 app.on("window-all-closed", () => {
+  log("WINDOW", "window-all-closed fired");
+
+  if (!appQuitting && !app.isPackaged) {
+    // Dev mode: keep process alive and recreate the window if it disappears.
+    setTimeout(() => {
+      if (!mainWindow && BrowserWindow.getAllWindows().length === 0) {
+        log("WINDOW", "recreating after window-all-closed (dev)");
+        createWindow();
+      }
+    }, 150);
+    return;
+  }
+
   for (const [sessionId, session] of sessions) {
     log("CLEANUP", `Closing session ${sessionId.slice(0, 8)}`);
     // Mark as stopping so event loops suppress expected teardown errors

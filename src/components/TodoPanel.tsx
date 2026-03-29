@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { CheckCircle2, Loader2, ListChecks } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { PanelHeader } from "@/components/PanelHeader";
@@ -100,7 +101,7 @@ function StepBadge({ index, status }: { index: number; status: TodoItem["status"
   );
 }
 
-export function TodoPanel({ todos }: TodoPanelProps) {
+export const TodoPanel = memo(function TodoPanel({ todos }: TodoPanelProps) {
   const items = getTodoItems(todos);
   const completed = items.filter((t) => t.status === "completed").length;
   const total = items.length;
@@ -193,4 +194,4 @@ export function TodoPanel({ todos }: TodoPanelProps) {
       </ScrollArea>
     </div>
   );
-}
+});

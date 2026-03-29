@@ -28,6 +28,22 @@ export const AdvancedSettings = memo(function AdvancedSettings({
   const [claudeCustomBinaryPath, setClaudeCustomBinaryPath] = useState("");
   const [showDevFillInChatTitleBar, setShowDevFillInChatTitleBar] = useState(false);
   const [showJiraBoard, setShowJiraBoard] = useState(false);
+  const [ollamaBaseUrl, setOllamaBaseUrl] = useState("http://localhost:11434");
+  const [ollamaDefaultModel, setOllamaDefaultModel] = useState("llama3");
+  const [ollamaTestStatus, setOllamaTestStatus] = useState<"idle" | "testing" | "connected" | "failed">("idle");
+  const [ollamaTestError, setOllamaTestError] = useState<string | null>(null);
+  const [ollamaModels, setOllamaModels] = useState<string[]>([]);
+  const [ollamaModelsLoading, setOllamaModelsLoading] = useState(false);
+  const [openclawGatewayUrl, setOpenclawGatewayUrl] = useState("ws://127.0.0.1:18789");
+  const [openclawDefaultModel, setOpenclawDefaultModel] = useState("");
+  const [openclawDefaultAgent, setOpenclawDefaultAgent] = useState("");
+  const [openclawDefaultSkills, setOpenclawDefaultSkills] = useState("");
+  const [openclawGatewayToken, setOpenclawGatewayToken] = useState("");
+  const [gatewayTestStatus, setGatewayTestStatus] = useState<"idle" | "testing" | "connected" | "failed">("idle");
+  const [gatewayTestError, setGatewayTestError] = useState<string | null>(null);
+  const [pairStatus, setPairStatus] = useState<"idle" | "pairing" | "paired" | "failed">("idle");
+  const [pairError, setPairError] = useState<string | null>(null);
+  const [isPaired, setIsPaired] = useState(false);
 
   useEffect(() => {
     if (appSettings) {
@@ -38,6 +54,14 @@ export const AdvancedSettings = memo(function AdvancedSettings({
       setClaudeCustomBinaryPath(appSettings.claudeCustomBinaryPath || "");
       setShowDevFillInChatTitleBar(!!appSettings.showDevFillInChatTitleBar);
       setShowJiraBoard(!!appSettings.showJiraBoard);
+      setOllamaBaseUrl(appSettings.ollamaBaseUrl || "http://localhost:11434");
+      setOllamaDefaultModel(appSettings.ollamaDefaultModel || "llama3");
+      setOpenclawGatewayUrl(appSettings.openclawGatewayUrl || "ws://127.0.0.1:18789");
+      setOpenclawDefaultModel(appSettings.openclawDefaultModel || "");
+      setOpenclawDefaultAgent(appSettings.openclawDefaultAgent || "");
+      setOpenclawDefaultSkills((appSettings.openclawDefaultSkills ?? []).join(", "));
+      setOpenclawGatewayToken(appSettings.openclawGatewayToken || "");
+      setIsPaired(!!appSettings.openclawDeviceToken);
     }
   }, [appSettings]);
 
@@ -101,6 +125,141 @@ export const AdvancedSettings = memo(function AdvancedSettings({
     },
     [onUpdateAppSettings],
   );
+
+  const handleOllamaBaseUrlSave = useCallback(
+    async (value: string) => {
+      const next = value.trim() || "http://localhost:11434";
+      setOllamaBaseUrl(next);
+      await onUpdateAppSettings({ ollamaBaseUrl: next });
+    },
+    [onUpdateAppSettings],
+  );
+
+  const handleOllamaDefaultModelSave = useCallback(
+    async (value: string) => {
+      const next = value.trim();
+      setOllamaDefaultModel(next);
+      await onUpdateAppSettings({ ollamaDefaultModel: next });
+    },
+    [onUpdateAppSettings],
+  );
+
+  const handleTestOllama = useCallback(async () => {
+    setOllamaTestStatus("testing");
+    setOllamaTestError(null);
+    try {
+      const result = await window.claude.ollama.status();
+      if (result.available) {
+        setOllamaTestStatus("connected");
+      } else {
+        setOllamaTestStatus("failed");
+        setOllamaTestError(result.error ?? "Connection failed");
+      }
+    } catch (err) {
+      setOllamaTestStatus("failed");
+      setOllamaTestError((err as Error).message || "Connection failed");
+    }
+    setTimeout(() => { setOllamaTestStatus("idle"); setOllamaTestError(null); }, 6000);
+  }, []);
+
+  const handleListOllamaModels = useCallback(async () => {
+    setOllamaModelsLoading(true);
+    try {
+      const result = await window.claude.ollama.listModels();
+      if (result.ok) {
+        setOllamaModels(result.models);
+      } else {
+        setOllamaModels([]);
+      }
+    } catch {
+      setOllamaModels([]);
+    } finally {
+      setOllamaModelsLoading(false);
+    }
+  }, []);
+
+  const handleOpenclawGatewayUrlSave = useCallback(
+    async (value: string) => {
+      const next = value.trim() || "ws://127.0.0.1:18789";
+      setOpenclawGatewayUrl(next);
+      await onUpdateAppSettings({ openclawGatewayUrl: next });
+    },
+    [onUpdateAppSettings],
+  );
+
+  const handleOpenclawModelSave = useCallback(
+    async (value: string) => {
+      const next = value.trim();
+      setOpenclawDefaultModel(next);
+      await onUpdateAppSettings({ openclawDefaultModel: next });
+    },
+    [onUpdateAppSettings],
+  );
+
+  const handleOpenclawAgentSave = useCallback(
+    async (value: string) => {
+      const next = value.trim();
+      setOpenclawDefaultAgent(next);
+      await onUpdateAppSettings({ openclawDefaultAgent: next });
+    },
+    [onUpdateAppSettings],
+  );
+
+  const handleOpenclawSkillsSave = useCallback(
+    async (value: string) => {
+      const next = value.trim();
+      setOpenclawDefaultSkills(next);
+      const skills = next ? next.split(",").map(s => s.trim()).filter(Boolean) : [];
+      await onUpdateAppSettings({ openclawDefaultSkills: skills });
+    },
+    [onUpdateAppSettings],
+  );
+
+  const handleGatewayTokenSave = useCallback(
+    async (value: string) => {
+      const next = value.trim();
+      setOpenclawGatewayToken(next);
+      await onUpdateAppSettings({ openclawGatewayToken: next });
+    },
+    [onUpdateAppSettings],
+  );
+
+  const handleTestGateway = useCallback(async () => {
+    setGatewayTestStatus("testing");
+    setGatewayTestError(null);
+    try {
+      const result = await window.claude.openclaw.status();
+      if (result.available) {
+        setGatewayTestStatus("connected");
+      } else {
+        setGatewayTestStatus("failed");
+        setGatewayTestError(result.error ?? "Connection failed");
+      }
+    } catch (err) {
+      setGatewayTestStatus("failed");
+      setGatewayTestError((err as Error).message || "Connection failed");
+    }
+    setTimeout(() => { setGatewayTestStatus("idle"); setGatewayTestError(null); }, 6000);
+  }, []);
+
+  const handlePair = useCallback(async () => {
+    setPairStatus("pairing");
+    setPairError(null);
+    try {
+      const result = await window.claude.openclaw.pair();
+      if (result.ok) {
+        setPairStatus("paired");
+        setIsPaired(true);
+      } else {
+        setPairStatus("failed");
+        setPairError(result.error ?? "Pairing failed");
+      }
+    } catch (err) {
+      setPairStatus("failed");
+      setPairError((err as Error).message || "Pairing failed");
+    }
+    setTimeout(() => { setPairStatus("idle"); setPairError(null); }, 6000);
+  }, []);
 
   const canConfigureDevFill = section === "advanced" && import.meta.env.DEV;
 
@@ -273,6 +432,266 @@ export const AdvancedSettings = memo(function AdvancedSettings({
               </SettingRow>
             )}
           </div>
+
+          {/* ── Ollama section ── */}
+          {section === "engines" && (
+            <div className="py-3">
+              <div className="mb-1 flex items-center gap-2">
+                <Server className="h-4 w-4 text-muted-foreground" />
+                <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                  Ollama
+                </span>
+              </div>
+
+              <SettingRow
+                label="Server URL"
+                description="Base URL of your local Ollama server."
+              >
+                <div className="flex flex-col gap-1.5">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={ollamaBaseUrl}
+                      onChange={(e) => setOllamaBaseUrl(e.target.value)}
+                      onBlur={(e) => handleOllamaBaseUrlSave(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") handleOllamaBaseUrlSave(e.currentTarget.value);
+                      }}
+                      spellCheck={false}
+                      className="h-8 w-64 rounded-md border border-foreground/10 bg-background px-2.5 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground hover:border-foreground/20 focus:border-foreground/30 focus:ring-1 focus:ring-foreground/20"
+                      placeholder="http://localhost:11434"
+                    />
+                    <button
+                      onClick={handleTestOllama}
+                      disabled={ollamaTestStatus === "testing"}
+                      className={`h-8 shrink-0 rounded-md border px-3 text-xs font-medium transition-colors ${
+                        ollamaTestStatus === "connected"
+                          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
+                          : ollamaTestStatus === "failed"
+                            ? "border-red-500/30 bg-red-500/10 text-red-400"
+                            : "border-foreground/10 bg-background text-foreground hover:border-foreground/20 hover:bg-foreground/[0.03]"
+                      }`}
+                    >
+                      {ollamaTestStatus === "testing" ? "Testing..." :
+                       ollamaTestStatus === "connected" ? "Connected" :
+                       ollamaTestStatus === "failed" ? "Failed" :
+                       "Test"}
+                    </button>
+                  </div>
+                  {ollamaTestError && (
+                    <p className="text-[11px] text-red-400">{ollamaTestError}</p>
+                  )}
+                </div>
+              </SettingRow>
+
+              <SettingRow
+                label="Default model"
+                description="Model to use for new Ollama sessions (e.g. llama3, mistral, codellama)."
+              >
+                <div className="flex flex-col gap-1.5">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={ollamaDefaultModel}
+                      onChange={(e) => setOllamaDefaultModel(e.target.value)}
+                      onBlur={(e) => handleOllamaDefaultModelSave(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") handleOllamaDefaultModelSave(e.currentTarget.value);
+                      }}
+                      spellCheck={false}
+                      className="h-8 w-60 rounded-md border border-foreground/10 bg-background px-2.5 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground hover:border-foreground/20 focus:border-foreground/30 focus:ring-1 focus:ring-foreground/20"
+                      placeholder="e.g. llama3, mistral, codellama"
+                    />
+                    <button
+                      onClick={handleListOllamaModels}
+                      disabled={ollamaModelsLoading}
+                      className="h-8 shrink-0 rounded-md border border-foreground/10 bg-background px-3 text-xs font-medium text-foreground transition-colors hover:border-foreground/20 hover:bg-foreground/[0.03]"
+                    >
+                      {ollamaModelsLoading ? "Loading..." : "List"}
+                    </button>
+                  </div>
+                  {ollamaModels.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {ollamaModels.map((model) => (
+                        <button
+                          key={model}
+                          onClick={() => {
+                            setOllamaDefaultModel(model);
+                            handleOllamaDefaultModelSave(model);
+                          }}
+                          className={`rounded px-2 py-0.5 text-[11px] transition-colors ${
+                            ollamaDefaultModel === model
+                              ? "bg-accent text-accent-foreground"
+                              : "bg-foreground/5 text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
+                          }`}
+                        >
+                          {model}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </SettingRow>
+            </div>
+          )}
+
+          {/* ── OpenClaw section ── */}
+          {section === "engines" && (
+            <div className="py-3">
+              <div className="mb-1 flex items-center gap-2">
+                <Server className="h-4 w-4 text-muted-foreground" />
+                <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                  OpenClaw
+                </span>
+                {isPaired && (
+                  <span className="rounded-full bg-emerald-500/15 px-2 py-px text-[10px] font-medium text-emerald-400">
+                    Paired
+                  </span>
+                )}
+              </div>
+
+              <SettingRow
+                label="Gateway URL"
+                description="WebSocket address of the OpenClaw Gateway."
+              >
+                <div className="flex flex-col gap-1.5">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={openclawGatewayUrl}
+                      onChange={(e) => setOpenclawGatewayUrl(e.target.value)}
+                      onBlur={(e) => handleOpenclawGatewayUrlSave(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") handleOpenclawGatewayUrlSave(e.currentTarget.value);
+                      }}
+                      spellCheck={false}
+                      className="h-8 w-64 rounded-md border border-foreground/10 bg-background px-2.5 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground hover:border-foreground/20 focus:border-foreground/30 focus:ring-1 focus:ring-foreground/20"
+                      placeholder="ws://127.0.0.1:18789"
+                    />
+                    <button
+                      onClick={handleTestGateway}
+                      disabled={gatewayTestStatus === "testing"}
+                      className={`h-8 shrink-0 rounded-md border px-3 text-xs font-medium transition-colors ${
+                        gatewayTestStatus === "connected"
+                          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
+                          : gatewayTestStatus === "failed"
+                            ? "border-red-500/30 bg-red-500/10 text-red-400"
+                            : "border-foreground/10 bg-background text-foreground hover:border-foreground/20 hover:bg-foreground/[0.03]"
+                      }`}
+                    >
+                      {gatewayTestStatus === "testing" ? "Testing..." :
+                       gatewayTestStatus === "connected" ? "Connected" :
+                       gatewayTestStatus === "failed" ? "Failed" :
+                       "Test"}
+                    </button>
+                  </div>
+                  {gatewayTestError && (
+                    <p className="text-[11px] text-red-400">{gatewayTestError}</p>
+                  )}
+                </div>
+              </SettingRow>
+
+              <SettingRow
+                label="Gateway token"
+                description="Auth token for the Gateway (OPENCLAW_GATEWAY_TOKEN). Leave empty if not required."
+              >
+                <input
+                  type="password"
+                  value={openclawGatewayToken}
+                  onChange={(e) => setOpenclawGatewayToken(e.target.value)}
+                  onBlur={(e) => handleGatewayTokenSave(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleGatewayTokenSave(e.currentTarget.value);
+                  }}
+                  spellCheck={false}
+                  autoComplete="off"
+                  className="h-8 w-64 rounded-md border border-foreground/10 bg-background px-2.5 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground hover:border-foreground/20 focus:border-foreground/30 focus:ring-1 focus:ring-foreground/20"
+                  placeholder="Optional gateway token"
+                />
+              </SettingRow>
+
+              <SettingRow
+                label="Device pairing"
+                description={isPaired ? "This device is paired with the Gateway." : "Pair this device with the Gateway to establish a trusted connection."}
+              >
+                <div className="flex flex-col gap-1.5">
+                  <button
+                    onClick={handlePair}
+                    disabled={pairStatus === "pairing"}
+                    className={`h-8 rounded-md border px-4 text-xs font-medium transition-colors ${
+                      pairStatus === "paired"
+                        ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
+                        : pairStatus === "failed"
+                          ? "border-red-500/30 bg-red-500/10 text-red-400"
+                          : "border-foreground/10 bg-background text-foreground hover:border-foreground/20 hover:bg-foreground/[0.03]"
+                    }`}
+                  >
+                    {pairStatus === "pairing" ? "Pairing..." :
+                     pairStatus === "paired" ? "Paired" :
+                     pairStatus === "failed" ? "Failed" :
+                     isPaired ? "Re-pair" : "Pair Device"}
+                  </button>
+                  {pairError && (
+                    <p className="max-w-xs text-[11px] text-red-400">{pairError}</p>
+                  )}
+                </div>
+              </SettingRow>
+
+              <SettingRow
+                label="Default model"
+                description="Model identifier sent to the Gateway when starting new sessions."
+              >
+                <input
+                  type="text"
+                  value={openclawDefaultModel}
+                  onChange={(e) => setOpenclawDefaultModel(e.target.value)}
+                  onBlur={(e) => handleOpenclawModelSave(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleOpenclawModelSave(e.currentTarget.value);
+                  }}
+                  spellCheck={false}
+                  className="h-8 w-60 rounded-md border border-foreground/10 bg-background px-2.5 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground hover:border-foreground/20 focus:border-foreground/30 focus:ring-1 focus:ring-foreground/20"
+                  placeholder="e.g. gpt-4o, claude-sonnet-4-6"
+                />
+              </SettingRow>
+
+              <SettingRow
+                label="Default agent"
+                description="Agent ID to route messages to (e.g. sofi, maya, dev). Leave empty for default."
+              >
+                <input
+                  type="text"
+                  value={openclawDefaultAgent}
+                  onChange={(e) => setOpenclawDefaultAgent(e.target.value)}
+                  onBlur={(e) => handleOpenclawAgentSave(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleOpenclawAgentSave(e.currentTarget.value);
+                  }}
+                  spellCheck={false}
+                  className="h-8 w-60 rounded-md border border-foreground/10 bg-background px-2.5 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground hover:border-foreground/20 focus:border-foreground/30 focus:ring-1 focus:ring-foreground/20"
+                  placeholder="e.g. sofi, maya, dev"
+                />
+              </SettingRow>
+
+              <SettingRow
+                label="Default skills"
+                description="Comma-separated list of skills to enable by default (e.g. shell_exec, web_search)."
+              >
+                <input
+                  type="text"
+                  value={openclawDefaultSkills}
+                  onChange={(e) => setOpenclawDefaultSkills(e.target.value)}
+                  onBlur={(e) => handleOpenclawSkillsSave(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleOpenclawSkillsSave(e.currentTarget.value);
+                  }}
+                  spellCheck={false}
+                  className="h-8 w-80 rounded-md border border-foreground/10 bg-background px-2.5 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground hover:border-foreground/20 focus:border-foreground/30 focus:ring-1 focus:ring-foreground/20"
+                  placeholder="shell_exec, file_read, web_search"
+                />
+              </SettingRow>
+            </div>
+          )}
         </div>
       </ScrollArea>
     </div>

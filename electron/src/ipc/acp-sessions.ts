@@ -65,6 +65,26 @@ interface ACPSessionEntry {
   utilityTextBuffers?: Map<string, string>;
   /** Last actionable stderr error line observed from the ACP agent process */
   lastStderrError?: string;
+  /** True after we've already attempted to auto-switch mode to agent */
+  modeAutoSwitched?: boolean;
+  /**
+   * Called by sessionUpdate on every event while an acp:prompt is in-flight.
+   * The acp:prompt handler installs this to reset an inactivity timer — if
+   * Gemini streams events then silently stops without sending the turn-end
+   * JSON-RPC response, the timer fires and unblocks the renderer.
+   */
+  promptInactivityReset?: () => void;
+  /**
+   * Number of successfully completed prompt turns in this session.
+   * Gemini CLI v0.35.1 only processes the first session/prompt call — on
+   * subsequent calls it's silently ignored. We use this to trigger an
+   * auto-respawn (kill + loadSession) before each turn after the first.
+   */
+  completedTurns: number;
+  /** agentId used to spawn this session — needed for auto-respawn */
+  agentId: string;
+  /** MCP servers configured for this session — needed for auto-respawn */
+  mcpServers: McpServerInput[];
 }
 
 export const acpSessions = new Map<string, ACPSessionEntry>();
@@ -248,13 +268,25 @@ async function createAcpConnection(
   agentDef: { binary: string; args?: string[]; env?: Record<string, string>; name: string },
   getMainWindow: () => BrowserWindow | null,
   logLabel: string,
+  /** Reuse an existing session ID (for transparent respawn — preserves renderer subscriptions). */
+  overrideInternalId?: string,
 ): Promise<AcpConnectionResult> {
   const acp = await getACP();
-  const internalId = crypto.randomUUID();
+  const internalId = overrideInternalId ?? crypto.randomUUID();
+
+  // For npx-based agents: prefer the local npm cache to avoid re-downloading on
+  // every startup. Falls back to network only if not cached.
+  const isNpx = agentDef.binary === "npx";
+  const spawnEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    ...agentDef.env,
+    ...(isNpx ? { NPM_CONFIG_PREFER_OFFLINE: "true" } : {}),
+  };
 
   const proc = spawn(agentDef.binary, agentDef.args ?? [], {
     stdio: ["pipe", "pipe", "pipe"],
-    env: { ...process.env, ...agentDef.env },
+    env: spawnEnv,
+    shell: process.platform === "win32",
   });
 
   // Process lifecycle handlers
@@ -270,15 +302,27 @@ async function createAcpConnection(
     commandsBuffer.delete(internalId);
   });
 
+  // Accumulate multi-line stderr messages before parsing
+  let stderrBuffer = "";
   proc.stderr?.on("data", (chunk: Buffer) => {
-    const raw = chunk.toString().trim();
-    log("ACP_STDERR", `session=${internalId.slice(0, 8)} ${raw}`);
-    const cleaned = raw.replace(/\x1b\[[0-9;]*m/g, "");
-    const turnError = cleaned.match(/Unhandled error during turn:\s*(.+)$/)?.[1]?.trim();
-    const parsed = turnError || (/\bERROR\b/i.test(cleaned) ? cleaned : undefined);
-    if (!parsed) return;
-    const entry = acpSessions.get(internalId);
-    if (entry) entry.lastStderrError = parsed;
+    stderrBuffer += chunk.toString();
+    // Process complete lines
+    const lines = stderrBuffer.split("\n");
+    stderrBuffer = lines.pop() ?? "";
+    for (const line of lines) {
+      const raw = line.trim();
+      if (!raw) continue;
+      log("ACP_STDERR", `session=${internalId.slice(0, 8)} ${raw}`);
+      const cleaned = raw.replace(/\x1b\[[0-9;]*m/g, "");
+
+      // Detect actionable errors: explicit error patterns and auth failures
+      const turnError = cleaned.match(/Unhandled error during turn:\s*(.+)$/)?.[1]?.trim();
+      const authError = /auth|login|credential|api[\s_-]?key|unauthorized|403|permission denied/i.test(cleaned) ? cleaned : undefined;
+      const parsed = turnError ?? authError ?? (/\bERROR\b/i.test(cleaned) ? cleaned : undefined);
+      if (!parsed) continue;
+      const entry = acpSessions.get(internalId);
+      if (entry) entry.lastStderrError = parsed;
+    }
   });
 
   proc.on("exit", (code) => {
@@ -326,6 +370,12 @@ async function createAcpConnection(
       const summary = summarizeUpdate(update);
       log("ACP_EVENT", `session=${internalId.slice(0, 8)} #${count} ${entry?.isReloading ? "[suppressed] " : ""}${summary}`);
 
+      // Notify an in-flight acp:prompt that the agent is still active.
+      // This resets the streaming inactivity timer — prevents false timeouts
+      // on long-running tool chains while preventing infinite hangs when
+      // Gemini stops sending events without completing the turn.
+      if (entry) entry.promptInactivityReset?.();
+
       // Full dump for tool calls and tool results
       const eventKind = update?.sessionUpdate as string;
       if (eventKind === "tool_call" || eventKind === "tool_call_update") {
@@ -336,6 +386,68 @@ async function createAcpConnection(
       if (eventKind === "config_option_update") {
         const configOptions = (update as { configOptions: unknown[] }).configOptions;
         configBuffer.set(internalId, configOptions);
+
+        // Auto-switch to Agent mode the first time a "mode" config option arrives
+        // in "ask" state. The mode option is sent via event (not in newSession response),
+        // so we must handle it here instead of in acp:start.
+        //
+        // IMPORTANT: we do NOT forward the original "ask" config_option_update to the
+        // renderer here. We wait for setSessionConfigOption() to complete and then
+        // forward the updated config (with "agent" as currentValue) in the .then().
+        // This prevents a race condition where the renderer's onEvent listener hasn't
+        // registered yet and the "ask" value gets stuck in the UI.
+        if (entry && !entry.modeAutoSwitched) {
+          const modeOpt = (configOptions as Array<{ id: string; category?: string; currentValue: string; options?: unknown[] }>)
+            .find((o) => o.category === "mode");
+          if (modeOpt && /ask/i.test(modeOpt.currentValue)) {
+            entry.modeAutoSwitched = true;
+            const flatOptions = (modeOpt.options ?? []) as Array<{ value: string; name?: string; options?: Array<{ value: string; name?: string }> }>;
+            const allOptions: Array<{ value: string; name?: string }> = [];
+            for (const o of flatOptions) {
+              if (Array.isArray(o.options)) allOptions.push(...o.options);
+              else allOptions.push(o);
+            }
+            const agentOpt = allOptions.find((o) => /agent/i.test(o.value) || /agent/i.test(o.name ?? ""));
+            if (agentOpt) {
+              log("ACP_MODE", `session=${internalId.slice(0, 8)} auto-switching mode "${modeOpt.currentValue}" → "${agentOpt.value}"`);
+              void entry.connection.setSessionConfigOption({
+                sessionId: entry.acpSessionId,
+                configId: modeOpt.id,
+                value: agentOpt.value,
+              }).then((r) => {
+                const updatedOptions = r.configOptions ?? configOptions;
+                configBuffer.set(internalId, updatedOptions);
+                log("ACP_MODE", `session=${internalId.slice(0, 8)} mode switch OK, forwarding updated config`);
+                // Forward the UPDATED config (mode=agent) — not the original "ask" version.
+                // By the time this .then() fires, useACP's onEvent listener should be registered.
+                safeSend(getMainWindow, "acp:event", {
+                  _sessionId: internalId,
+                  sessionId: entry.acpSessionId,
+                  update: { sessionUpdate: "config_option_update", configOptions: updatedOptions },
+                });
+              }).catch((err) => {
+                log("ACP_MODE", `session=${internalId.slice(0, 8)} mode switch failed — forwarding original config: ${(err as Error).message}`);
+                // Switch failed: still forward the original config so the UI has something
+                safeSend(getMainWindow, "acp:event", {
+                  _sessionId: internalId,
+                  sessionId: entry.acpSessionId,
+                  update: { sessionUpdate: "config_option_update", configOptions },
+                });
+              });
+              // Do NOT fall through to the generic safeSend below — return early.
+              // The renderer will receive the config once the switch resolves.
+              if (entry?.isReloading) return;
+              return;
+            }
+          }
+        }
+      }
+
+      // current_mode_update: Gemini CLI sends this after setSessionMode() completes.
+      // Forward it to the renderer so the mode dropdown updates.
+      if (eventKind === "current_mode_update") {
+        const currentModeId = (update as { currentModeId?: string }).currentModeId;
+        log("ACP_MODE", `session=${internalId.slice(0, 8)} current_mode_update modeId=${currentModeId}`);
       }
 
       // Buffer available commands for late-subscribing renderer listeners
@@ -392,15 +504,28 @@ async function createAcpConnection(
     },
 
     async readTextFile(params: { path?: string; uri?: string; line?: number | null; limit?: number | null }) {
-      const { filePath, content } = await acpReadTextFile(params);
-      log("ACP_FS", `readTextFile path=${filePath} line=${params.line ?? ""} limit=${params.limit ?? ""}`);
-      log("ACP_FS", `readTextFile result len=${content.length}`);
-      return { content };
+      try {
+        const { filePath, content } = await acpReadTextFile(params);
+        log("ACP_FS", `readTextFile path=${filePath} line=${params.line ?? ""} limit=${params.limit ?? ""}`);
+        log("ACP_FS", `readTextFile result len=${content.length}`);
+        return { content };
+      } catch (err) {
+        const msg = (err as Error).message ?? String(err);
+        log("ACP_FS", `readTextFile ERROR: ${msg}`);
+        // Return error as content so the agent can handle it gracefully instead of hanging
+        return { content: `[Error reading file: ${msg}]` };
+      }
     },
     async writeTextFile(params: { path?: string; uri?: string; content: string }) {
-      const { filePath } = await acpWriteTextFile(params);
-      log("ACP_FS", `writeTextFile path=${filePath} len=${params.content.length}`);
-      return {};
+      try {
+        const { filePath } = await acpWriteTextFile(params);
+        log("ACP_FS", `writeTextFile path=${filePath} len=${params.content.length}`);
+        return {};
+      } catch (err) {
+        const msg = (err as Error).message ?? String(err);
+        log("ACP_FS", `writeTextFile ERROR: ${msg}`);
+        throw new Error(`Failed to write file: ${msg}`);
+      }
     },
   }), stream);
 
@@ -414,6 +539,49 @@ async function createAcpConnection(
   log(logLabel, `Initialized protocol v${initResult.protocolVersion} for ${agentDef.name} (loadSession=${supportsLoadSession})`);
 
   return { proc, connection, pendingPermissions, internalId, supportsLoadSession };
+}
+
+/**
+ * Auto-switch an ACP session from "ask" → "agent" mode using the dedicated
+ * `session/set_mode` RPC (used by Gemini CLI and other agents that expose
+ * modes via the `modes` field in the newSession/loadSession response).
+ *
+ * This is called right after newSession() returns. The session entry must
+ * already be in `acpSessions` before calling this.
+ */
+async function autoSwitchToAgentMode(
+  entry: ACPSessionEntry,
+  sessionResult: { sessionId: string; modes?: { currentModeId?: string; availableModes?: Array<{ id: string; name: string }> } | null },
+  internalId: string,
+  getMainWindow: () => BrowserWindow | null,
+): Promise<void> {
+  if (entry.modeAutoSwitched) return;
+  const modes = sessionResult.modes;
+  if (!modes?.currentModeId || !modes.availableModes?.length) return;
+  if (!/ask/i.test(modes.currentModeId)) return;
+
+  const agentMode = modes.availableModes.find(
+    (m) => /agent/i.test(m.id) || /agent/i.test(m.name),
+  );
+  if (!agentMode) {
+    log("ACP_MODE", `session=${internalId.slice(0, 8)} no agent mode found in availableModes: ${JSON.stringify(modes.availableModes)}`);
+    return;
+  }
+
+  entry.modeAutoSwitched = true;
+  log("ACP_MODE", `session=${internalId.slice(0, 8)} auto-switching mode "${modes.currentModeId}" → "${agentMode.id}" (via setSessionMode)`);
+  try {
+    await entry.connection.setSessionMode({
+      sessionId: entry.acpSessionId,
+      modeId: agentMode.id,
+    });
+    log("ACP_MODE", `session=${internalId.slice(0, 8)} setSessionMode OK`);
+    // The agent will emit current_mode_update which the sessionUpdate handler
+    // will forward to the renderer, updating the mode dropdown there.
+  } catch (err) {
+    log("ACP_MODE", `session=${internalId.slice(0, 8)} setSessionMode failed (non-fatal): ${(err as Error).message}`);
+    entry.modeAutoSwitched = false; // allow retry on next event
+  }
 }
 
 export function register(getMainWindow: () => BrowserWindow | null): void {
@@ -467,10 +635,31 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
         cwd: options.cwd,
         supportsLoadSession,
         isReloading: false,
+        completedTurns: 0,
+        agentId: options.agentId,
+        mcpServers: options.mcpServers ?? [],
       };
       acpSessions.set(internalId, entry);
 
       const configOptions = resolveConfigOptions(sessionResult, internalId, "ACP_SPAWN");
+
+      // Auto-switch from Ask → Agent mode using the dedicated `modes` API.
+      // Gemini CLI v0.35.1 does NOT send config_option_update events — it exposes
+      // modes via the `modes` field in the newSession response and the
+      // `session/set_mode` RPC. The event-based handler is kept as a fallback
+      // for other ACP agents that do use config_option_update.
+      // Await mode switch (with timeout) so the connection isn't blocked when
+      // the first prompt is sent — Gemini CLI serializes JSON-RPC calls, so a
+      // pending setSessionMode would delay the prompt response beyond the
+      // inactivity timeout.
+      try {
+        await Promise.race([
+          autoSwitchToAgentMode(entry, sessionResult, internalId, getMainWindow),
+          new Promise((resolve) => setTimeout(resolve, 10_000)),
+        ]);
+      } catch {
+        log("ACP_SPAWN", `autoSwitchToAgentMode timed out or failed (non-fatal)`);
+      }
 
       // Derive MCP statuses — ACP doesn't report them, so infer from config
       const mcpStatuses = (options.mcpServers ?? []).map(s => ({
@@ -538,7 +727,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
 
       if (supportsLoadSession && options.agentSessionId) {
         // Restore full context — suppress history replay from reaching the renderer
-        const entry: ACPSessionEntry = { process: proc, connection, acpSessionId: options.agentSessionId, internalId, analyticsProperties, eventCounter: 0, pendingPermissions, cwd: options.cwd, supportsLoadSession, isReloading: true };
+        const entry: ACPSessionEntry = { process: proc, connection, acpSessionId: options.agentSessionId!, internalId, analyticsProperties, eventCounter: 0, pendingPermissions, cwd: options.cwd, supportsLoadSession, isReloading: true, completedTurns: 0, agentId: options.agentId, mcpServers: options.mcpServers ?? [] };
         acpSessions.set(internalId, entry);
         const loadResult = await connection.loadSession({ sessionId: options.agentSessionId, cwd: options.cwd, mcpServers: acpMcpServers });
         entry.isReloading = false;
@@ -551,9 +740,17 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
         // Fall back to fresh session — UI messages already restored from disk
         const sessionResult = await connection.newSession({ cwd: options.cwd, mcpServers: acpMcpServers });
         acpSessionId = sessionResult.sessionId;
-        const entry: ACPSessionEntry = { process: proc, connection, acpSessionId, internalId, analyticsProperties, eventCounter: 0, pendingPermissions, cwd: options.cwd, supportsLoadSession, isReloading: false };
+        const entry: ACPSessionEntry = { process: proc, connection, acpSessionId, internalId, analyticsProperties, eventCounter: 0, pendingPermissions, cwd: options.cwd, supportsLoadSession, isReloading: false, completedTurns: 0, agentId: options.agentId, mcpServers: options.mcpServers ?? [] };
         acpSessions.set(internalId, entry);
         configOptions = resolveConfigOptions(sessionResult, internalId, "ACP_REVIVE");
+        try {
+          await Promise.race([
+            autoSwitchToAgentMode(entry, sessionResult, internalId, getMainWindow),
+            new Promise((resolve) => setTimeout(resolve, 10_000)),
+          ]);
+        } catch {
+          log("ACP_REVIVE", `autoSwitchToAgentMode timed out or failed (non-fatal)`);
+        }
         log("ACP_REVIVE", `newSession fallback, session=${acpSessionId.slice(0, 12)}`);
       }
 
@@ -579,7 +776,56 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
       return { error: "Session not found" };
     }
 
-    log("ACP_SEND", `session=${sessionId.slice(0, 8)} text=${text.slice(0, 500)} images=${images?.length ?? 0}`);
+    log("ACP_SEND", `session=${sessionId.slice(0, 8)} text=${text.slice(0, 500)} images=${images?.length ?? 0} completedTurns=${session.completedTurns}`);
+
+    // Auto-respawn: Gemini CLI v0.35.1 only processes the FIRST session/prompt
+    // call per process — subsequent calls are silently ignored. To support
+    // multi-turn, we kill the old process, spawn a new one using the SAME
+    // internalId (passed as overrideInternalId so all event closures use the
+    // correct ID), then call loadSession to restore the conversation context.
+    if (session.completedTurns > 0 && session.supportsLoadSession) {
+      log("ACP_RESPAWN", `session=${sessionId.slice(0, 8)} respawning for turn ${session.completedTurns + 1}`);
+      const prevAcpSessionId = session.acpSessionId;
+      const agentDef = getAgent(session.agentId);
+      if (agentDef?.engine === "acp" && agentDef.binary) {
+        try {
+          // Remove stale entry so the old process's exit handler fires silently
+          acpSessions.delete(sessionId);
+          try { session.process.kill(); } catch { /* already dead */ }
+
+          // Spawn fresh process reusing the same internalId so all event
+          // closures inside createAcpConnection route to the correct sessionId
+          const connResult = await createAcpConnection(
+            agentDef as { binary: string; args?: string[]; env?: Record<string, string>; name: string },
+            getMainWindow,
+            "ACP_RESPAWN",
+            sessionId, // ← overrideInternalId: events from new process use old sessionId
+          );
+          const acpMcpServers = await buildAcpMcpServers(session.mcpServers);
+          const loadResult = await connResult.connection.loadSession({
+            sessionId: prevAcpSessionId,
+            cwd: session.cwd,
+            mcpServers: acpMcpServers,
+          });
+          // Re-register the updated entry
+          session.process = connResult.proc;
+          session.connection = connResult.connection;
+          session.acpSessionId = prevAcpSessionId;
+          session.supportsLoadSession = connResult.supportsLoadSession;
+          session.pendingPermissions = connResult.pendingPermissions;
+          session.eventCounter = 0;
+          session.isReloading = false;
+          session.lastStderrError = undefined;
+          acpSessions.set(sessionId, session);
+          if (loadResult.configOptions) configBuffer.set(sessionId, loadResult.configOptions as unknown[]);
+          log("ACP_RESPAWN", `session=${sessionId.slice(0, 8)} respawn OK, acpSessionId=${prevAcpSessionId.slice(0, 12)}`);
+        } catch (err) {
+          // Respawn failed — re-register whatever we have so the session isn't orphaned
+          acpSessions.set(sessionId, session);
+          log("ACP_RESPAWN", `session=${sessionId.slice(0, 8)} respawn failed (continuing with current connection): ${(err as Error).message}`);
+        }
+      }
+    }
 
     const prompt: Array<{ type: string; text?: string; data?: string; mimeType?: string }> = [];
     if (images) {
@@ -589,14 +835,60 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     }
     prompt.push({ type: "text", text });
 
+    // Hard timeout — absolute last-resort guard (2 min)
+    const PROMPT_TIMEOUT_MS = 2 * 60 * 1000;
+    // Inactivity timeout — fires when streaming events stop but the turn never completes.
+    // This is the main failure mode for Gemini CLI: it streams "Planning next moves" events
+    // then silently stops without sending the session/prompt JSON-RPC response.
+    // First turn: Gemini CLI can take 60-120s to respond while loading skills,
+    // MCP servers, and completing the mode switch.  Subsequent turns are faster.
+    const INACTIVITY_TIMEOUT_MS = session.completedTurns === 0 ? 120_000 : 45_000;
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+    let inactivityHandle: ReturnType<typeof setTimeout> | null = null;
+
     try {
       session.lastStderrError = undefined;
-      const result = await session.connection.prompt({
+
+      const promptPromise = session.connection.prompt({
         sessionId: session.acpSessionId,
         prompt,
       });
 
-      log("ACP_TURN_COMPLETE", `session=${sessionId.slice(0, 8)} stopReason=${result.stopReason} usage=${JSON.stringify(result.usage ?? null)}`);
+      // Race against the stream closing (process exit) so we fail immediately
+      // instead of waiting for the timeout. The ACP SDK doesn't reject pending
+      // requests when the underlying stream closes, so we do it ourselves here.
+      const closedPromise: Promise<never> = session.connection.closed.then(() => {
+        return Promise.reject(new Error("Agent process exited before completing the turn"));
+      });
+
+      // Inactivity promise: rejects if no sessionUpdate event arrives for INACTIVITY_TIMEOUT_MS.
+      // Every sessionUpdate from the agent resets this timer (via session.promptInactivityReset).
+      const inactivityPromise = new Promise<never>((_, reject) => {
+        const reset = () => {
+          if (inactivityHandle !== null) clearTimeout(inactivityHandle);
+          inactivityHandle = setTimeout(
+            () => reject(new Error(`Agent stopped responding (${INACTIVITY_TIMEOUT_MS / 1000}s inactivity)`)),
+            INACTIVITY_TIMEOUT_MS,
+          );
+        };
+        session.promptInactivityReset = reset;
+        reset(); // arm the initial timer
+      });
+
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutHandle = setTimeout(
+          () => reject(new Error("Agent response timed out (2 min)")),
+          PROMPT_TIMEOUT_MS,
+        );
+      });
+
+      const result = await Promise.race([promptPromise, closedPromise, inactivityPromise, timeoutPromise]);
+      if (timeoutHandle !== null) clearTimeout(timeoutHandle);
+      if (inactivityHandle !== null) clearTimeout(inactivityHandle);
+      session.promptInactivityReset = undefined;
+      session.completedTurns++;
+
+      log("ACP_TURN_COMPLETE", `session=${sessionId.slice(0, 8)} stopReason=${result.stopReason} completedTurns=${session.completedTurns} usage=${JSON.stringify(result.usage ?? null)}`);
 
       safeSend(getMainWindow,"acp:turn_complete", {
         _sessionId: sessionId,
@@ -606,9 +898,20 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
 
       return { ok: true };
     } catch (err) {
+      if (timeoutHandle !== null) clearTimeout(timeoutHandle);
+      if (inactivityHandle !== null) clearTimeout(inactivityHandle);
+      session.promptInactivityReset = undefined;
       const msg = extractErrorMessage(err);
-      const surfacedError = msg === "Internal error" && session.lastStderrError ? session.lastStderrError : msg;
+      // Prefer stderr context over generic "Internal error" — it usually contains
+      // the real cause (auth failures, API errors, etc.)
+      const surfacedError = session.lastStderrError ?? (msg === "Internal error" ? "Agent error — check that you are authenticated (run: gemini auth)" : msg);
       reportError("ACP_PROMPT_ERR", err, { engine: "acp", sessionId, surfacedError });
+      // Ensure the renderer knows the turn ended on error
+      safeSend(getMainWindow, "acp:turn_complete", {
+        _sessionId: sessionId,
+        stopReason: "error",
+        usage: null,
+      });
       return { error: surfacedError };
     }
   });
