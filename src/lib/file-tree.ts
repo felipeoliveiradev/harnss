@@ -75,8 +75,9 @@ function toBuildTree(root: Map<string, TreeBuildNode>): FileTreeNode[] {
 /**
  * Build a nested file tree from flat file/dir lists (as returned by `files:list` IPC).
  * Directories are sorted before files at each level, alphabetical within each group.
+ * Accepts optional `emptyDirs` to show directories that contain no files (VS Code behavior).
  */
-export function buildFileTree(files: string[]): FileTreeNode[] {
+export function buildFileTree(files: string[], emptyDirs: string[] = []): FileTreeNode[] {
   const root = new Map<string, TreeBuildNode>();
 
   for (const filePath of files) {
@@ -101,6 +102,12 @@ export function buildFileTree(files: string[]): FileTreeNode[] {
     });
   }
 
+  // Create nodes for empty directories (no files inside them)
+  for (const dirPath of emptyDirs) {
+    const segments = dirPath.split("/");
+    getOrCreateDir(root, segments);
+  }
+
   return toBuildTree(root);
 }
 
@@ -118,14 +125,15 @@ export function filterTree(nodes: FileTreeNode[], query: string): FileTreeNode[]
 
   function filterNode(node: FileTreeNode): FileTreeNode | null {
     if (node.type === "file") {
-      return node.name.toLowerCase().includes(q) ? node : null;
+      // Match on full path (e.g. "src/components/Button.tsx") or just filename
+      return node.path.toLowerCase().includes(q) ? node : null;
     }
 
     // Directory: recurse into children, keep if any child matches
     const filteredChildren = (node.children ?? []).map(filterNode).filter(Boolean) as FileTreeNode[];
     if (filteredChildren.length === 0) {
-      // Also keep if the directory name itself matches
-      return node.name.toLowerCase().includes(q) ? { ...node, children: [] } : null;
+      // Also keep if the directory path itself matches
+      return node.path.toLowerCase().includes(q) ? { ...node, children: [] } : null;
     }
 
     return { ...node, children: filteredChildren };

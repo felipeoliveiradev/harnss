@@ -4,6 +4,9 @@ electron/dist/
 logs/
 *.log
 .DS_Store
+.env
+.env.*
+*.env
 docs/
 /release/
 .claude/agent-memory/

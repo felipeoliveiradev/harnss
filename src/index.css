@@ -1,11 +1,11 @@
+/* Welcome wizard fonts — Instrument Serif for display titles, Sora for body */
+@import url("https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Sora:wght@400;500;600;700&display=swap");
+
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@xterm/xterm/css/xterm.css";
 @plugin "@tailwindcss/typography";
-
-/* Welcome wizard fonts — Instrument Serif for display titles, Sora for body */
-@import url("https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Sora:wght@400;500;600;700&display=swap");
 
 @custom-variant dark (&:is(.dark *));
 
@@ -157,36 +157,8 @@ html.glass-enabled #root {
   --sidebar: oklch(1 0 0 / 0.29);
   --sidebar-border: oklch(0 0 0 / 0.08);
   --sidebar-accent: oklch(0.965 0.001 286.029 / 0.3);
-  /* White text on glass sidebar — native glass shows through dark, so sidebar
-     text should be light (like dark mode) regardless of the app theme.
-     Exception: search input keeps dark text (see below). */
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-ring: oklch(0.64 0 0);
-  /* Keep --sidebar-accent-foreground at light-mode default for other accent
-     surfaces; selected chats are overridden below. */
-}
-
-/* Elements on light backgrounds (search box) — reset to dark text/icons */
-.glass-enabled:not(.dark) .glass-outline,
-.glass-enabled:not(.dark) .bg-sidebar-accent {
-  --sidebar-foreground: oklch(0.145 0 0);
-}
-
-/* Sidebar search stays on the white-text treatment in light glass mode. */
-.glass-enabled:not(.dark) .sidebar-search-glass {
-  --sidebar-foreground: oklch(0.985 0 0);
-}
-
-/* In light mode with glass enabled, selected chats should stay white. */
-.glass-enabled:not(.dark) .session-item-active {
-  color: oklch(0.985 0 0);
-}
-
-/* In light glass mode, sidebar engine icons match white text via inversion */
-.glass-enabled:not(.dark) .session-item-button img {
-  filter: invert(1) brightness(2);
+  /* Light mode glass: keep dark text (same as Windows) — the always-key-appearance
+     fix keeps the glass bright enough for standard dark-on-light text. */
 }
 
 /* In glass mode, only the outermost bg-sidebar (AppLayout root) provides
@@ -291,6 +263,22 @@ html.glass-enabled #root {
   content: "";
   position: absolute;
   inset: -2px 0;
+}
+
+/* Monaco editor change hooks (VSCode-like modified line markers) */
+.monaco-editor .code-workspace-changed-line {
+  background-color: color-mix(in oklab, #22c55e 13%, transparent);
+}
+
+.dark .monaco-editor .code-workspace-changed-line {
+  background-color: color-mix(in oklab, #22c55e 22%, transparent);
+}
+
+.monaco-editor .code-workspace-changed-glyph {
+  background: #22c55e;
+  width: 4px !important;
+  margin-left: 2px;
+  border-radius: 999px;
 }
 
 /* ── Flat layout: edge-to-edge sections with simple 1px borders ── */

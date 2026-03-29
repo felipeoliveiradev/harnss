@@ -35,7 +35,7 @@ export function useProjectFiles(
       const result = await window.claude.files.listAll(dir);
       // Guard against stale response (cwd changed while fetching)
       if (id !== fetchIdRef.current) return;
-      setTree(buildFileTree(result.files));
+      setTree(buildFileTree(result.files, result.dirs));
     } catch (err) {
       if (id !== fetchIdRef.current) return;
       captureException(err instanceof Error ? err : new Error(String(err)), { label: "FILE_LIST_ERR" });

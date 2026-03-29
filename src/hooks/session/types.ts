@@ -1,4 +1,4 @@
-import type { ChatSession, UIMessage, SessionInfo, PermissionRequest, ImageAttachment, McpServerStatus, ModelInfo, AcpPermissionBehavior, EngineId, Project, SlashCommand, ClaudeEffort, ContextUsage } from "../../types";
+import type { ChatSession, UIMessage, SessionInfo, PermissionRequest, ImageAttachment, McpServerStatus, ModelInfo, AcpPermissionBehavior, EngineId, Project, SlashCommand, ClaudeEffort, ContextUsage, CodeSnippet } from "../../types";
 import type { ACPConfigOption, ACPPermissionEvent } from "../../types/acp";
 import type { BackgroundSessionStore } from "../../lib/background-session-store";
 import { permissionModeToCodexPolicy, permissionModeToCodexSandbox } from "../../lib/codex-adapter";
@@ -15,7 +15,7 @@ export interface StartOptions {
   effort?: ClaudeEffort;
   engine?: EngineId;
   agentId?: string;
-  /** Cached config options from previous sessions */
+  groupId?: string;
   cachedConfigOptions?: ACPConfigOption[];
 }
 
@@ -41,7 +41,7 @@ export interface QueuedMessage {
   text: string;
   images?: ImageAttachment[];
   displayText?: string;
-  /** ID of the UIMessage already shown in chat with isQueued: true */
+  codeSnippets?: CodeSnippet[];
   messageId: string;
 }
 
@@ -107,14 +107,19 @@ export interface SharedSessionSetters {
 import type { useClaude } from "../useClaude";
 import type { useACP } from "../useACP";
 import type { useCodex } from "../useCodex";
+import type { useOllama } from "../useOllama";
+import type { useOpenClaw } from "../useOpenClaw";
+import type { useGroupEngine } from "../useGroupEngine";
 
-/** The engine hook return types that sub-hooks need to call */
 export interface EngineHooks {
   claude: ReturnType<typeof useClaude>;
   acp: ReturnType<typeof useACP>;
   codex: ReturnType<typeof useCodex>;
-  /** The currently-active engine — one of claude/acp/codex */
-  engine: ReturnType<typeof useClaude> | ReturnType<typeof useACP> | ReturnType<typeof useCodex>;
+  ollama: ReturnType<typeof useOllama>;
+  openclaw: ReturnType<typeof useOpenClaw>;
+  group: ReturnType<typeof useGroupEngine>;
+  /** The currently-active engine */
+  engine: ReturnType<typeof useClaude> | ReturnType<typeof useACP> | ReturnType<typeof useCodex> | ReturnType<typeof useOllama> | ReturnType<typeof useOpenClaw> | ReturnType<typeof useGroupEngine>;
 }
 
 // ── Utility functions shared across sub-hooks ──

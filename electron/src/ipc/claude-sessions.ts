@@ -22,7 +22,7 @@ function fileCheckpointOptions(): Record<string, unknown> {
   };
 }
 
-type PermissionResult =
+export type PermissionResult =
   | { behavior: "allow"; updatedInput?: Record<string, unknown>; updatedPermissions?: unknown[] }
   | { behavior: "deny"; message: string };
 
@@ -30,7 +30,7 @@ interface PendingPermission {
   resolve: (result: PermissionResult) => void;
 }
 
-interface SessionEntry {
+export interface SessionEntry {
   channel: AsyncChannel<unknown>;
   queryHandle: QueryHandle | null;
   eventCounter: number;
@@ -215,9 +215,6 @@ function startEventLoop(
       for await (const message of queryHandle) {
         session.eventCounter++;
         const msgObj = message as Record<string, unknown>;
-        // Throttle logging for high-frequency content_block_delta events — they arrive
-        // at ~60/sec during streaming and the deep sanitizeValue() + JSON.stringify in
-        // log() burns significant CPU. Log every 50th delta as a sample.
         const isStreamDelta = msgObj.type === "stream_event" &&
           (msgObj.event as Record<string, unknown> | undefined)?.type === "content_block_delta";
         if (isStreamDelta) {
@@ -233,7 +230,8 @@ function startEventLoop(
         if (msgObj.type === "user" || msgObj.type === "result") {
           log("EVENT_FULL", message);
         }
-        safeSend(getMainWindow, "claude:event", { ...(message as object), _sessionId: sessionId });
+        (message as Record<string, unknown>)._sessionId = sessionId;
+        safeSend(getMainWindow, "claude:event", message);
 
         // Index tool names from assistant tool_use blocks for later lookup by tool_use_id
         if (msgObj.type === "assistant") {
@@ -534,6 +532,9 @@ async function restartSession(
   };
 
   const canUseTool = (toolName: string, input: unknown, context: { toolUseID: string; suggestions: unknown; decisionReason: string }) => {
+    if (newSession.startOptions?.permissionMode === "bypassPermissions") {
+      return Promise.resolve({ behavior: "allow" as const });
+    }
     return new Promise<PermissionResult>((resolve) => {
       const requestId = crypto.randomUUID();
       newSession.pendingPermissions.set(requestId, { resolve });
@@ -622,6 +623,9 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
       sessions.set(sessionId, session);
 
       const canUseTool = (toolName: string, input: unknown, context: { toolUseID: string; suggestions: unknown; decisionReason: string }) => {
+        if (session.startOptions?.permissionMode === "bypassPermissions") {
+          return Promise.resolve({ behavior: "allow" as const });
+        }
         return new Promise<PermissionResult>((resolve) => {
           const requestId = crypto.randomUUID();
           session.pendingPermissions.set(requestId, { resolve });

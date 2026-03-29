@@ -47,12 +47,14 @@ function fireNotification(
   eventSettings: { osNotification: NotificationTrigger; sound: NotificationTrigger },
   title: string,
   body: string,
+  onClick?: () => void,
 ): void {
   if (shouldFire(eventSettings.osNotification)) {
-    // Web Notification API — Electron auto-grants permission.
-    // silent: true prevents OS from playing its own sound (we manage sound separately).
     const notification = new Notification(title, { body, silent: true });
-    notification.onclick = () => window.focus();
+    notification.onclick = () => {
+      window.focus();
+      onClick?.();
+    };
   }
 
   if (shouldFire(eventSettings.sound)) {
@@ -115,6 +117,10 @@ interface UseNotificationsOptions {
   activeSessionId: string | null;
   /** Whether the agent is currently processing (used to detect session completion) */
   isProcessing: boolean;
+  /** Label shown in notification when in split mode (e.g. "Tab 1", "Tab 2") */
+  paneLabel?: string;
+  /** Called when the user clicks the OS notification — use to focus the correct pane */
+  onNotificationClick?: () => void;
 }
 
 interface BackgroundSessionCompleteDetail {
@@ -133,8 +139,12 @@ export function useNotifications({
   notificationSettings,
   activeSessionId,
   isProcessing,
+  paneLabel,
+  onNotificationClick,
 }: UseNotificationsOptions): void {
   const settings = notificationSettings ?? FALLBACK;
+  const onClickRef = useRef(onNotificationClick);
+  onClickRef.current = onNotificationClick;
 
   // ── Permission-based notifications ──
 
@@ -155,8 +165,9 @@ export function useNotifications({
     const eventType = classifyEvent(pendingPermission.toolName);
     const eventSettings = settings[eventType];
     const { title, body } = getNotificationContent(eventType, pendingPermission);
-    fireNotification(eventSettings, title, body);
-  }, [activeSessionId, pendingPermission, settings]);
+    const displayTitle = paneLabel ? `[${paneLabel}] ${title}` : title;
+    fireNotification(eventSettings, displayTitle, body, () => onClickRef.current?.());
+  }, [activeSessionId, pendingPermission, settings, paneLabel]);
 
   // ── Session completion notification ──
 
@@ -174,13 +185,15 @@ export function useNotifications({
 
     if (completed) {
       if (consumeSuppressedSessionCompletion(current.sessionId)) return;
+      const completeTitle = paneLabel ? `[${paneLabel}] Task complete` : "Task complete";
       fireNotification(
         settings.sessionComplete,
-        "Task complete",
+        completeTitle,
         "Claude has finished processing.",
+        () => onClickRef.current?.(),
       );
     }
-  }, [activeSessionId, isProcessing, settings]);
+  }, [activeSessionId, isProcessing, settings, paneLabel]);
 
   // ── Background session notifications ──
   useEffect(() => {

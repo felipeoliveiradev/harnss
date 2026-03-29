@@ -8,13 +8,9 @@ export function mergeStreamingChunk(current: string, incoming: string): string {
   if (!incoming) return current;
   if (!current) return incoming;
 
-  // Some SDK paths resend the full accumulated value instead of a pure delta.
   if (incoming.startsWith(current)) return incoming;
   if (current.endsWith(incoming)) return current;
 
-  // Cap at 200 chars — SDK thinking deltas are small incremental chunks, so a
-  // 200-char window is more than sufficient for overlap detection. Without the
-  // cap, this O(n*m) scan grows with accumulated thinking text length.
   const maxOverlap = Math.min(200, current.length, incoming.length);
   for (let overlap = maxOverlap; overlap > 0; overlap -= 1) {
     if (current.endsWith(incoming.slice(0, overlap))) {
@@ -31,29 +27,25 @@ export function mergeStreamingChunk(current: string, incoming: string): string {
  */
 export class SimpleStreamingBuffer {
   messageId: string | null = null;
-  private textChunks: string[] = [];
-  private thinkingChunks: string[] = [];
+  private textValue = "";
+  private thinkingValue = "";
   thinkingComplete = false;
 
   appendText(text: string): void {
-    // Text deltas are pure incremental chunks — simple concatenation avoids
-    // false-positive overlap detection eating markdown chars.
-    this.textChunks.push(text);
+    this.textValue += text;
   }
 
   appendThinking(text: string): void {
-    // Thinking may arrive as cumulative snapshots, so overlap detection is needed.
-    const current = this.thinkingChunks.join("");
-    this.thinkingChunks = [mergeStreamingChunk(current, text)];
+    this.thinkingValue = mergeStreamingChunk(this.thinkingValue, text);
   }
 
-  getText(): string { return this.textChunks.join(""); }
-  getThinking(): string { return this.thinkingChunks.join(""); }
+  getText(): string { return this.textValue; }
+  getThinking(): string { return this.thinkingValue; }
 
   reset(): void {
     this.messageId = null;
-    this.textChunks = [];
-    this.thinkingChunks = [];
+    this.textValue = "";
+    this.thinkingValue = "";
     this.thinkingComplete = false;
   }
 }
