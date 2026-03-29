@@ -68,6 +68,7 @@ export const SkillsPanel = memo(function SkillsPanel({ projectPath }: SkillsPane
       await window.claude.skillsRegistry.install(projectPath, skill.source, skill.skillId);
       setInstalledIds((prev) => new Set(prev).add(skill.skillId));
       loadInstalled();
+      window.dispatchEvent(new CustomEvent("skills-changed"));
     } catch {}
     setInstallingId(null);
   }, [projectPath, loadInstalled]);

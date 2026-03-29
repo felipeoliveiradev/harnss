@@ -1320,7 +1320,19 @@ export function useSessionLifecycle({
           ollama.setIsProcessing(true);
 
           const base64Images = images?.map(img => img.data.replace(/^data:image\/\w+;base64,/, ""));
-          const sendResult = await window.claude.ollama.send(sessionId, text, undefined, undefined, base64Images?.length ? base64Images : undefined);
+          let ollamaSkills: string[] | undefined;
+          try {
+            const session = sessionsRef.current.find(s => s.id === sessionId);
+            if (session?.projectId) {
+              const project = refs.projectsRef.current.find(p => p.id === session.projectId);
+              if (project?.path) {
+                const key = `harnss-${project.path.replace(/\//g, "-")}-active-skills`;
+                const stored = localStorage.getItem(key);
+                if (stored) ollamaSkills = JSON.parse(stored);
+              }
+            }
+          } catch {}
+          const sendResult = await window.claude.ollama.send(sessionId, text, undefined, undefined, base64Images?.length ? base64Images : undefined, ollamaSkills?.length ? ollamaSkills : undefined);
           if (sendResult?.error) {
             liveSessionIdsRef.current.delete(sessionId);
             ollama.setMessages((prev) => [

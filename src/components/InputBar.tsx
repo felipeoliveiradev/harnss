@@ -1202,10 +1202,15 @@ export const InputBar = memo(function InputBar({
   }, [projectPath]);
 
   const [installedSkills, setInstalledSkills] = useState<Array<{ id: string; filename: string }>>([]);
-  useEffect(() => {
+  const refreshInstalledSkills = useCallback(() => {
     if (!projectPath) return;
     window.claude.skillsRegistry.listInstalled(projectPath).then((r) => setInstalledSkills(r.skills));
   }, [projectPath]);
+  useEffect(() => {
+    refreshInstalledSkills();
+    window.addEventListener("skills-changed", refreshInstalledSkills);
+    return () => window.removeEventListener("skills-changed", refreshInstalledSkills);
+  }, [refreshInstalledSkills]);
 
   const [ollamaAvailable, setOllamaAvailable] = useState<boolean | null>(null);
   const [ollamaError, setOllamaError] = useState<string | null>(null);

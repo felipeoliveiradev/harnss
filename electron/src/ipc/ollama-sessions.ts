@@ -854,7 +854,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     return { sessionId, model: sessionModel };
   });
 
-  ipcMain.handle("ollama:send", async (_event, { sessionId, text, cwd, model, images }: { sessionId: string; text: string; cwd?: string; model?: string; images?: string[] }) => {
+  ipcMain.handle("ollama:send", async (_event, { sessionId, text, cwd, model, images, activeSkills }: { sessionId: string; text: string; cwd?: string; model?: string; images?: string[]; activeSkills?: string[] }) => {
     let session = sessions.get(sessionId);
     if (!session && cwd) {
       const sessionModel = model || getDefaultModel();
@@ -873,6 +873,24 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
       log("OLLAMA", `auto-revived session ${sessionId} (cwd=${cwd}, model=${sessionModel})`);
     }
     if (!session) return { error: "Session expired — please start a new chat" };
+
+    if (activeSkills && activeSkills.length > 0 && session.cwd) {
+      const skillContents: string[] = [];
+      const skillsDir = path.join(session.cwd, ".harnss", "skills");
+      for (const id of activeSkills) {
+        const filePath = path.join(skillsDir, `${id}.md`);
+        try {
+          if (fs.existsSync(filePath)) {
+            skillContents.push(fs.readFileSync(filePath, "utf-8"));
+          }
+        } catch {}
+      }
+      if (skillContents.length > 0) {
+        const mcpToolNames = session.mcpTools.map((t) => `${t.function.name}: ${t.function.description}`);
+        session.messages[0] = { role: "system", content: buildSystemPrompt(session.cwd, skillContents, mcpToolNames) };
+        log("OLLAMA", `${skillContents.length} skill(s) hot-reloaded into system prompt`);
+      }
+    }
 
     session.state.originalRequest = text;
 
