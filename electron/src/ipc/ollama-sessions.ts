@@ -297,10 +297,16 @@ Parameters:
 - path: Directory to search in (default: ".")
 
 ## run_shell
-Execute a shell command in ${cwd}.
+Execute a shell command in ${cwd}. Commands run non-interactively — they cannot ask for user input.
 Parameters:
 - command: (required) The shell command to execute.
-WHEN TO USE: For npm/pnpm install, npx commands, mkdir, git, running scripts, etc. If you need to run a command in a subdirectory, prepend with cd, e.g.: "cd my-project && npm install"
+WHEN TO USE: For npm/pnpm install, npx commands, mkdir, git, running scripts, etc.
+IMPORTANT RULES:
+- If you need to run a command in a subdirectory, prepend with cd: "cd my-project && npm install"
+- ALWAYS use non-interactive flags: --yes, -y, --no-input, --default
+- For create-next-app: ALWAYS use "npx create-next-app@latest my-app --yes --typescript --tailwind --eslint --src-dir --use-npm"
+- NEVER run the same command twice. If it failed, try a DIFFERENT approach.
+- If a scaffold command fails, create the project manually with mkdir + write_file instead.
 
 ## web_search
 Search the web for information. Use this when you encounter an error you don't know how to fix, need documentation, or need to find solutions.
@@ -1414,7 +1420,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
           log("OLLAMA", `repetitive loop detected at iteration ${loopCount} — asking model to reconsider`);
           session.messages.push({
             role: "user",
-            content: "You are repeating the same tool calls. Stop and think from a different perspective. Summarize what you have done so far and try a completely different approach, or answer the user's question now.",
+            content: "STOP — you are repeating the same command. It is not working. Try a COMPLETELY DIFFERENT approach. For example: if npx create-next-app keeps failing, create the project manually using mkdir and write_file instead. If a build keeps failing on the same error, search the web for a solution. Move on to the next task in your plan.",
           });
         }
 
