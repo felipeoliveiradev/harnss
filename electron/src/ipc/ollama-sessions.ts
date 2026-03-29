@@ -709,7 +709,7 @@ async function streamOllamaChat(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       model: session.model,
-      messages: compressConversation(session.messages as Array<{ role: string; content: string }>),
+      messages: compressConversation(session.messages as Array<{ role: string; content: string; images?: string[] }>),
       tools: [...OLLAMA_TOOLS, ...session.mcpTools],
       think: true,
       stream: true,
@@ -875,6 +875,10 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     if (!session) return { error: "Session expired — please start a new chat" };
 
     session.state.originalRequest = text;
+
+    if (images?.length) {
+      log("OLLAMA", `sending ${images.length} image(s) (${images.map(i => `${Math.round(i.length / 1024)}KB`).join(", ")})`);
+    }
 
     const isWebQuery = /\b(pesquise na web|busque na web|search the web|busca online|web search|na internet|on the internet|look up online|pesquisa|pesquisar|buscar)\b/i.test(text);
 

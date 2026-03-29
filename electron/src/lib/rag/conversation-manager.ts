@@ -19,6 +19,7 @@
 export interface ConvMessage {
   role: "user" | "assistant" | "system";
   content: string;
+  images?: string[];
 }
 
 /** Keep this many user+assistant pairs in full text.
