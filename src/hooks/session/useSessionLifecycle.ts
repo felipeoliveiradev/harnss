@@ -1319,7 +1319,8 @@ export function useSessionLifecycle({
           ]);
           ollama.setIsProcessing(true);
 
-          const sendResult = await window.claude.ollama.send(sessionId, text);
+          const base64Images = images?.map(img => img.data.replace(/^data:image\/\w+;base64,/, ""));
+          const sendResult = await window.claude.ollama.send(sessionId, text, undefined, undefined, base64Images?.length ? base64Images : undefined);
           if (sendResult?.error) {
             liveSessionIdsRef.current.delete(sessionId);
             ollama.setMessages((prev) => [
