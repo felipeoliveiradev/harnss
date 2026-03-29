@@ -34,12 +34,13 @@ export function useOllama({ sessionId, initialMessages, initialMeta, cwd, model 
   } = base;
 
   const streamingMsgId = useRef<string | null>(null);
-  // toolUseId → UIMessage id (for pairing tool:start with tool:result)
   const toolMsgIds = useRef<Map<string, string>>(new Map());
+  const taskPlanMsgId = useRef<string | null>(null);
 
   useEffect(() => {
     streamingMsgId.current = null;
     toolMsgIds.current = new Map();
+    taskPlanMsgId.current = null;
   }, [sessionId]);
 
   useEffect(() => {
@@ -113,6 +114,14 @@ export function useOllama({ sessionId, initialMessages, initialMeta, cwd, model 
               timestamp: Date.now(),
             }]);
           }
+          if (taskPlanMsgId.current) {
+            setMessages(prev => prev.map(m =>
+              m.id === taskPlanMsgId.current
+                ? { ...m, subagentStatus: "completed" as const, isStreaming: false }
+                : m
+            ));
+            taskPlanMsgId.current = null;
+          }
           setIsProcessing(false);
           break;
         }
@@ -148,54 +157,94 @@ export function useOllama({ sessionId, initialMessages, initialMeta, cwd, model 
         }
 
         case "tool:start": {
-          // Model started executing a tool — show a loading card
           const { toolUseId, toolName, input } = event.payload as {
             toolUseId: string;
             toolName: string;
             input: Record<string, unknown>;
           };
-          const msgId = nextId("ollama-tool");
-          toolMsgIds.current.set(toolUseId, msgId);
-          const toolMsg: UIMessage = {
-            id: msgId,
-            role: "tool_call",
-            content: "",
-            toolName,
-            toolInput: input,
-            isStreaming: true,
-            timestamp: Date.now(),
-          };
-          setMessages(prev => [...prev, toolMsg]);
+          toolMsgIds.current.set(toolUseId, toolUseId);
+
+          if (taskPlanMsgId.current) {
+            const step = { toolUseId, toolName, toolInput: input, isStreaming: true } as UIMessage["subagentSteps"] extends (infer T)[] | undefined ? T : never;
+            setMessages(prev => prev.map(m =>
+              m.id === taskPlanMsgId.current
+                ? { ...m, subagentSteps: [...(m.subagentSteps ?? []), step] }
+                : m
+            ));
+          } else {
+            const msgId = nextId("ollama-tool");
+            toolMsgIds.current.set(toolUseId, msgId);
+            setMessages(prev => [...prev, {
+              id: msgId,
+              role: "tool_call" as const,
+              content: "",
+              toolName,
+              toolInput: input,
+              isStreaming: true,
+              timestamp: Date.now(),
+            }]);
+          }
           break;
         }
 
         case "tool:result": {
-          // Tool finished — update the card with the result
           const { toolUseId, toolName, result } = event.payload as {
             toolUseId: string;
             toolName: string;
             result: Record<string, unknown>;
           };
-          const msgId = toolMsgIds.current.get(toolUseId);
-          if (msgId) {
-            setMessages(prev => prev.map(m =>
-              m.id === msgId
-                ? { ...m, isStreaming: false, toolResult: result, toolError: !!(result.error) }
-                : m
-            ));
+
+          if (taskPlanMsgId.current) {
+            setMessages(prev => prev.map(m => {
+              if (m.id !== taskPlanMsgId.current) return m;
+              const steps = (m.subagentSteps ?? []).map(s =>
+                s.toolUseId === toolUseId
+                  ? { ...s, toolResult: result, toolError: !!(result as Record<string, unknown>).error, isStreaming: false }
+                  : s
+              );
+              return { ...m, subagentSteps: steps };
+            }));
             toolMsgIds.current.delete(toolUseId);
           } else {
-            // No matching start event — create a standalone result card
-            setMessages(prev => [...prev, {
-              id: nextId("ollama-tool-result"),
-              role: "tool_call",
-              content: "",
-              toolName: toolName as string,
-              toolResult: result,
-              isStreaming: false,
-              timestamp: Date.now(),
-            }]);
+            const msgId = toolMsgIds.current.get(toolUseId);
+            if (msgId) {
+              setMessages(prev => prev.map(m =>
+                m.id === msgId
+                  ? { ...m, isStreaming: false, toolResult: result, toolError: !!(result.error) }
+                  : m
+              ));
+              toolMsgIds.current.delete(toolUseId);
+            } else {
+              setMessages(prev => [...prev, {
+                id: nextId("ollama-tool-result"),
+                role: "tool_call" as const,
+                content: "",
+                toolName: toolName as string,
+                toolResult: result,
+                isStreaming: false,
+                timestamp: Date.now(),
+              }]);
+            }
           }
+          break;
+        }
+
+        case "task:plan": {
+          const { tasks } = event.payload as { tasks: string[] };
+          const taskId = nextId("ollama-task-plan");
+          setMessages(prev => [...prev, {
+            id: taskId,
+            role: "tool_call" as const,
+            content: "",
+            toolName: "Task",
+            toolInput: { description: `Executing ${tasks.length} tasks` },
+            subagentSteps: [],
+            subagentStatus: "running" as const,
+            isStreaming: true,
+            timestamp: Date.now(),
+            _taskPlan: tasks,
+          }]);
+          taskPlanMsgId.current = taskId;
           break;
         }
 
