@@ -57,8 +57,8 @@ interface ToolResult {
 const sessions = new Map<string, OllamaSession>();
 
 const MAX_FILE_READ_BYTES = 200_000;
-const MAX_TOOL_LOOPS = 12;
-const MAX_TOOL_OPS = MAX_TOOL_LOOPS * 2;
+const MAX_TOOL_LOOPS = 50;
+const MAX_TOOL_OPS = MAX_TOOL_LOOPS * 3;
 const MAX_SHELL_OUTPUT_BYTES = 16_000;
 const SHELL_TIMEOUT_MS = 15_000;
 const MAX_LIST_FILES = 500;
