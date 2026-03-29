@@ -320,6 +320,13 @@ contextBridge.exposeInMainWorld("claude", {
     getPlatform: () => ipcRenderer.invoke("speech:get-platform"),
     requestMicPermission: () => ipcRenderer.invoke("speech:request-mic-permission"),
   },
+  preview: {
+    detect: (cwd: string) => ipcRenderer.invoke("preview:detect", cwd),
+    start: (opts: { sessionId: string; cwd: string }) => ipcRenderer.invoke("preview:start", opts),
+    stop: (sessionId: string) => ipcRenderer.invoke("preview:stop", sessionId),
+    status: (sessionId: string) => ipcRenderer.invoke("preview:status", sessionId),
+    readHtml: (opts: { cwd: string; filePath: string }) => ipcRenderer.invoke("preview:read-html", opts),
+  },
   updater: {
     onUpdateAvailable: (cb: (info: unknown) => void) => {
       const listener = (_event: IpcRendererEvent, info: unknown) => cb(info);

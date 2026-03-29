@@ -28,6 +28,7 @@ import { initPostHog, shutdownPostHog, reinitPostHog, captureEvent } from "./lib
 import { sessions } from "./ipc/claude-sessions";
 import { acpSessions, getAcpAnalyticsPropertiesForSession } from "./ipc/acp-sessions";
 import { terminals } from "./ipc/terminal";
+import { stopAllServers } from "./lib/preview-server";
 
 // IPC module registrations
 import * as spacesIpc from "./ipc/spaces";
@@ -45,6 +46,7 @@ import * as codexSessionsIpc from "./ipc/codex-sessions";
 import * as mcpIpc from "./ipc/mcp";
 import * as settingsIpc from "./ipc/settings";
 import * as jiraIpc from "./ipc/jira";
+import * as previewIpc from "./ipc/preview";
 import { onSettingsChanged } from "./ipc/settings";
 
 // --- Performance: Chromium/V8 flags (must be set before app.whenReady()) ---
@@ -197,6 +199,7 @@ codexSessionsIpc.register(getMainWindow);
 mcpIpc.register();
 settingsIpc.register();
 jiraIpc.register();
+previewIpc.register();
 
 // Listen for analytics settings changes and reinitialize PostHog
 let lastAnalyticsEnabled: boolean | undefined;
@@ -402,6 +405,9 @@ app.on("window-all-closed", () => {
     term.pty.kill();
   }
   terminals.clear();
+
+  log("CLEANUP", "Stopping all preview servers");
+  stopAllServers();
 
   // When quitAndInstall() is running, Squirrel.Mac needs to control the quit lifecycle.
   // Calling app.quit() here would kill the process before the update is applied on macOS.

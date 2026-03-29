@@ -373,6 +373,13 @@ declare global {
         /** Requests microphone permission (macOS system dialog). Returns { granted } on all platforms. */
         requestMicPermission: () => Promise<{ granted: boolean }>;
       };
+      preview: {
+        detect: (cwd: string) => Promise<{ type: string; entryFile?: string }>;
+        start: (opts: { sessionId: string; cwd: string }) => Promise<{ port: number; pid: number; type: string }>;
+        stop: (sessionId: string) => Promise<void>;
+        status: (sessionId: string) => Promise<{ status: string; port?: number } | null>;
+        readHtml: (opts: { cwd: string; filePath: string }) => Promise<string>;
+      };
       updater: {
         onUpdateAvailable: (cb: (info: { version: string; releaseNotes?: string }) => void) => () => void;
         onDownloadProgress: (cb: (progress: { percent: number; bytesPerSecond: number; total: number; transferred: number }) => void) => () => void;

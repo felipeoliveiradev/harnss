@@ -33,6 +33,7 @@ import { GitPanel } from "./GitPanel";
 import { FilesPanel } from "./FilesPanel";
 import { McpPanel } from "./McpPanel";
 import { ProjectFilesPanel } from "./ProjectFilesPanel";
+import { PreviewPanel } from "./PreviewPanel";
 import { FilePreviewOverlay } from "./FilePreviewOverlay";
 import { SettingsView } from "./SettingsView";
 import { CodexAuthDialog } from "./CodexAuthDialog";
@@ -747,6 +748,13 @@ Link: ${issue.url}`;
                   onRestartWithServers={manager.restartWithMcpServers}
                 />
               ),
+              preview: (
+                <PreviewPanel
+                  cwd={activeProjectPath}
+                  sessionId={manager.activeSessionId}
+                  messages={manager.messages}
+                />
+              ),
             };
 
             // ── Side column: tools NOT in bottomTools ──
@@ -898,6 +906,13 @@ Link: ${issue.url}`;
                 onRefreshStatus={manager.refreshMcpStatus}
                 onReconnect={manager.reconnectMcpServer}
                 onRestartWithServers={manager.restartWithMcpServers}
+              />
+            ),
+            preview: (
+              <PreviewPanel
+                cwd={activeProjectPath}
+                sessionId={manager.activeSessionId}
+                messages={manager.messages}
               />
             ),
           };
