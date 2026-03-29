@@ -247,7 +247,7 @@ export function useOllama({ sessionId, initialMessages, initialMeta, cwd, model 
     };
   }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const send = useCallback(async (text: string, _images?: ImageAttachment[], _displayText?: string) => {
+  const send = useCallback(async (text: string, images?: ImageAttachment[], _displayText?: string) => {
     if (!sessionIdRef.current) return;
 
     const msgId = nextId("user");
@@ -260,7 +260,8 @@ export function useOllama({ sessionId, initialMessages, initialMeta, cwd, model 
 
     setIsProcessing(true);
 
-    const result = await window.claude.ollama.send(sessionIdRef.current, text, cwd, model);
+    const base64Images = images?.map(img => img.data.replace(/^data:image\/\w+;base64,/, ""));
+    const result = await window.claude.ollama.send(sessionIdRef.current, text, cwd, model, base64Images?.length ? base64Images : undefined);
     if (result?.error) {
       setIsProcessing(false);
       setMessages(prev => [...prev, {

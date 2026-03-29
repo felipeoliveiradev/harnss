@@ -17,6 +17,7 @@ import { getMcpToolsForOllama, executeMcpTool, disconnectMcpBridge, type McpBrid
 interface OllamaMessage {
   role: "user" | "assistant" | "system" | "tool";
   content: string;
+  images?: string[];
   tool_calls?: OllamaToolCall[];
 }
 
@@ -853,7 +854,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     return { sessionId, model: sessionModel };
   });
 
-  ipcMain.handle("ollama:send", async (_event, { sessionId, text, cwd, model }: { sessionId: string; text: string; cwd?: string; model?: string }) => {
+  ipcMain.handle("ollama:send", async (_event, { sessionId, text, cwd, model, images }: { sessionId: string; text: string; cwd?: string; model?: string; images?: string[] }) => {
     let session = sessions.get(sessionId);
     if (!session && cwd) {
       const sessionModel = model || getDefaultModel();
@@ -893,7 +894,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
             toolUseId: searchId, toolName: "WebSearch",
             result: { query: searchQuery, abstract: searchResult.abstract, abstractUrl: searchResult.abstractUrl, results: searchResult.results },
           });
-          session.messages.push({ role: "user", content: text });
+          session.messages.push({ role: "user", content: text, ...(images?.length ? { images } : {}) });
           session.messages.push({
             role: "user",
             content: `Web search results for "${searchQuery}":\n\n${formatted}\n\nUsing ONLY the information above, answer the user's question. If the results are insufficient, say so.`,
@@ -904,14 +905,14 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
             toolUseId: searchId, toolName: "WebSearch",
             result: { error: (searchErr as Error).message },
           });
-          session.messages.push({ role: "user", content: text });
+          session.messages.push({ role: "user", content: text, ...(images?.length ? { images } : {}) });
         }
       } else {
-        session.messages.push({ role: "user", content: text });
+        session.messages.push({ role: "user", content: text, ...(images?.length ? { images } : {}) });
       }
     } catch (err) {
       log("RAG", `failed, using plain message: ${(err as Error).message}`);
-      session.messages.push({ role: "user", content: text });
+      session.messages.push({ role: "user", content: text, ...(images?.length ? { images } : {}) });
     }
 
     const controller = new AbortController();
