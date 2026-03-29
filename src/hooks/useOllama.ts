@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from "react";
-import type { ImageAttachment, SessionMeta, UIMessage } from "@/types";
+import type { ImageAttachment, SessionMeta, UIMessage, SubagentToolStep } from "@/types";
 import { useEngineBase } from "./useEngineBase";
 
 interface UseOllamaOptions {
@@ -165,7 +165,7 @@ export function useOllama({ sessionId, initialMessages, initialMeta, cwd, model 
           toolMsgIds.current.set(toolUseId, toolUseId);
 
           if (taskPlanMsgId.current) {
-            const step = { toolUseId, toolName, toolInput: input, isStreaming: true } as UIMessage["subagentSteps"] extends (infer T)[] | undefined ? T : never;
+            const step: SubagentToolStep = { toolUseId, toolName, toolInput: input };
             setMessages(prev => prev.map(m =>
               m.id === taskPlanMsgId.current
                 ? { ...m, subagentSteps: [...(m.subagentSteps ?? []), step] }
@@ -199,7 +199,7 @@ export function useOllama({ sessionId, initialMessages, initialMeta, cwd, model 
               if (m.id !== taskPlanMsgId.current) return m;
               const steps = (m.subagentSteps ?? []).map(s =>
                 s.toolUseId === toolUseId
-                  ? { ...s, toolResult: result, toolError: !!(result as Record<string, unknown>).error, isStreaming: false }
+                  ? { ...s, toolResult: result, toolError: !!(result as Record<string, unknown>).error }
                   : s
               );
               return { ...m, subagentSteps: steps };
@@ -235,14 +235,13 @@ export function useOllama({ sessionId, initialMessages, initialMeta, cwd, model 
           setMessages(prev => [...prev, {
             id: taskId,
             role: "tool_call" as const,
-            content: "",
+            content: tasks.join("\n"),
             toolName: "Task",
-            toolInput: { description: `Executing ${tasks.length} tasks` },
+            toolInput: { description: `Plan: ${tasks.length} tasks`, task_list: tasks },
             subagentSteps: [],
             subagentStatus: "running" as const,
             isStreaming: true,
             timestamp: Date.now(),
-            _taskPlan: tasks,
           }]);
           taskPlanMsgId.current = taskId;
           break;

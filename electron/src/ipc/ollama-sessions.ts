@@ -403,16 +403,38 @@ CRITICAL RULES:
 
 ERROR HANDLING
 
-When a tool call returns an error:
-1. Read the error message carefully.
-2. Fix the issue and retry. Examples:
-   - Directory not found → run_shell "mkdir -p path/to/dir", then retry.
-   - Package not found → run_shell "cd project && npm install package-name".
-   - edit_file old_string not found → read_file first, then retry with exact content.
-3. If you don't understand the error or don't know how to fix it, use web_search to search for a solution. For example: web_search "next.js error MODULE_NOT_FOUND solution". Then read the results and apply the fix.
-4. If web_search gives you a link with a solution, use read_url to fetch the page content and extract the fix.
-5. NEVER give up after one error. Always try at least 3 different approaches before reporting failure.
-6. NEVER tell the user to fix the error themselves. YOU fix it.
+When a tool call returns an error, follow this escalation path IN ORDER:
+
+LEVEL 1 — FIX IT YOURSELF:
+- Read the error message carefully
+- Fix the issue and retry. Examples:
+  - Directory not found → run_shell "mkdir -p path/to/dir", then retry
+  - Package not found → run_shell "cd project && npm install package-name"
+  - edit_file old_string not found → read_file first, then retry with exact content
+  - Build error → read the error, fix the file with edit_file, rebuild
+
+LEVEL 2 — SEARCH FOR SOLUTIONS:
+- If you don't know how to fix it, use web_search to find a solution
+- Example: web_search "next.js error MODULE_NOT_FOUND solution 2025"
+- Use read_url to read the solution page and apply the fix
+- Try at least 2-3 different search queries if the first doesn't help
+
+LEVEL 3 — CREATE CORRECTION TASKS:
+- If the error is complex, break the fix into sub-tasks:
+  "Correction plan:
+  1. Read the failing file to understand the issue
+  2. Search web for the specific error message
+  3. Apply the fix from the solution found
+  4. Rebuild to verify the fix works"
+- Execute each correction task one by one
+
+LEVEL 4 — ASK THE USER (last resort):
+- ONLY after trying Levels 1-3 and failing
+- Ask a clear, specific question: "I tried X, Y, and Z but the error persists. The error is: [error]. Do you want me to try a different approach, or do you have a preference?"
+- You CAN also ask the user for clarification about requirements (e.g., "Should the landing page have a dark theme or light theme?", "Which sections do you want?")
+- But NEVER ask about technical implementation — figure it out yourself
+
+IMPORTANT: NEVER give up. NEVER tell the user to fix something. Always exhaust Levels 1-3 before asking.
 
 ====
 
@@ -422,7 +444,9 @@ COMMUNICATION
 - Keep explanations to 1-2 lines maximum. Let your tool calls do the talking.
 - After completing a task, give a one-line summary of what was created/changed.
 - Do NOT start messages with "Great", "Sure", "Certainly". Be direct and technical.
-- Your goal is to accomplish the task, NOT have a conversation.`;
+- Your goal is to accomplish the task, NOT have a conversation.
+- You CAN ask the user questions about their preferences (design, features, scope) but NEVER about technical problems — solve those yourself.
+- If you are unsure about what the user wants, ask ONE clear question and wait for the answer before proceeding.`;
 
   if (mcpToolNames && mcpToolNames.length > 0) {
     prompt += `\n\nMCP TOOLS (external services) — PREFER these over builtin tools when relevant:\n${mcpToolNames.map((n) => `- ${n}`).join("\n")}`;
@@ -1405,6 +1429,8 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
         }
 
         let ops = 0;
+        let lastToolResult = "";
+        let lastToolName = "";
         for (const call of streamResult.toolCalls) {
           if (ops >= MAX_TOOL_OPS) break;
           ops++;
@@ -1413,6 +1439,20 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
             ? await executeMcpToolCall(call, session, getMainWindow, sessionId)
             : await executeToolCall(call, session.cwd, session.state, getMainWindow, sessionId);
           session.messages.push({ role: "tool", content: result.content });
+          lastToolResult = result.content;
+          lastToolName = call.function.name;
+        }
+
+        const buildFailed = lastToolName === "run_shell"
+          && /\b(build|compile|tsc|check)\b/i.test(JSON.stringify(streamResult.toolCalls[streamResult.toolCalls.length - 1]?.function?.arguments ?? {}))
+          && /error|Error|ERROR|failed|FAILED/i.test(lastToolResult);
+        if (buildFailed) {
+          log("OLLAMA", "build failed — injecting correction prompt");
+          const errorLines = lastToolResult.split("\n").filter(l => /error|Error/i.test(l)).slice(0, 10).join("\n");
+          session.messages.push({
+            role: "user",
+            content: `The build FAILED with these errors:\n${errorLines}\n\nCreate a correction plan:\n1. Read each file that has errors\n2. Fix each error with edit_file\n3. Run build again\n\nStart fixing NOW. Do NOT give up.`,
+          });
         }
 
         const isLoop = detectLoop(session.state, streamResult.toolCalls);
