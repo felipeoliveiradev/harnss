@@ -1668,35 +1668,10 @@ Do NOT create files manually. Do NOT search again. Clone NOW.`;
   ipcMain.handle("ollama:list-models", async () => {
     try {
       const client = await getOllamaClient();
-      const host = getBaseUrl();
-      const isCloud = host.includes("ollama.com");
       const data = await client.list();
-      const localModels = (data.models ?? []).map((m: { name: string }) => m.name);
-
-      if (isCloud || localModels.length === 0) {
-        const cloudModels = [
-          "llama4", "gemma3", "qwen3", "phi4", "deepseek-r1",
-          "mistral", "codellama", "llama3.3", "qwen2.5-coder",
-          "devstral", "command-r", "mixtral",
-        ];
-        const merged = [...new Set([...localModels, ...cloudModels])].sort();
-        return { ok: true, models: merged, isCloud };
-      }
-
-      return { ok: true, models: localModels, isCloud: false };
+      const models = (data.models ?? []).map((m: { name: string }) => m.name);
+      return { ok: true, models };
     } catch (err) {
-      const host = getBaseUrl();
-      if (host.includes("ollama.com")) {
-        return {
-          ok: true,
-          isCloud: true,
-          models: [
-            "llama4", "gemma3", "qwen3", "phi4", "deepseek-r1",
-            "mistral", "codellama", "llama3.3", "qwen2.5-coder",
-            "devstral", "command-r", "mixtral",
-          ],
-        };
-      }
       return { ok: false, models: [], error: (err as Error).message };
     }
   });
