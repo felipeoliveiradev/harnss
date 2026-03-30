@@ -1,4 +1,5 @@
 import { defineConfig } from "tsup";
+import { cpSync, mkdirSync } from "fs";
 
 export default defineConfig({
   entry: {
@@ -22,4 +23,8 @@ export default defineConfig({
   ],
   noExternal: [],
   treeshake: true,
+  onSuccess: async () => {
+    mkdirSync("electron/dist/skills", { recursive: true });
+    cpSync("electron/src/skills", "electron/dist/skills", { recursive: true });
+  },
 });

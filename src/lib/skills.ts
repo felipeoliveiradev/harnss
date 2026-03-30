@@ -6,6 +6,7 @@ import {
   FileText,
   Bug,
   Zap,
+  Globe,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -19,6 +20,14 @@ export interface BuiltinSkill {
 }
 
 export const BUILTIN_SKILLS: BuiltinSkill[] = [
+  {
+    id: "nextjs",
+    name: "Next.js",
+    description: "Create and build Next.js 15 apps with App Router, Tailwind CSS v4, TypeScript, and shadcn/ui. Includes CLI flags, project structure, and landing page patterns.",
+    icon: Globe,
+    tags: ["framework", "react", "web"],
+    status: "available",
+  },
   {
     id: "code-review",
     name: "Code Review",

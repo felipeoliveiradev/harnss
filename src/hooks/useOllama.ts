@@ -36,7 +36,6 @@ export function useOllama({ sessionId, initialMessages, initialMeta, cwd, model 
   const streamingMsgId = useRef<string | null>(null);
   const toolMsgIds = useRef<Map<string, string>>(new Map());
   const taskPlanMsgId = useRef<string | null>(null);
-
   useEffect(() => {
     streamingMsgId.current = null;
     toolMsgIds.current = new Map();
@@ -259,6 +258,22 @@ export function useOllama({ sessionId, initialMessages, initialMeta, cwd, model 
           break;
         }
 
+        case "ask_user:request": {
+          const { question, toolUseId, options } = event.payload as { question: string; toolUseId: string; options?: string[] };
+          const questionObj: Record<string, unknown> = { question, header: question, multiSelect: false };
+          if (options && options.length > 0) {
+            questionObj.options = options.map((o: string) => ({ label: o, description: "" }));
+          }
+          setPendingPermission({
+            requestId: toolUseId,
+            toolName: "AskUserQuestion",
+            toolUseId,
+            toolInput: { questions: [questionObj] },
+          });
+          setIsProcessing(false);
+          break;
+        }
+
         case "chat:error": {
           // Finalize any in-progress message
           if (streamingMsgId.current) {
@@ -334,9 +349,23 @@ export function useOllama({ sessionId, initialMessages, initialMeta, cwd, model 
     await window.claude.ollama.interrupt(sessionIdRef.current);
   }, [sessionIdRef]);
 
-  const respondPermission = useCallback(async () => {
+  const respondPermission = useCallback(async (behavior: string, updatedInput?: Record<string, unknown>) => {
+    if (!sessionIdRef.current || !pendingPermission) return;
     setPendingPermission(null);
-  }, [setPendingPermission]);
+    if (behavior === "deny") {
+      setIsProcessing(true);
+      await window.claude.ollama.userResponse(sessionIdRef.current, "User skipped this question.");
+      return;
+    }
+    const answers = updatedInput?.answers as Record<string, string> | undefined;
+    const answerText = answers ? Object.values(answers).filter(Boolean).join(", ") : "";
+    if (answerText) {
+      const msgId = nextId("user");
+      setMessages(prev => [...prev, { id: msgId, role: "user" as const, content: answerText, timestamp: Date.now() }]);
+    }
+    setIsProcessing(true);
+    await window.claude.ollama.userResponse(sessionIdRef.current, answerText || "No preference.");
+  }, [sessionIdRef, pendingPermission, setPendingPermission, setIsProcessing, setMessages]);
 
   const setPermissionMode = useCallback(async (_mode: string) => {}, []);
   const compact = useCallback(async () => {}, []);

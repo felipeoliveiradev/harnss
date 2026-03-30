@@ -333,6 +333,8 @@ contextBridge.exposeInMainWorld("claude", {
       ipcRenderer.on("ollama:event", listener);
       return () => ipcRenderer.removeListener("ollama:event", listener);
     },
+    userResponse: (sessionId: string, text: string) =>
+      ipcRenderer.invoke("ollama:user_response", { sessionId, text }),
     onExit: (callback: (data: unknown) => void) => {
       const listener = (_event: IpcRendererEvent, data: unknown) => callback(data);
       ipcRenderer.on("ollama:exit", listener);
