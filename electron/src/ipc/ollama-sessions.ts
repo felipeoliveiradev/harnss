@@ -1475,7 +1475,7 @@ async function streamOllamaChat(
     model: session.model,
     messages: compressed,
     stream: true,
-    options: { temperature: 0.2, num_predict: 4096 },
+    options: { temperature: 0.2, num_predict: 16384 },
   };
   if (session.supportsTools) chatOpts.tools = allTools;
   if (session.supportsThinking) chatOpts.think = true;
@@ -2046,9 +2046,11 @@ Do NOT create files manually. Do NOT search again. Clone NOW.`;
           }
         }
 
+        const NOTE_AFTER = new Set(["web_search", "read_url", "read_file", "ask_multiple_ais", "github_search"]);
         let ops = 0;
         let lastToolResult = "";
         let lastToolName = "";
+        let needsNote = false;
         for (const call of callsToExecute) {
           if (ops >= MAX_TOOL_OPS) break;
           ops++;
@@ -2060,6 +2062,14 @@ Do NOT create files manually. Do NOT search again. Clone NOW.`;
           try { saveMessage(sessionId, session.cwd, { role: "tool", content: result.content.slice(0, 2000), toolName: call.function.name, toolInput: JSON.stringify(call.function.arguments).slice(0, 500), timestamp: Date.now() }); } catch {}
           lastToolResult = result.content;
           lastToolName = call.function.name;
+          if (NOTE_AFTER.has(call.function.name) && !result.content.includes("Already")) needsNote = true;
+        }
+
+        if (needsNote && !callsToExecute.some(c => c.function.name === "note")) {
+          session.messages.push({
+            role: "user",
+            content: "MANDATORY: Call note NOW before doing anything else. Save ALL important details from the tool results above: names, data, URLs, structure, decisions. Be COMPLETE. If you don't note it, you WILL forget it.",
+          });
         }
 
         if (droppedWriteCalls) {
