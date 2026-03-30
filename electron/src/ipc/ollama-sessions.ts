@@ -2061,6 +2061,17 @@ Do NOT create files manually. Do NOT search again. Clone NOW.`;
           });
         }
 
+        const calledNote = streamResult.toolCalls.some(c => c.function.name === "note");
+        const lastNoteLoop = (session.state as SessionState & { lastNoteLoop?: number }).lastNoteLoop ?? 0;
+        if (calledNote) (session.state as SessionState & { lastNoteLoop?: number }).lastNoteLoop = loopCount;
+        if (!calledNote && loopCount - lastNoteLoop >= 3 && session.state.toolCallCount > 2) {
+          log("OLLAMA", `no note call in 3 loops — reminding model to use scratchpad`);
+          session.messages.push({
+            role: "user",
+            content: "IMPORTANT: Call the note tool NOW to save what you learned so far. Use tags: 🔵info for findings, 🟡todo for next steps with HOW to do them, 🟢done for completed work. Your scratchpad is empty — you will forget everything if you don't note it.",
+          });
+        }
+
         const isLoop = detectLoop(session.state, streamResult.toolCalls);
         if (isLoop) {
           log("OLLAMA", `repetitive loop detected at iteration ${loopCount} — asking model to reconsider`);
