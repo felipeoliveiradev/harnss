@@ -375,6 +375,10 @@ RULES:
 
 4. ALWAYS write the FULL file. Not append. Read → update all sections → write.
 5. Include ALL data you need. Names, URLs, numbers, paths. Be complete.
+6. When you COMPLETE a Todo item: move it from 🟡 Todo to 🟢 Done with a short result summary.
+7. When you FIND an error: add it to 🔴 Blocks with the error message AND how to fix.
+8. Each Done item must have a summary: "Created Hero component w/ gradient bg + CTA → src/components/Hero.tsx (45 lines)"
+9. Each Todo item must say HOW: "edit_file src/app/page.tsx: import and add <Features /> after <Hero />"
 
 ## PHASE 1: RESEARCH
 
