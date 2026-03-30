@@ -12,6 +12,7 @@ import { crawlUrl } from "../lib/rag/web-crawl";
 import { filterFiles } from "../lib/harnssignore";
 import { getMcpToolsForOllama, executeMcpTool, disconnectMcpBridge, type McpBridgeState } from "../lib/mcp-bridge";
 import { multiAiSearch } from "../lib/multi-ai-search";
+import { saveMessage, saveSessionMeta, updateSessionSummary, searchProjectMessages, getSessionMessages } from "../lib/conversation-db";
 
 let ollamaClient: any = null;
 let ollamaClientHost: string = "";
@@ -285,6 +286,21 @@ const OLLAMA_TOOLS = [
   {
     type: "function" as const,
     function: {
+      name: "recall_conversation",
+      description: "Search your conversation history for this project. Use this when you need to remember what was discussed, what files were created, or what the user asked in previous sessions. Also useful to check what you already did in this session.",
+      parameters: {
+        type: "object",
+        required: ["query"],
+        properties: {
+          query: { type: "string", description: "Search term to find in conversation history (e.g. 'landing page', 'package.json', 'dark theme')" },
+          sessionId: { type: "string", description: "Specific session ID to search (omit to search all sessions in this project)" },
+        },
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
       name: "ask_multiple_ais",
       description: "Query multiple AI models (Claude, GPT-4, Gemini, Llama) with the same question and get their different perspectives. Use for research, cross-validation, or getting diverse opinions on technical decisions.",
       parameters: {
@@ -342,6 +358,7 @@ VIOLATION OF THIS ORDER IS FORBIDDEN. Each step MUST be completed before moving 
 
 THINK BEFORE SEARCHING. Follow this exact process:
 
+0. Call recall_conversation to check what was already discussed or done in this project
 1. Call web_search ONCE with a focused query about the main topic
 2. READ the results. Decide: do you have enough info? If yes → Phase 2. If no → one more search.
 3. Maximum 3 searches total. After each search, STOP and THINK about what you learned.
@@ -821,7 +838,11 @@ async function executeToolCall(
     }
 
     case "list_files": {
-      const rel = args.path || ".";
+      let rel = args.path || ".";
+      if (path.isAbsolute(rel)) {
+        const resolved = path.resolve(rel);
+        rel = resolved.startsWith(cwd) ? path.relative(cwd, resolved) || "." : ".";
+      }
       emitStart("Glob", { path: rel });
       try {
         const rawFiles = await listFilesGit(cwd);
@@ -851,7 +872,11 @@ async function executeToolCall(
 
     case "search_files": {
       const pattern = args.pattern ?? "";
-      const rel = args.path || ".";
+      let rel = args.path || ".";
+      if (path.isAbsolute(rel)) {
+        const resolved = path.resolve(rel);
+        rel = resolved.startsWith(cwd) ? path.relative(cwd, resolved) || "." : ".";
+      }
       emitStart("Grep", { pattern, path: rel });
       try {
         const matches = await searchFiles(pattern, cwd, rel);
@@ -1045,6 +1070,36 @@ async function executeToolCall(
 
       emitResult("AskUser", { response });
       return { toolName: "AskUser", input: { question }, result: `User responded: ${response}`, content: response };
+    }
+
+    case "recall_conversation": {
+      const query = args.query ?? "";
+      const targetSessionId = args.sessionId as string | undefined;
+      emitStart("RecallConversation", { query });
+      try {
+        const session = sessions.get(sessionId);
+        const projectId = session?.cwd ?? cwd;
+
+        let results;
+        if (targetSessionId) {
+          results = getSessionMessages(targetSessionId, 20);
+        } else {
+          results = searchProjectMessages(projectId, query, 20);
+        }
+
+        const formatted = results
+          .map((r: { role: string; content: string; sessionId: string; timestamp: number }) =>
+            `[${new Date(r.timestamp).toLocaleString()}] ${r.role}: ${r.content.slice(0, 300)}`,
+          )
+          .join("\n\n");
+
+        emitResult("RecallConversation", { query, resultCount: results.length });
+        return { toolName: "RecallConversation", input: { query }, result: `Found ${results.length} messages`, content: formatted || "No matching messages found in conversation history." };
+      } catch (err) {
+        const msg = (err as Error).message;
+        emitResult("RecallConversation", { error: msg });
+        return { toolName: "RecallConversation", input: { query }, result: msg, content: `Recall failed: ${msg}` };
+      }
     }
 
     default: {
@@ -1415,6 +1470,8 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
       supportsThinking: caps.supportsThinking,
     });
 
+    try { saveSessionMeta(sessionId, projectId || cwd, "", sessionModel, "ollama", Date.now()); } catch {}
+
     triggerIndex(cwd);
 
     return { sessionId, model: sessionModel };
@@ -1516,6 +1573,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
         }
       } else {
         session.messages.push({ role: "user", content: text, ...(images?.length ? { images } : {}) });
+        try { saveMessage(sessionId, session.cwd, { role: "user", content: text, timestamp: Date.now() }); } catch {}
       }
     } catch (err) {
       log("RAG", `failed, using plain message: ${(err as Error).message}`);
@@ -1596,6 +1654,7 @@ If you already ran the CLI, start writing/editing files NOW. Do NOT search the w
               }
             }
             session.messages.push({ role: "assistant", content: streamResult.content });
+            try { if (streamResult.content) saveMessage(sessionId, session.cwd, { role: "assistant", content: streamResult.content.slice(0, 2000), timestamp: Date.now() }); } catch {}
             emit(getMainWindow, sessionId, "chat:final", { message: streamResult.content });
             break;
           }
@@ -1608,6 +1667,7 @@ If you already ran the CLI, start writing/editing files NOW. Do NOT search the w
           if ((mentionsTaskComplete || mentionsBuildPass) && hasWrittenFiles && !mentionsSuggestions) {
             log("OLLAMA", "task complete but no verification/conclusion — requesting Phase 5");
             session.messages.push({ role: "assistant", content: streamResult.content });
+            try { if (streamResult.content) saveMessage(sessionId, session.cwd, { role: "assistant", content: streamResult.content.slice(0, 2000), timestamp: Date.now() }); } catch {}
             const projectDir = session.state.filesCreated[0]?.split("/")[0] || ".";
             session.messages.push({
               role: "user",
@@ -1626,6 +1686,7 @@ Do it now.`,
           if (!mentionsTaskComplete && !mentionsBuildPass && loopCount < MAX_TOOL_LOOPS - 5 && emptyResponseCount < 3) {
             log("OLLAMA", `model stopped without completing tasks (loop ${loopCount}, empty=${emptyResponseCount}) — auto-continuing`);
             session.messages.push({ role: "assistant", content: streamResult.content });
+            try { if (streamResult.content) saveMessage(sessionId, session.cwd, { role: "assistant", content: streamResult.content.slice(0, 2000), timestamp: Date.now() }); } catch {}
 
             const hadGithubSearch = session.messages.some(m => m.role === "tool" && m.content.includes("github.com") && m.content.includes("stars"));
             const mentionsClone = /clone|github_clone|git clone|starter|template|scaffold|boilerplate/i.test(streamResult.content);
@@ -1652,6 +1713,7 @@ Do NOT create files manually. Do NOT search again. Clone NOW.`;
           }
 
           session.messages.push({ role: "assistant", content: streamResult.content });
+          try { if (streamResult.content) saveMessage(sessionId, session.cwd, { role: "assistant", content: streamResult.content.slice(0, 2000), timestamp: Date.now() }); } catch {}
           emit(getMainWindow, sessionId, "chat:final", { message: streamResult.content });
           break;
         }
@@ -1661,6 +1723,7 @@ Do NOT create files manually. Do NOT search again. Clone NOW.`;
           content: streamResult.content || "",
           tool_calls: streamResult.toolCalls,
         });
+        try { if (streamResult.content) saveMessage(sessionId, session.cwd, { role: "assistant", content: streamResult.content.slice(0, 2000), timestamp: Date.now() }); } catch {}
 
         if (streamResult.content) {
           emit(getMainWindow, sessionId, "chat:mid-final", { message: streamResult.content });
@@ -1668,7 +1731,7 @@ Do NOT create files manually. Do NOT search again. Clone NOW.`;
           emit(getMainWindow, sessionId, "chat:clear-streaming", {});
         }
 
-        const RESEARCH_TOOLS = new Set(["web_search", "read_url", "ask_multiple_ais", "github_search", "ask_user", "list_files", "read_file", "search_files"]);
+        const RESEARCH_TOOLS = new Set(["web_search", "read_url", "ask_multiple_ais", "github_search", "ask_user", "recall_conversation", "list_files", "read_file", "search_files"]);
         const WRITE_TOOLS = new Set(["write_file", "edit_file", "delete_file", "run_shell", "github_clone"]);
         const inResearchPhase = session.state.filesCreated.length === 0 && session.state.filesModified.length === 0;
 
@@ -1695,6 +1758,7 @@ Do NOT create files manually. Do NOT search again. Clone NOW.`;
             ? await executeMcpToolCall(call, session, getMainWindow, sessionId)
             : await executeToolCall(call, session.cwd, session.state, getMainWindow, sessionId);
           session.messages.push({ role: "tool", content: result.content, tool_name: call.function.name } as OllamaMessage);
+          try { saveMessage(sessionId, session.cwd, { role: "tool", content: result.content.slice(0, 2000), toolName: call.function.name, toolInput: JSON.stringify(call.function.arguments).slice(0, 500), timestamp: Date.now() }); } catch {}
           lastToolResult = result.content;
           lastToolName = call.function.name;
         }
@@ -1745,6 +1809,7 @@ Do NOT create files manually. Do NOT search again. Clone NOW.`;
           }
           summaryParts.push("Continue from where you left off. Do NOT start over.");
           session.state.progressSummary = summaryParts.join("\n");
+          try { updateSessionSummary(sessionId, session.state.progressSummary); } catch {}
           log("OLLAMA", `progress summary updated at loop ${loopCount}: ${session.state.filesCreated.length} created, ${session.state.filesModified.length} modified`);
         }
 

@@ -326,10 +326,14 @@ export function useOllama({ sessionId, initialMessages, initialMeta, cwd, model,
 
     const base64Images = images?.map(img => img.data.replace(/^data:image\/\w+;base64,/, ""));
 
-    const prevMsgs = messages.filter(m => m.role === "user" || m.role === "assistant").slice(-6);
-    const contextSummary = prevMsgs.length > 0
-      ? prevMsgs.map(m => `${m.role}: ${m.content.slice(0, 200)}`).join("\n")
-      : undefined;
+    const userMsgs = messages.filter(m => m.role === "user");
+    const assistantMsgs = messages.filter(m => m.role === "assistant" && m.content.length > 20);
+    const toolMsgs = messages.filter(m => m.role === "tool_call" && m.toolResult && !m.toolError);
+    const summaryParts: string[] = [];
+    if (userMsgs.length > 0) summaryParts.push("USER MESSAGES:\n" + userMsgs.map(m => `- ${m.content.slice(0, 300)}`).join("\n"));
+    if (toolMsgs.length > 0) summaryParts.push(`TOOLS EXECUTED: ${toolMsgs.length} tool calls (${[...new Set(toolMsgs.map(m => m.toolName))].join(", ")})`);
+    if (assistantMsgs.length > 0) summaryParts.push("LAST ASSISTANT RESPONSE:\n" + assistantMsgs.slice(-1).map(m => m.content.slice(0, 500)).join(""));
+    const contextSummary = summaryParts.length > 0 ? summaryParts.join("\n\n") : undefined;
 
     const result = await window.claude.ollama.send(sessionIdRef.current, text, cwd, model, base64Images?.length ? base64Images : undefined, undefined, host, contextSummary);
     if (result?.error) {
