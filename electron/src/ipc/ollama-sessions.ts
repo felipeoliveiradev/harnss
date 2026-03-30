@@ -12,6 +12,15 @@ import { crawlUrl } from "../lib/rag/web-crawl";
 import { filterFiles } from "../lib/harnssignore";
 import { getMcpToolsForOllama, executeMcpTool, disconnectMcpBridge, type McpBridgeState } from "../lib/mcp-bridge";
 
+let ollamaClient: any = null;
+async function getOllamaClient(): Promise<any> {
+  if (!ollamaClient) {
+    const { Ollama } = await import("ollama");
+    ollamaClient = new Ollama({ host: getBaseUrl() });
+  }
+  return ollamaClient;
+}
+
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 interface OllamaMessage {
@@ -19,6 +28,7 @@ interface OllamaMessage {
   content: string;
   images?: string[];
   tool_calls?: OllamaToolCall[];
+  tool_name?: string;
 }
 
 interface OllamaToolCall {
@@ -230,6 +240,81 @@ Your current working directory is: ${cwd}
 
 ====
 
+ENVIRONMENT — How This System Works
+
+You run inside a desktop IDE. When you call a tool, the IDE executes it and returns the result. Here is how each part works:
+
+SHELL EXECUTION (run_shell):
+- Commands run in a NON-INTERACTIVE shell. There is NO terminal, NO stdin, NO user to type answers.
+- If a command asks a question (y/n, choose option, confirm) — it will HANG FOREVER because nobody can respond.
+- You must THINK before running any command: "Could this command ask me something?"
+
+HOW TO REASON ABOUT COMMANDS:
+When you need to run a command you haven't used before, follow this decision process:
+
+1. ASK YOURSELF: "Does this command have interactive prompts?"
+   - Setup/scaffold commands (create-app, init, new) → ALMOST ALWAYS interactive
+   - Install commands (npm install, pip install) → usually safe
+   - Build/run commands (build, dev, start) → usually safe
+   - Config commands (init, setup) → often interactive
+
+2. IF YOU'RE NOT SURE → search first: web_search "[command name] non-interactive CLI flags"
+   - Read the results to find which flags skip prompts
+   - Common patterns you'll find: --yes, -y, --no-input, --default, --non-interactive
+   - Some tools use environment variables: CI=true, NONINTERACTIVE=1
+   - Some tools accept piped input: "yes '' | command" sends empty answers to all prompts
+
+3. CHOOSE YOUR APPROACH:
+   - You found the flags → run the command with those flags
+   - You're still unsure → create the project manually (mkdir + write_file for config files + install command)
+   - The command hung/failed → DON'T retry the same command. Switch to manual creation.
+
+4. WHY MANUAL CREATION ALWAYS WORKS:
+   - write_file never asks questions. mkdir never asks questions. npm install never asks questions.
+   - You can create ANY project by writing its config files directly
+   - Search web_search "[framework] minimum files needed for project" to know what to create
+   - This approach is SLOWER but 100% RELIABLE. Prefer it when you don't know the command well.
+
+5. USEFUL LIBRARIES AND FRAMEWORKS TO KNOW:
+   When the user asks to build AI-powered applications, consider these tools:
+   - Vercel AI SDK (npm: "ai") — toolkit for building AI apps with React, Next.js, Svelte, Vue, Angular. Has useChat(), streamText(), tool calling, and providers for OpenAI, Anthropic, Google, Ollama, etc.
+   - ollama-ai-provider — connects Vercel AI SDK to local Ollama models
+   - LangChain — framework for LLM chains, agents, RAG
+   - These are suggestions — always search the web for the best current solution for what the user needs.
+
+6. SEARCH FOR BOILERPLATES AND TEMPLATES:
+   - Before creating from scratch, search for existing templates: web_search "[framework] starter template github"
+   - Look for official or popular boilerplates you can clone: run_shell "git clone [url] project-name"
+   - Cloning a template is faster than creating files one by one and avoids config mistakes
+   - After cloning, customize the files for the user's needs using edit_file
+   - If you can't find a good template or clone fails, fall back to manual creation
+
+FILE OPERATIONS (write_file, read_file, edit_file):
+- write_file creates the file AND all parent directories automatically. No need to mkdir first.
+- write_file REPLACES the entire file. Always provide COMPLETE content.
+- read_file returns the full file content. Use it before edit_file.
+- edit_file finds and replaces exact text. The old_string MUST match exactly.
+
+WEB TOOLS (web_search, read_url):
+- web_search returns a summary of search results (titles, URLs, snippets).
+- read_url fetches a web page and returns its text content.
+- Use these to find documentation, solutions to errors, correct command flags, etc.
+- Results are truncated to save context. If you need more detail, call read_url on a specific result URL.
+
+TOOL RESULTS:
+- After you call a tool, the system executes it and returns the result in the next message.
+- You see the result and then decide what to do next.
+- If the result shows an error, analyze it and fix it. Do NOT ignore errors.
+- If the result is empty or unexpected, try a different approach.
+
+CONTEXT LIMITS:
+- Your context window is limited. Do NOT request unnecessary information.
+- Do NOT list files repeatedly. Check once, then work from memory.
+- Do NOT make web searches you don't need. Search only when you don't know something.
+- Keep your text responses SHORT (1-2 lines). Let tool calls do the work.
+
+====
+
 CAPABILITIES
 
 You have access to tools that let you execute CLI commands, list files, search code, read and write files. These tools help you accomplish tasks such as writing code, making edits, understanding projects, setting up new projects, and performing system operations.
@@ -238,26 +323,9 @@ IMPORTANT: You can ONLY interact with the project through tool calls. Writing co
 
 ====
 
-HOW TO CALL TOOLS
-
-You call tools using function calling — NOT by writing tool names in your text. When you want to use a tool, you must make a proper function call through the API, not type the tool name in your message.
-
-WRONG (do NOT do this):
-  run_shell[ARGS]{"command": "npm install"}
-  write_file[ARGS]{"path": "index.ts", "content": "..."}
-
-These text representations do NOTHING. They are just text. The system cannot execute them.
-
-RIGHT:
-Call the tool through the function calling mechanism. The system will show you the available functions. When you want to create a file, CALL the write_file function. When you want to run a command, CALL the run_shell function. Do not write about calling them — actually invoke them.
-
-The difference: writing "run_shell" in your text is like writing the word "phone" on paper — it doesn't make a call. You need to actually USE the function calling mechanism provided to you.
-
-====
-
 AVAILABLE TOOLS
 
-You have these tools. Call them through function calling (not by writing their names in text):
+You have tools available as functions. Call them to interact with the project. Do NOT describe what you would do — call the function directly.
 
 ## write_file
 Write content to a file, creating it if it does not exist. This tool will automatically create any directories needed.
@@ -325,28 +393,39 @@ WORKFLOW
 You MUST always follow this structured workflow. NEVER skip steps.
 
 STEP 1 — ALWAYS PLAN AND BREAK INTO TASKS FIRST:
-Before ANY code or tool calls, you MUST create a detailed plan. Break the work into small, numbered tasks. This is MANDATORY for EVERY request, no matter how simple. Even a "create a button" request needs tasks.
+Before ANY code or tool calls, you MUST create a detailed plan. Break the work into small, numbered tasks. This is MANDATORY for EVERY request.
+
+Your plan MUST include these phases in order:
+A. RESEARCH: Include a task to search the web for the correct setup commands and documentation before running them.
+B. PROJECT STRUCTURE: Define the complete file tree of the project BEFORE writing any code. List every file and directory you will create. Example:
+   "File tree:
+   my-project/
+     package.json
+     src/
+       app/
+         layout.tsx
+         page.tsx
+       components/
+         Header.tsx
+         Hero.tsx
+         Features.tsx
+         Footer.tsx
+     tailwind.config.ts
+     tsconfig.json"
+C. IMPLEMENTATION: One task per file/component to create.
+D. DEPENDENCIES: Install any additional packages needed.
+E. BUILD & FIX: Run build, fix ALL errors in a loop until build passes.
 
 Format your plan EXACTLY like this:
 "Plan:
-1. [Task description]
-2. [Task description]
-3. [Task description]
+1. Research the correct scaffold command for [framework]
+2. Define project file tree
+3. Scaffold project (or create manually if scaffold fails)
+4. Create [file1]
+5. Create [file2]
 ...
-N. Verify build and fix any errors"
-
-The LAST task must ALWAYS be verification (build/lint check). Example plan:
-"Plan:
-1. Scaffold Next.js project with TypeScript and Tailwind
-2. Create layout.tsx with header navigation and footer
-3. Create HeroSection component with heading, subtext, and CTA button
-4. Create FeaturesSection component with 3 feature cards
-5. Create TestimonialsSection component with testimonial cards
-6. Create CTASection component with call-to-action
-7. Wire all components into page.tsx
-8. Add global styles and design tokens
-9. Install dependencies (framer-motion, lucide-react)
-10. Run build and fix any errors"
+N-1. Install dependencies
+N. Run build and fix all errors until build passes"
 
 STEP 2 — EXECUTE EACH TASK:
 After planning, execute tasks ONE BY ONE. For EACH task:
@@ -355,35 +434,65 @@ After planning, execute tasks ONE BY ONE. For EACH task:
 - After the tool result comes back, immediately move to the next task
 - Do NOT wait for user confirmation. Keep going autonomously until ALL tasks are done
 - NEVER stop in the middle. Complete ALL tasks in your plan
-- FOCUS ON WRITING CODE. Most of your tool calls should be write_file. Do not spend multiple turns listing or exploring files — check once if needed, then write code
-- After scaffolding a project, you already know the standard structure. Go straight to writing files
+- FOCUS ON WRITING CODE. Most of your tool calls should be write_file
+- After scaffolding a project, you already know the structure from your plan. Go straight to writing files
 
-STEP 3 — PROJECT SETUP (if creating a new project):
-Use run_shell to scaffold the project using the appropriate tool for the language/framework. Always use non-interactive flags (--yes, -y, etc.).
-If the scaffold command fails or hangs, create the project manually: use mkdir to create directories and write_file to create config files (package.json, tsconfig.json, etc.).
+STEP 3 — RESEARCH AND PROJECT SETUP:
+Before running ANY scaffold or setup command, you MUST research thoroughly:
+
+A. SEARCH MULTIPLE SOURCES:
+   - web_search "[framework] create project command line non-interactive 2025"
+   - web_search "[framework] official documentation getting started"
+   - web_search "[framework] scaffold project without prompts"
+   - Read at least 2-3 results using read_url to understand the correct approach
+
+B. READ OFFICIAL DOCUMENTATION:
+   - Find the official docs URL from search results
+   - Use read_url to read the official getting started guide
+   - Extract the exact command with all required flags
+
+C. HANDLE INTERACTIVE PROMPTS:
+   Commands run non-interactively — they CANNOT receive user input. If a command asks questions (y/n, choose options, etc.), it will hang or fail. To avoid this:
+   - ALWAYS search for the non-interactive flags first: web_search "[tool] CLI non-interactive flags"
+   - Common patterns: --yes, -y, --no-input, --default, --no-interactive
+   - Pipe yes: "yes | command" or "echo y | command"
+   - Set environment variables: "CI=true command" or "NONINTERACTIVE=1 command"
+   - If you don't know the flags, search: web_search "[tool] skip prompts command line"
+   - If the command STILL hangs or asks for input, ABANDON it and create the project manually
+
+D. EXECUTE WITH CONFIDENCE:
+   - Use the command with ALL non-interactive flags found in your research
+   - If it fails or hangs, DO NOT retry the same command
+   - Search the specific error: web_search "[tool] [error message] solution"
+   - Try the solution found. If it still fails after 2 attempts, go to manual creation
+
+E. FALLBACK — MANUAL CREATION (always works):
+   - Search: web_search "[framework] minimal project structure files"
+   - Read the docs to understand the minimum files needed
+   - Use run_shell "mkdir -p" for directories
+   - Use write_file for EVERY config file (package.json, tsconfig.json, etc.)
+   - This ALWAYS works because there are no interactive prompts
+   - PREFER this approach if you are unsure about the scaffold command
+
+After setup, do NOT list files to verify. You defined the structure in your plan — trust it and start writing code.
 
 STEP 4 — WRITE ALL FILES:
 Use write_file for EACH file. Provide complete, runnable content. Create files one by one. Each file = one write_file call.
 
-STEP 5 — INSTALL DEPENDENCIES (if needed):
-Detect the project type and use the appropriate package manager:
-- Node.js/TypeScript: run_shell "cd project && npm install package1 package2"
-- Python: run_shell "cd project && pip install package1 package2" or create requirements.txt
-- Go: run_shell "cd project && go mod tidy"
-- Rust: run_shell "cd project && cargo build"
-- Ruby: run_shell "cd project && bundle install"
-- Other: use the appropriate package manager for the language
+STEP 5 — INSTALL DEPENDENCIES:
+Use run_shell with the appropriate package manager for the language/framework.
 
-STEP 6 — VERIFY BUILD:
-ALWAYS run verification at the end. Detect the project type and run the appropriate check:
-- Node.js/TypeScript: run_shell "cd project && npm run build" or "cd project && npx tsc --noEmit"
-- Python: run_shell "cd project && python -m py_compile main.py" or "cd project && python -c 'import main'"
-- Go: run_shell "cd project && go build ./..."
-- Rust: run_shell "cd project && cargo check"
-- HTML/CSS/JS (no build): run_shell "ls -la project/" to verify files exist
-- If the build fails, READ the error, FIX the files causing errors using edit_file, and run build again
-- Repeat until the build passes or you've tried 3 times
-- This step is MANDATORY. Never skip it.
+STEP 6 — BUILD & FIX LOOP (MANDATORY — NEVER SKIP):
+This is the most important step. You MUST:
+1. Run the build/compile command for the project
+2. If it PASSES → go to Step 7
+3. If it FAILS → read the error output carefully
+4. For EACH error: read the failing file with read_file, fix it with edit_file
+5. Run build AGAIN
+6. Repeat steps 3-5 until build passes or you've tried 3 times
+7. If still failing after 3 tries, use web_search to find solutions for the specific error
+8. Apply the solution found and rebuild
+9. NEVER finish without a passing build. NEVER tell the user "there are errors, please fix them"
 
 STEP 7 — FINAL SUMMARY:
 After ALL tasks are done and build passes, give a 1-2 line summary of what you built.
@@ -415,11 +524,17 @@ LEVEL 1 — FIX IT YOURSELF:
   - edit_file old_string not found → read_file first, then retry with exact content
   - Build error → read the error, fix the file with edit_file, rebuild
 
-LEVEL 2 — SEARCH FOR SOLUTIONS:
-- If you don't know how to fix it, use web_search to find a solution
-- Example: web_search "next.js error MODULE_NOT_FOUND solution 2025"
-- Use read_url to read the solution page and apply the fix
-- Try at least 2-3 different search queries if the first doesn't help
+LEVEL 2 — DEEP SEARCH FOR SOLUTIONS:
+- If you don't know how to fix it, search the web thoroughly:
+  a) web_search "[error message] solution [framework] [year]"
+  b) Read at least 2-3 results using read_url — do NOT just read the first one
+  c) Compare solutions from different sources, pick the most recommended
+  d) If first search doesn't help, try different search queries:
+     - web_search "[error message] fix"
+     - web_search "[framework] [feature] not working"
+     - web_search "[error code] stackoverflow"
+  e) Also check official docs: web_search "[framework] official docs [topic]" → read_url
+  f) Apply the solution found. If it doesn't work, try the next solution from your research
 
 LEVEL 3 — CREATE CORRECTION TASKS:
 - If the error is complex, break the fix into sub-tasks:
@@ -598,17 +713,8 @@ function detectLoop(state: SessionState, calls: OllamaToolCall[]): boolean {
 
 async function fetchModelContextSize(model: string): Promise<number> {
   try {
-    const response = await fetch(`${getBaseUrl()}/api/show`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model }),
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!response.ok) {
-      log("OLLAMA", `api/show HTTP ${response.status} for ${model}, using default 32768`);
-      return 32768;
-    }
-    const data = (await response.json()) as { model_info?: Record<string, unknown>; parameters?: string };
+    const client = await getOllamaClient();
+    const data = await client.show({ model });
     if (data.model_info) {
       for (const [key, val] of Object.entries(data.model_info)) {
         if (key.endsWith(".context_length") && typeof val === "number" && val > 0) {
@@ -905,7 +1011,7 @@ async function executeToolCall(
         const formatted = formatWebResults(searchResult);
         log("OLLAMA_TOOL", `web_search "${query}" (${searchResult.results.length} results)`);
         emitResult("WebSearch", { query, abstract: searchResult.abstract, abstractUrl: searchResult.abstractUrl, results: searchResult.results });
-        return { toolName: "WebSearch", input: { query }, result: `Web search: ${searchResult.results.length} results`, content: formatted };
+        return { toolName: "WebSearch", input: { query }, result: `Web search: ${searchResult.results.length} results`, content: trimOutput(formatted, 3000) };
       } catch (err) {
         const msg = (err as Error).message;
         emitResult("WebSearch", { error: msg });
@@ -918,8 +1024,8 @@ async function executeToolCall(
       emitStart("WebFetch", { url: targetUrl });
       try {
         const crawlResult = await crawlUrl(targetUrl);
-        const truncated = crawlResult.content.length > 50000
-          ? crawlResult.content.slice(0, 50000) + "\n\n... (truncated, content too long)"
+        const truncated = crawlResult.content.length > 8000
+          ? crawlResult.content.slice(0, 8000) + "\n\n... (truncated)"
           : crawlResult.content;
         log("OLLAMA_TOOL", `read_url "${targetUrl}" (${crawlResult.content.length} chars, provider=${crawlResult.provider})`);
         emitResult("WebFetch", { url: targetUrl, title: crawlResult.title, contentLength: crawlResult.content.length, provider: crawlResult.provider });
@@ -987,44 +1093,22 @@ async function streamOllamaChatNoTools(
   getMainWindow: () => BrowserWindow | null,
   sessionId: string,
 ): Promise<{ content: string }> {
-  const compressed = compressConversation(session.messages as Array<{ role: string; content: string; images?: string[] }>);
-  const response = await fetch(`${getBaseUrl()}/api/chat`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: session.model,
-      messages: compressed,
-      stream: true,
-      options: { temperature: 0.3 },
-    }),
-    signal: controller.signal,
-  });
-  if (!response.ok) {
-    const errText = await response.text().catch(() => `HTTP ${response.status}`);
-    throw new Error(errText);
-  }
-  if (!response.body) throw new Error("No response body");
-  const reader = (response.body as unknown as ReadableStream<Uint8Array>).getReader();
-  const decoder = new TextDecoder();
+  const client = await getOllamaClient();
   let fullContent = "";
-  let buffer = "";
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      try {
-        const parsed = JSON.parse(trimmed) as { message?: { content?: string }; done?: boolean };
-        if (parsed.message?.content) {
-          fullContent += parsed.message.content;
-          const visible = fullContent.replace(/<think>[\s\S]*?<\/think>/g, "").replace(/<think>[\s\S]*$/, "").trim();
-          if (visible) emit(getMainWindow, sessionId, "chat:delta", { text: visible });
-        }
-      } catch {}
+
+  const stream = await client.chat({
+    model: session.model,
+    messages: session.messages,
+    stream: true,
+    options: { temperature: 0.3 },
+  });
+
+  for await (const chunk of stream) {
+    if (controller.signal.aborted) break;
+    if (chunk.message?.content) {
+      fullContent += chunk.message.content;
+      const visible = fullContent.replace(/<think>[\s\S]*?<\/think>/g, "").replace(/<think>[\s\S]*$/, "").trim();
+      if (visible) emit(getMainWindow, sessionId, "chat:delta", { text: visible });
     }
   }
   return { content: fullContent.replace(/<think>[\s\S]*?<\/think>/g, "").replace(/<\/?think>/g, "").trim() };
@@ -1036,109 +1120,87 @@ async function streamOllamaChat(
   getMainWindow: () => BrowserWindow | null,
   sessionId: string,
 ): Promise<StreamResult> {
+  const client = await getOllamaClient();
   const allTools = [...OLLAMA_TOOLS, ...session.mcpTools];
-  const compressed = compressConversation(session.messages as Array<{ role: string; content: string; images?: string[] }>);
   const supportsThinking = (session as OllamaSession & { supportsThinking?: boolean }).supportsThinking !== false;
-  log("OLLAMA", `api/chat: model=${session.model} messages=${session.messages.length} tools=${allTools.length} (builtin=${OLLAMA_TOOLS.length} mcp=${session.mcpTools.length}) think=${supportsThinking}`);
+  log("OLLAMA", `api/chat: model=${session.model} messages=${session.messages.length} tools=${allTools.length} think=${supportsThinking}`);
 
-  const buildBody = (think: boolean) => JSON.stringify({
-    model: session.model,
-    messages: compressed,
-    tools: allTools,
-    ...(think ? { think: true } : {}),
-    stream: true,
-    options: { temperature: 0.2 },
-  });
-
-  let response = await fetch(`${getBaseUrl()}/api/chat`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: buildBody(supportsThinking),
-    signal: controller.signal,
-  });
-
-  if (!response.ok) {
-    const errText = await response.text().catch(() => `HTTP ${response.status}`);
-    if (supportsThinking && errText.includes("does not support thinking")) {
-      log("OLLAMA", `model does not support thinking — retrying without`);
-      (session as OllamaSession & { supportsThinking?: boolean }).supportsThinking = false;
-      response = await fetch(`${getBaseUrl()}/api/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: buildBody(false),
-        signal: controller.signal,
-      });
-      if (!response.ok) {
-        const retryErr = await response.text().catch(() => `HTTP ${response.status}`);
-        throw new Error(retryErr);
-      }
-    } else {
-      throw new Error(errText);
-    }
-  }
-  if (!response.body) throw new Error("No response body from Ollama");
-
-  const reader = (response.body as unknown as ReadableStream<Uint8Array>).getReader();
-  const decoder = new TextDecoder();
   let fullContent = "";
   let fullThinking = "";
-  let buffer = "";
   let toolCalls: OllamaToolCall[] = [];
   let promptTokens = 0;
   let completionTokens = 0;
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  const chatOpts: Record<string, unknown> = {
+    model: session.model,
+    messages: session.messages,
+    tools: allTools,
+    stream: true,
+    options: { temperature: 0.2 },
+  };
+  if (supportsThinking) chatOpts.think = true;
 
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
+  try {
+    const stream = await client.chat(chatOpts);
 
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      try {
-        const parsed = JSON.parse(trimmed) as {
-          message?: { role?: string; content?: string; thinking?: string; tool_calls?: OllamaToolCall[] };
-          done?: boolean;
-          prompt_eval_count?: number;
-          eval_count?: number;
-        };
+    for await (const chunk of stream) {
+      if (controller.signal.aborted) break;
 
-        if (parsed.message?.thinking) {
-          fullThinking += parsed.message.thinking;
-          emit(getMainWindow, sessionId, "chat:thinking", { text: fullThinking });
+      if (chunk.message?.thinking) {
+        fullThinking += chunk.message.thinking;
+        emit(getMainWindow, sessionId, "chat:thinking", { text: fullThinking });
+      }
+
+      if (chunk.message?.content) {
+        fullContent += chunk.message.content;
+        const visible = fullContent
+          .replace(/<think>[\s\S]*?<\/think>/g, "")
+          .replace(/<think>[\s\S]*$/, "")
+          .trim();
+        if (visible) {
+          emit(getMainWindow, sessionId, "chat:delta", { text: visible });
         }
+      }
 
-        if (parsed.message?.content) {
-          fullContent += parsed.message.content;
-          const visible = fullContent
-            .replace(/<think>[\s\S]*?<\/think>/g, "")
-            .replace(/<think>[\s\S]*$/, "")
-            .trim();
-          if (visible) {
-            emit(getMainWindow, sessionId, "chat:delta", { text: visible });
-          }
-        }
+      if (chunk.message?.tool_calls?.length) {
+        toolCalls.push(...chunk.message.tool_calls);
+      }
 
-        if (parsed.message?.tool_calls) {
-          toolCalls = parsed.message.tool_calls;
+      if (chunk.done) {
+        promptTokens = chunk.prompt_eval_count ?? 0;
+        completionTokens = chunk.eval_count ?? 0;
+        if (promptTokens > 0) {
+          emit(getMainWindow, sessionId, "context:usage", {
+            used: promptTokens + completionTokens,
+            limit: session.contextSize,
+            promptTokens,
+            completionTokens,
+          });
         }
-
-        if (parsed.done) {
-          promptTokens = parsed.prompt_eval_count ?? 0;
-          completionTokens = parsed.eval_count ?? 0;
-          if (promptTokens > 0) {
-            emit(getMainWindow, sessionId, "context:usage", {
-              used: promptTokens + completionTokens,
-              limit: session.contextSize,
-              promptTokens,
-              completionTokens,
-            });
-          }
+      }
+    }
+  } catch (err) {
+    const errMsg = (err as Error).message || String(err);
+    if (supportsThinking && errMsg.includes("does not support thinking")) {
+      log("OLLAMA", "model does not support thinking — retrying without");
+      (session as OllamaSession & { supportsThinking?: boolean }).supportsThinking = false;
+      delete chatOpts.think;
+      const stream = await client.chat(chatOpts);
+      for await (const chunk of stream) {
+        if (controller.signal.aborted) break;
+        if (chunk.message?.content) {
+          fullContent += chunk.message.content;
+          const visible = fullContent.replace(/<think>[\s\S]*?<\/think>/g, "").replace(/<think>[\s\S]*$/, "").trim();
+          if (visible) emit(getMainWindow, sessionId, "chat:delta", { text: visible });
         }
-      } catch {}
+        if (chunk.message?.tool_calls?.length) toolCalls.push(...chunk.message.tool_calls);
+        if (chunk.done) {
+          promptTokens = chunk.prompt_eval_count ?? 0;
+          completionTokens = chunk.eval_count ?? 0;
+        }
+      }
+    } else {
+      throw err;
     }
   }
 
@@ -1150,7 +1212,7 @@ async function streamOllamaChat(
   if (toolCalls.length === 0) {
     const parsedFromText = parseToolCallsFromText(cleanContent);
     if (parsedFromText.length > 0) {
-      log("OLLAMA", `parsed ${parsedFromText.length} tool call(s) from text output (model didn't use native function calling)`);
+      log("OLLAMA", `parsed ${parsedFromText.length} tool call(s) from text (SDK didn't return native tool_calls)`);
       toolCalls = parsedFromText;
     }
   }
@@ -1158,40 +1220,72 @@ async function streamOllamaChat(
   return { content: cleanContent, thinking: fullThinking, toolCalls, promptTokens, completionTokens };
 }
 
+function extractJsonFromPosition(text: string, start: number): Record<string, unknown> | null {
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (escape) { escape = false; continue; }
+    if (ch === "\\") { escape = true; continue; }
+    if (ch === '"' && !escape) { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === "{") depth++;
+    if (ch === "}") { depth--; if (depth === 0) { try { return JSON.parse(text.slice(start, i + 1)); } catch { return null; } } }
+  }
+  return null;
+}
+
 function parseToolCallsFromText(text: string): OllamaToolCall[] {
   const calls: OllamaToolCall[] = [];
 
-  const patterns = [
-    /(\w+)\[ARGS\]\s*(\{[\s\S]*?\})/g,
-    /\[TOOL_CALLS\]\s*\[?([\s\S]*?)\]?\s*(?:<\/s>|$)/g,
-    /<tool_call>\s*(\{[\s\S]*?\})\s*<\/tool_call>/g,
-  ];
+  const jsonCallPattern = /\{"name":\s*"(\w+)",\s*"arguments":\s*\{/g;
+  let match;
+  while ((match = jsonCallPattern.exec(text)) !== null) {
+    const jsonStart = match.index;
+    const obj = extractJsonFromPosition(text, jsonStart);
+    if (obj && typeof obj.name === "string" && obj.arguments) {
+      calls.push({ function: { name: obj.name as string, arguments: obj.arguments as Record<string, unknown> } });
+    }
+  }
 
-  for (const pattern of patterns) {
-    let match;
-    while ((match = pattern.exec(text)) !== null) {
+  if (calls.length === 0) {
+    const toolNamePattern = /[-*]*(\w+)\[ARGS\](?:\[ARGS\])?\s*\{/g;
+    while ((match = toolNamePattern.exec(text)) !== null) {
+      const name = match[1];
+      const jsonStart = match.index + match[0].length - 1;
+      const args = extractJsonFromPosition(text, jsonStart);
+      if (args) {
+        calls.push({ function: { name, arguments: args } });
+      }
+    }
+  }
+
+  if (calls.length === 0) {
+    const toolCallTag = /<tool_call>\s*(\{[\s\S]*?\})\s*<\/tool_call>/g;
+    while ((match = toolCallTag.exec(text)) !== null) {
       try {
-        if (pattern === patterns[0]) {
-          const name = match[1];
-          const args = JSON.parse(match[2]);
-          calls.push({ function: { name, arguments: args } });
-        } else if (pattern === patterns[1]) {
-          const raw = match[1].trim();
-          const items = raw.startsWith("[") ? JSON.parse(raw) : JSON.parse(`[${raw}]`);
-          for (const item of Array.isArray(items) ? items : [items]) {
-            if (item.name && item.arguments) {
-              calls.push({ function: { name: item.name, arguments: item.arguments } });
-            }
-          }
-        } else {
-          const obj = JSON.parse(match[1]);
-          if (obj.name && obj.arguments) {
-            calls.push({ function: { name: obj.name, arguments: obj.arguments } });
+        const obj = JSON.parse(match[1]);
+        if (obj.name && obj.arguments) {
+          calls.push({ function: { name: obj.name, arguments: obj.arguments } });
+        }
+      } catch {}
+    }
+  }
+
+  if (calls.length === 0) {
+    const toolCallsTag = /\[TOOL_CALLS\]\s*\[?([\s\S]*?)\]?\s*(?:<\/s>|$)/g;
+    while ((match = toolCallsTag.exec(text)) !== null) {
+      try {
+        const raw = match[1].trim();
+        const items = raw.startsWith("[") ? JSON.parse(raw) : JSON.parse(`[${raw}]`);
+        for (const item of Array.isArray(items) ? items : [items]) {
+          if (item.name && item.arguments) {
+            calls.push({ function: { name: item.name, arguments: item.arguments } });
           }
         }
       } catch {}
     }
-    if (calls.length > 0) break;
   }
 
   return calls;
@@ -1350,6 +1444,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
       if (isFirstMessage && text.length > 20) {
         log("OLLAMA", "planning turn — no tools, forcing task breakdown");
         const planResult = await streamOllamaChatNoTools(session, controller, getMainWindow, sessionId);
+        log("OLLAMA", `planning turn complete — ${planResult.content.length} chars`);
         if (planResult.content) {
           session.messages.push({ role: "assistant", content: planResult.content });
 
@@ -1364,15 +1459,17 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
           emit(getMainWindow, sessionId, "chat:mid-final", { message: planResult.content });
           session.messages.push({
             role: "user",
-            content: `Good plan. Now execute it. Follow these rules strictly:
-1. Start with task 1 and work through ALL tasks in order
-2. For EACH task, call the appropriate tool (write_file, run_shell, edit_file)
-3. Do NOT describe code — call write_file with the full content
-4. After ALL tasks are done, run the build/verify step
-5. If the build shows errors, READ the error output carefully, FIX the files with edit_file, and run build AGAIN
-6. Keep fixing and rebuilding until there are ZERO errors
-7. Only give your final summary after the build passes with no errors`,
+            content: `Good plan. Now execute ALL tasks without stopping. Rules:
+- If your first task is research, call web_search NOW to find the correct commands.
+- After each tool result, move to the NEXT task immediately.
+- Call write_file for EVERY file with COMPLETE content.
+- Do NOT describe code in text — ONLY tool calls.
+- After ALL files are created, install dependencies, then run build.
+- If build fails, fix errors and rebuild.
+- Keep going until ALL tasks are done and build passes.
+GO.`,
           });
+          log("OLLAMA", "execution phase starting — tools enabled");
         }
       }
 
@@ -1380,8 +1477,10 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
 
       while (loopCount < MAX_TOOL_LOOPS) {
         loopCount++;
+        log("OLLAMA", `tool loop iteration ${loopCount}/${MAX_TOOL_LOOPS} (messages=${session.messages.length})`);
 
         const streamResult = await streamOllamaChat(session, controller, getMainWindow, sessionId);
+        log("OLLAMA", `stream result: toolCalls=${streamResult.toolCalls.length} content=${streamResult.content.length} chars`);
 
         if (streamResult.toolCalls.length === 0) {
           const extractedFiles = extractFilesFromResponse(streamResult.content);
@@ -1413,6 +1512,23 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
             emit(getMainWindow, sessionId, "chat:final", { message: streamResult.content });
             break;
           }
+          const mentionsTaskComplete = /\b(all tasks|completed|done|summary|finished|that's it|all done)\b/i.test(streamResult.content);
+          const mentionsBuildPass = /\b(build.*pass|build.*success|no errors|0 errors)\b/i.test(streamResult.content);
+          const hasWrittenFiles = session.state.filesCreated.length > 0 || session.state.filesModified.length > 0;
+
+          const emptyResponseCount = streamResult.content.length === 0 ? (session.state as SessionState & { emptyCount?: number }).emptyCount = ((session.state as SessionState & { emptyCount?: number }).emptyCount ?? 0) + 1 : ((session.state as SessionState & { emptyCount?: number }).emptyCount = 0);
+          if (!mentionsTaskComplete && !mentionsBuildPass && loopCount < MAX_TOOL_LOOPS - 5 && emptyResponseCount < 3) {
+            log("OLLAMA", `model stopped without completing tasks (loop ${loopCount}, empty=${emptyResponseCount}) — auto-continuing`);
+            session.messages.push({ role: "assistant", content: streamResult.content });
+            session.messages.push({
+              role: "user",
+              content: hasWrittenFiles
+                ? "Continue with the next task in your plan. Do NOT replan or list files again. Call write_file for the next file you need to create."
+                : "You have not created any files yet. Start writing code NOW. Call write_file to create the first file. Do NOT list files or describe code — just create the files.",
+            });
+            continue;
+          }
+
           session.messages.push({ role: "assistant", content: streamResult.content });
           emit(getMainWindow, sessionId, "chat:final", { message: streamResult.content });
           break;
@@ -1420,7 +1536,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
 
         session.messages.push({
           role: "assistant",
-          content: streamResult.content,
+          content: streamResult.content || "",
           tool_calls: streamResult.toolCalls,
         });
 
@@ -1440,7 +1556,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
           const result = isMcp
             ? await executeMcpToolCall(call, session, getMainWindow, sessionId)
             : await executeToolCall(call, session.cwd, session.state, getMainWindow, sessionId);
-          session.messages.push({ role: "tool", content: result.content });
+          session.messages.push({ role: "tool", content: result.content, tool_name: call.function.name } as OllamaMessage);
           lastToolResult = result.content;
           lastToolName = call.function.name;
         }
@@ -1510,9 +1626,9 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
 
   ipcMain.handle("ollama:status", async () => {
     try {
-      const response = await fetch(`${getBaseUrl()}/api/version`, { signal: AbortSignal.timeout(3000) });
-      if (response.ok) return { available: true };
-      return { available: false, error: `HTTP ${response.status}` };
+      const client = await getOllamaClient();
+      await client.list();
+      return { available: true };
     } catch (err) {
       return { available: false, error: (err as Error).message };
     }
@@ -1520,10 +1636,9 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
 
   ipcMain.handle("ollama:list-models", async () => {
     try {
-      const response = await fetch(`${getBaseUrl()}/api/tags`, { signal: AbortSignal.timeout(5000) });
-      if (!response.ok) return { ok: false, models: [], error: `HTTP ${response.status}` };
-      const data = await response.json() as { models?: Array<{ name: string }> };
-      return { ok: true, models: (data.models ?? []).map((m) => m.name) };
+      const client = await getOllamaClient();
+      const data = await client.list();
+      return { ok: true, models: (data.models ?? []).map((m: { name: string }) => m.name) };
     } catch (err) {
       return { ok: false, models: [], error: (err as Error).message };
     }
