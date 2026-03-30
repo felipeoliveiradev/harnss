@@ -325,7 +325,13 @@ export function useOllama({ sessionId, initialMessages, initialMeta, cwd, model,
     setIsProcessing(true);
 
     const base64Images = images?.map(img => img.data.replace(/^data:image\/\w+;base64,/, ""));
-    const result = await window.claude.ollama.send(sessionIdRef.current, text, cwd, model, base64Images?.length ? base64Images : undefined, undefined, host);
+
+    const prevMsgs = messages.filter(m => m.role === "user" || m.role === "assistant").slice(-6);
+    const contextSummary = prevMsgs.length > 0
+      ? prevMsgs.map(m => `${m.role}: ${m.content.slice(0, 200)}`).join("\n")
+      : undefined;
+
+    const result = await window.claude.ollama.send(sessionIdRef.current, text, cwd, model, base64Images?.length ? base64Images : undefined, undefined, host, contextSummary);
     if (result?.error) {
       setIsProcessing(false);
       setMessages(prev => [...prev, {

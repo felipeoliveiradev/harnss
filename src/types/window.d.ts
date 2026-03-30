@@ -353,7 +353,7 @@ declare global {
       };
       ollama: {
         start: (options: { cwd: string; model?: string; projectId?: string; activeSkills?: string[]; host?: string }) => Promise<{ sessionId: string; error?: string }>;
-        send: (sessionId: string, text: string, cwd?: string, model?: string, images?: string[], activeSkills?: string[], host?: string) => Promise<{ ok?: boolean; error?: string }>;
+        send: (sessionId: string, text: string, cwd?: string, model?: string, images?: string[], activeSkills?: string[], host?: string, contextSummary?: string) => Promise<{ ok?: boolean; error?: string }>;
         stop: (sessionId: string) => Promise<{ ok?: boolean; error?: string }>;
         interrupt: (sessionId: string) => Promise<{ ok?: boolean; error?: string }>;
         status: () => Promise<{ available: boolean; error?: string }>;

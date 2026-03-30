@@ -1420,13 +1420,18 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     return { sessionId, model: sessionModel };
   });
 
-  ipcMain.handle("ollama:send", async (_event, { sessionId, text, cwd, model, images, activeSkills, host }: { sessionId: string; text: string; cwd?: string; model?: string; images?: string[]; activeSkills?: string[]; host?: string }) => {
+  ipcMain.handle("ollama:send", async (_event, { sessionId, text, cwd, model, images, activeSkills, host, contextSummary }: { sessionId: string; text: string; cwd?: string; model?: string; images?: string[]; activeSkills?: string[]; host?: string; contextSummary?: string }) => {
     let session = sessions.get(sessionId);
     if (!session && cwd) {
       const sessionModel = model || getDefaultModel();
       const reviveCaps = await fetchModelCapabilities(sessionModel, host);
+      const msgs: OllamaMessage[] = [{ role: "system", content: buildSystemPrompt(cwd) }];
+      if (contextSummary) {
+        msgs.push({ role: "system", content: `=== PREVIOUS CONVERSATION CONTEXT (session was interrupted) ===\n${contextSummary}\n=== END CONTEXT ===\nContinue from where you left off. Do NOT ask the user to repeat themselves.` });
+        log("OLLAMA", `auto-revive: injected ${contextSummary.length} chars of context summary`);
+      }
       session = {
-        messages: [{ role: "system", content: buildSystemPrompt(cwd) }],
+        messages: msgs,
         cwd,
         model: sessionModel,
         ...(host ? { host } : {}),

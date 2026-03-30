@@ -322,8 +322,8 @@ contextBridge.exposeInMainWorld("claude", {
   ollama: {
     start: (options: { cwd: string; model?: string; projectId?: string; activeSkills?: string[]; host?: string }) =>
       ipcRenderer.invoke("ollama:start", options),
-    send: (sessionId: string, text: string, cwd?: string, model?: string, images?: string[], activeSkills?: string[], host?: string) =>
-      ipcRenderer.invoke("ollama:send", { sessionId, text, cwd, model, images, activeSkills, host }),
+    send: (sessionId: string, text: string, cwd?: string, model?: string, images?: string[], activeSkills?: string[], host?: string, contextSummary?: string) =>
+      ipcRenderer.invoke("ollama:send", { sessionId, text, cwd, model, images, activeSkills, host, contextSummary }),
     stop: (sessionId: string) => ipcRenderer.invoke("ollama:stop", sessionId),
     interrupt: (sessionId: string) => ipcRenderer.invoke("ollama:interrupt", sessionId),
     status: () => ipcRenderer.invoke("ollama:status"),
