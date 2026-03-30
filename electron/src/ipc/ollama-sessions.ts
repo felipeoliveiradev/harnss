@@ -79,6 +79,8 @@ interface SessionState {
   progressSummary: string;
   lastSummaryAtLoop: number;
   scratchpad: string[];
+  visitedUrls: Map<string, string>;
+  searchQueries: Set<string>;
 }
 
 interface OllamaSession {
@@ -135,7 +137,7 @@ function emit(
 }
 
 function freshState(): SessionState {
-  return { filesRead: [], filesModified: [], filesCreated: [], originalRequest: "", toolCallCount: 0, recentToolSignatures: [], pendingPages: new Map(), progressSummary: "", lastSummaryAtLoop: 0, scratchpad: [] };
+  return { filesRead: [], filesModified: [], filesCreated: [], originalRequest: "", toolCallCount: 0, recentToolSignatures: [], pendingPages: new Map(), progressSummary: "", lastSummaryAtLoop: 0, scratchpad: [], visitedUrls: new Map(), searchQueries: new Set() };
 }
 
 // ── Native tool definitions ────────────────────────────────────────────────────
@@ -973,9 +975,11 @@ async function executeToolCall(
         const compressed = rawContent.length > 6000 ? compressCode(rawContent) : rawContent;
         const saved = rawContent.length - compressed.length;
         log("OLLAMA_TOOL", `read_file ${rel} (${stat.size} bytes${saved > 100 ? `, compressed -${saved}` : ""})`);
-        if (!sessionState.filesRead.includes(rel)) sessionState.filesRead.push(rel);
+        const alreadyRead = sessionState.filesRead.includes(rel);
+        if (!alreadyRead) sessionState.filesRead.push(rel);
         emitResult("Read", { content: compressed.slice(0, 300) + (compressed.length > 300 ? "\n..." : "") });
-        return { toolName: "Read", input: { file_path: rel }, result: `Read ${rel}: OK (${stat.size} bytes)`, content: compressed };
+        const noteReminder = alreadyRead ? "" : "\n\n⚠️ Call note to save the key parts of this file (exports, structure, what to change).";
+        return { toolName: "Read", input: { file_path: rel }, result: `Read ${rel}: OK (${stat.size} bytes)`, content: compressed + noteReminder };
       } catch {
         emitResult("Read", { error: "file not found" });
         return { toolName: "Read", input: { file_path: rel }, result: "file not found", content: "file not found" };
@@ -1114,13 +1118,21 @@ async function executeToolCall(
 
     case "web_search": {
       const query = args.query ?? "";
+      const normalizedQuery = query.toLowerCase().replace(/\s+/g, " ").trim();
+      if (sessionState.searchQueries.has(normalizedQuery)) {
+        emitStart("WebSearch", { query });
+        emitResult("WebSearch", { cached: true });
+        return { toolName: "WebSearch", input: { query }, result: "Already searched", content: `You already searched "${query}". Check your scratchpad (📋) for the results. Call note if you didn't save them. Do NOT search again.` };
+      }
+      sessionState.searchQueries.add(normalizedQuery);
       emitStart("WebSearch", { query });
       try {
         const searchResult = await webSearch(query);
         const formatted = formatWebResults(searchResult);
         log("OLLAMA_TOOL", `web_search "${query}" (${searchResult.results.length} results)`);
         emitResult("WebSearch", { query, abstract: searchResult.abstract, abstractUrl: searchResult.abstractUrl, results: searchResult.results });
-        return { toolName: "WebSearch", input: { query }, result: `Web search: ${searchResult.results.length} results`, content: compressText(trimOutput(formatted, 8000)) };
+        const content = compressText(trimOutput(formatted, 8000));
+        return { toolName: "WebSearch", input: { query }, result: `Web search: ${searchResult.results.length} results`, content: content + "\n\n⚠️ Call note NOW to save the important findings from this search. You WILL forget them otherwise." };
       } catch (err) {
         const msg = (err as Error).message;
         emitResult("WebSearch", { error: msg });
@@ -1130,6 +1142,12 @@ async function executeToolCall(
 
     case "read_url": {
       const targetUrl = args.url ?? "";
+      const cachedSummary = sessionState.visitedUrls.get(targetUrl);
+      if (cachedSummary) {
+        emitStart("WebFetch", { url: targetUrl });
+        emitResult("WebFetch", { cached: true });
+        return { toolName: "WebFetch", input: { url: targetUrl }, result: "Already read", content: `You already read this URL. Here's your saved summary:\n${cachedSummary}\n\nDo NOT read it again.` };
+      }
       emitStart("WebFetch", { url: targetUrl });
       try {
         const crawlResult = await crawlUrl(targetUrl);
@@ -1138,7 +1156,9 @@ async function executeToolCall(
           : crawlResult.content;
         log("OLLAMA_TOOL", `read_url "${targetUrl}" (${crawlResult.content.length} chars, provider=${crawlResult.provider})`);
         emitResult("WebFetch", { url: targetUrl, title: crawlResult.title, contentLength: crawlResult.content.length, provider: crawlResult.provider });
-        return { toolName: "WebFetch", input: { url: targetUrl }, result: `Read URL: ${crawlResult.title} (${crawlResult.content.length} chars)`, content: compressText(truncated) };
+        const content = compressText(truncated);
+        sessionState.visitedUrls.set(targetUrl, content.slice(0, 500));
+        return { toolName: "WebFetch", input: { url: targetUrl }, result: `Read URL: ${crawlResult.title} (${crawlResult.content.length} chars)`, content: content + "\n\n⚠️ Call note NOW to save the key information from this page. Include specific names, URLs, and data you need." };
       } catch (err) {
         const msg = (err as Error).message;
         emitResult("WebFetch", { error: msg });
