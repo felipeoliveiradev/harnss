@@ -856,8 +856,8 @@ async function executeToolCall(
       emitStart("WebFetch", { url: targetUrl });
       try {
         const crawlResult = await crawlUrl(targetUrl);
-        const truncated = crawlResult.content.length > 8000
-          ? crawlResult.content.slice(0, 8000) + "\n\n... (truncated)"
+        const truncated = crawlResult.content.length > 3000
+          ? crawlResult.content.slice(0, 3000) + "\n\n... (truncated)"
           : crawlResult.content;
         log("OLLAMA_TOOL", `read_url "${targetUrl}" (${crawlResult.content.length} chars, provider=${crawlResult.provider})`);
         emitResult("WebFetch", { url: targetUrl, title: crawlResult.title, contentLength: crawlResult.content.length, provider: crawlResult.provider });
@@ -1074,7 +1074,7 @@ async function streamOllamaChat(
   let promptTokens = 0;
   let completionTokens = 0;
 
-  const MAX_TOOL_CONTENT = 4000;
+  const MAX_TOOL_CONTENT = 2000;
   const trimmedMessages = session.messages.map(m => {
     if (m.role === "tool" && m.content.length > MAX_TOOL_CONTENT) {
       return { ...m, content: m.content.slice(0, MAX_TOOL_CONTENT) + "\n... (truncated)" };
