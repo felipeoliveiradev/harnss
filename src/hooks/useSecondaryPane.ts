@@ -105,9 +105,14 @@ export function useSecondaryPane(): SecondaryPaneState {
     initialMessages: effectiveEngine === "codex" ? initialMessages : [],
   });
 
+  const [ollamaCwd, setOllamaCwd] = useState<string | undefined>();
+  const ollamaModel = draftOptions.model ?? session?.model;
+
   const ollama = useOllama({
     sessionId: ollamaId,
     initialMessages: effectiveEngine === "ollama" ? initialMessages : [],
+    cwd: ollamaCwd,
+    model: ollamaModel,
   });
 
   const openclawHook = useOpenClaw({
@@ -144,6 +149,9 @@ export function useSecondaryPane(): SecondaryPaneState {
       const session = sessions.find((s) => s.id === newSessionId);
       const engine: EngineId = session?.engine ?? "claude";
       setSession(session ?? null);
+      if (session?.projectId && engine === "ollama") {
+        getProjectCwd(session.projectId).then(setOllamaCwd).catch(() => {});
+      }
 
       // 1. Try BackgroundSessionStore first (live in-memory state, has latest msgs)
       const stored = getBackgroundState(newSessionId);
@@ -187,16 +195,17 @@ export function useSecondaryPane(): SecondaryPaneState {
 
   // ── Draft creation ──
   const createDraft = useCallback((projectId: string, options: StartOptions) => {
-    // Clear any existing session
     setSessionId(null);
     setSession(null);
     setInitialMessages([]);
 
-    // Set draft state
     setIsDraft(true);
     setDraftProjectId(projectId);
     setDraftOptions(options);
     setActiveEngine(options.engine ?? "claude");
+    if (options.engine === "ollama") {
+      getProjectCwd(projectId).then(setOllamaCwd).catch(() => {});
+    }
   }, []);
 
   // ── Materialization: draft → live session on first message ──
