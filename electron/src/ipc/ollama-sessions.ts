@@ -1187,6 +1187,14 @@ async function streamOllamaChat(
       session.supportsThinking = false;
       const stream = await client.chat(chatOpts);
       await consumeStream(stream);
+    } else if (errMsg.includes("Internal Server Error") || errMsg.includes("500")) {
+      log("OLLAMA", "cloud 500 error — retrying without tools and thinking (known cloud bug with tool calling)");
+      session.supportsTools = false;
+      session.supportsThinking = false;
+      delete chatOpts.tools;
+      delete chatOpts.think;
+      const stream = await client.chat(chatOpts);
+      await consumeStream(stream);
     } else {
       clearInterval(stallTimer);
       throw err;
