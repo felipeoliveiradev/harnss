@@ -382,8 +382,16 @@ THINK BEFORE SEARCHING. Follow this exact process:
 4. Call github_search ONCE to find a good starter template (if building a new project)
 5. If you found a good template, call read_url on its GitHub page to check the README
 
-IMPORTANT: After EVERY major step, call note to save what you learned/decided/did.
-Your scratchpad (📋) is shown to you in every message. It's your persistent memory.
+CRITICAL: After EVERY step, call note to save what you did AND what to do next.
+Your scratchpad (📋) is your ONLY memory between messages. If it's not in the scratchpad, you WILL forget it.
+
+What to note:
+- 🔵 INFO: what the user wants, key decisions, tech choices
+- 🟡 TODO: next step with HOW to do it (e.g. "edit src/app/page.tsx: add Hero section w/ h1+subtitle+CTA button")
+- 🟢 DONE: what was completed (e.g. "project created at ./portfolio via CLI")
+- 🔴 BLOCK: errors to fix (e.g. "build fails: Cannot find module @/components/Hero")
+
+ALWAYS include HOW in todos. Bad: "🟡 add hero". Good: "🟡 edit_file src/app/page.tsx: add Hero comp w/ gradient bg, h1 'Welcome', subtitle, CTA btn link to #contact"
 
 RULES:
 - Call ONE tool at a time. Wait for the result. Think. Then decide next action.
