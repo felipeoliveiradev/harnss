@@ -17,7 +17,7 @@ let ollamaClient: any = null;
 let ollamaClientHost: string = "";
 let ollamaCloudClient: any = null;
 
-async function getOllamaClient(forceCloud = false): Promise<any> {
+async function getOllamaClient(forceCloud = false, hostOverride?: string): Promise<any> {
   if (forceCloud) {
     if (!ollamaCloudClient) {
       const { Ollama } = await import("ollama");
@@ -28,6 +28,13 @@ async function getOllamaClient(forceCloud = false): Promise<any> {
       log("OLLAMA", `cloud client created: host=https://ollama.com auth=${!!apiKey}`);
     }
     return ollamaCloudClient;
+  }
+  if (hostOverride) {
+    const { Ollama } = await import("ollama");
+    const apiKey = getAppSetting("ollamaApiKey") || "";
+    const headers: Record<string, string> = {};
+    if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
+    return new Ollama({ host: hostOverride.replace(/\/$/, ""), ...(apiKey ? { headers } : {}) });
   }
   const host = getBaseUrl();
   if (!ollamaClient || ollamaClientHost !== host) {
@@ -76,6 +83,7 @@ interface OllamaSession {
   messages: OllamaMessage[];
   cwd: string;
   model: string;
+  host?: string;
   contextSize: number;
   abortController: AbortController | null;
   state: SessionState;
@@ -552,9 +560,9 @@ interface ModelCapabilities {
   supportsThinking: boolean;
 }
 
-async function fetchModelCapabilities(model: string): Promise<ModelCapabilities> {
+async function fetchModelCapabilities(model: string, host?: string): Promise<ModelCapabilities> {
   try {
-    const client = await getOllamaClient(isCloudModel(model));
+    const client = await getOllamaClient(isCloudModel(model), isCloudModel(model) ? undefined : host);
     const data = await client.show({ model });
 
     let contextSize = 32768;
@@ -1083,7 +1091,7 @@ async function streamOllamaChat(
   getMainWindow: () => BrowserWindow | null,
   sessionId: string,
 ): Promise<StreamResult> {
-  const client = await getOllamaClient(isCloudModel(session.model));
+  const client = await getOllamaClient(isCloudModel(session.model), isCloudModel(session.model) ? undefined : session.host);
   const allTools = [...OLLAMA_TOOLS, ...session.mcpTools];
   log("OLLAMA", `api/chat: model=${session.model} messages=${session.messages.length} tools=${allTools.length} nativeTools=${session.supportsTools} thinking=${session.supportsThinking}`);
 
@@ -1340,10 +1348,10 @@ function parseToolCallsFromText(text: string): OllamaToolCall[] {
 // ── IPC registration ───────────────────────────────────────────────────────────
 
 export function register(getMainWindow: () => BrowserWindow | null): void {
-  ipcMain.handle("ollama:start", async (_event, { cwd, model, projectId, activeSkills }: { cwd: string; model?: string; projectId?: string; activeSkills?: string[] }) => {
+  ipcMain.handle("ollama:start", async (_event, { cwd, model, projectId, activeSkills, host }: { cwd: string; model?: string; projectId?: string; activeSkills?: string[]; host?: string }) => {
     const sessionId = crypto.randomUUID();
     const sessionModel = model || getDefaultModel();
-    const caps = await fetchModelCapabilities(sessionModel);
+    const caps = await fetchModelCapabilities(sessionModel, host);
 
     let mcpBridge: McpBridgeState | null = null;
     let mcpTools: OllamaSession["mcpTools"] = [];
@@ -1393,6 +1401,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
       messages: [{ role: "system", content: buildSystemPrompt(cwd, skillContents, mcpToolNames) }],
       cwd,
       model: sessionModel,
+      ...(host ? { host } : {}),
       contextSize: caps.contextSize,
       abortController: null,
       state: freshState(),
@@ -1408,15 +1417,16 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     return { sessionId, model: sessionModel };
   });
 
-  ipcMain.handle("ollama:send", async (_event, { sessionId, text, cwd, model, images, activeSkills }: { sessionId: string; text: string; cwd?: string; model?: string; images?: string[]; activeSkills?: string[] }) => {
+  ipcMain.handle("ollama:send", async (_event, { sessionId, text, cwd, model, images, activeSkills, host }: { sessionId: string; text: string; cwd?: string; model?: string; images?: string[]; activeSkills?: string[]; host?: string }) => {
     let session = sessions.get(sessionId);
     if (!session && cwd) {
       const sessionModel = model || getDefaultModel();
-      const reviveCaps = await fetchModelCapabilities(sessionModel);
+      const reviveCaps = await fetchModelCapabilities(sessionModel, host);
       session = {
         messages: [{ role: "system", content: buildSystemPrompt(cwd) }],
         cwd,
         model: sessionModel,
+        ...(host ? { host } : {}),
         contextSize: reviveCaps.contextSize,
         abortController: null,
         state: freshState(),

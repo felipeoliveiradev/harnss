@@ -10,9 +10,10 @@ export interface SessionMeta {
   /** Timestamp of the most recent user message — used for sidebar sort order */
   lastMessageAt: number;
   model?: string;
+  ollamaHost?: string;
   planMode?: boolean;
   totalCost?: number;
-  engine?: "claude" | "acp" | "codex" | "openclaw" | "group";
+  engine?: "claude" | "acp" | "codex" | "ollama" | "openclaw" | "group";
   codexThreadId?: string;
   groupId?: string;
 }
@@ -42,6 +43,7 @@ export function extractSessionMeta(data: Record<string, unknown>, lastMessageAt:
     createdAt: (data.createdAt as number) || 0,
     lastMessageAt,
     model: data.model as string | undefined,
+    ollamaHost: data.ollamaHost as string | undefined,
     planMode: data.planMode as boolean | undefined,
     totalCost: (data.totalCost as number) || 0,
     engine: data.engine as SessionMeta["engine"],

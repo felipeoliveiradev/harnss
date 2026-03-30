@@ -214,6 +214,7 @@ export interface SessionBase {
   title: string;
   createdAt: number;
   model?: string;
+  ollamaHost?: string;
   planMode?: boolean;
   totalCost: number;
   engine?: EngineId;

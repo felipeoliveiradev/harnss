@@ -244,6 +244,7 @@ export function useSecondaryPane(): SecondaryPaneState {
           cwd: await getProjectCwd(projectId),
           projectId,
           ...(options?.model ? { model: options.model } : {}),
+          ...(options?.ollamaHost ? { host: options.ollamaHost } : {}),
         });
         if (result.error || !result.sessionId) {
           const msg = result.error || "Failed to connect to Ollama";
@@ -394,7 +395,7 @@ export function useSecondaryPane(): SecondaryPaneState {
         // ACP sends via prompt
         await window.claude.acp.prompt(newId, text);
       } else if (eng === "ollama") {
-        await window.claude.ollama.send(newId, text);
+        await window.claude.ollama.send(newId, text, undefined, undefined, undefined, undefined, opts.ollamaHost);
       } else if (eng === "openclaw") {
         await window.claude.openclaw.send(newId, text);
       }

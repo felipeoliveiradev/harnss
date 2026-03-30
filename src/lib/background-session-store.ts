@@ -13,6 +13,7 @@ import { handleClaudeEvent } from "./background-claude-handler";
 import { handleACPEvent as acpHandler, handleACPTurnComplete as acpTurnComplete } from "./background-acp-handler";
 import { handleCodexEvent as codexHandler } from "./background-codex-handler";
 import { handleOpenClawEvent as openclawHandler } from "./background-openclaw-handler";
+import { handleOllamaEvent as ollamaHandler } from "./background-ollama-handler";
 
 export interface BackgroundSessionState {
   messages: UIMessage[];
@@ -126,6 +127,20 @@ export class BackgroundSessionStore {
     openclawHandler(state, event);
     if (!state.isProcessing) {
       this.onProcessingChange?.(sessionId, false);
+    }
+  }
+
+  handleOllamaEvent(event: { _sessionId: string; type: string; payload: Record<string, unknown> }): void {
+    const sessionId = event._sessionId;
+    if (!sessionId) return;
+    const state = this.getOrCreate(sessionId);
+    const wasProcessing = state.isProcessing;
+    ollamaHandler(state, event);
+    if (wasProcessing !== state.isProcessing) {
+      this.onProcessingChange?.(sessionId, state.isProcessing);
+    }
+    if (state.pendingPermission) {
+      this.onPermissionRequest?.(sessionId, state.pendingPermission);
     }
   }
 

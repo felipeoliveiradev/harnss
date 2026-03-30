@@ -9,6 +9,7 @@ export const DEFAULT_PERMISSION_MODE = "default";
 
 export interface StartOptions {
   model?: string;
+  ollamaHost?: string;
   permissionMode?: string;
   planMode?: boolean;
   thinkingEnabled?: boolean;

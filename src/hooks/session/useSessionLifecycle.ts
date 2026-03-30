@@ -171,6 +171,7 @@ export function useSessionLifecycle({
             ...(data.agentId ? { agentId: data.agentId } : {}),
             ...(data.agentSessionId ? { agentSessionId: data.agentSessionId } : {}),
             ...(data.codexThreadId ? { codexThreadId: data.codexThreadId } : {}),
+            ...(data.ollamaHost ? { ollamaHost: data.ollamaHost } : {}),
             planMode: !!data.planMode,
             hasPendingPermission: false,
           } : {}),
@@ -203,6 +204,7 @@ export function useSessionLifecycle({
         createdAt: s.createdAt,
         lastMessageAt: s.lastMessageAt || s.createdAt,
         model: s.model,
+        ollamaHost: s.ollamaHost,
         planMode: s.planMode,
         totalCost: s.totalCost,
         isActive: false,
@@ -1332,7 +1334,7 @@ export function useSessionLifecycle({
               }
             }
           } catch {}
-          const sendResult = await window.claude.ollama.send(sessionId, text, undefined, undefined, base64Images?.length ? base64Images : undefined, ollamaSkills?.length ? ollamaSkills : undefined);
+          const sendResult = await window.claude.ollama.send(sessionId, text, undefined, undefined, base64Images?.length ? base64Images : undefined, ollamaSkills?.length ? ollamaSkills : undefined, startOptionsRef.current.ollamaHost);
           if (sendResult?.error) {
             liveSessionIdsRef.current.delete(sessionId);
             ollama.setMessages((prev) => [

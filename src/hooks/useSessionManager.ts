@@ -98,12 +98,22 @@ export function useSessionManager(projects: Project[], acpPermissionBehavior: Ac
     if (!proj) return undefined;
     return localStorage.getItem(`harnss-${proj.id}-git-cwd`)?.trim() || proj.path;
   })();
+  const ollamaSession = isOllama && activeSessionId !== DRAFT_ID
+    ? sessions.find((s) => s.id === activeSessionId)
+    : undefined;
+  const ollamaModel = isOllama
+    ? (activeSessionId === DRAFT_ID ? startOptions.model : (ollamaSession?.model ?? startOptions.model))
+    : undefined;
+  const ollamaHost = isOllama
+    ? (activeSessionId === DRAFT_ID ? startOptions.ollamaHost : (ollamaSession?.ollamaHost ?? startOptions.ollamaHost))
+    : undefined;
   const ollama = useOllama({
     sessionId: ollamaSessionId,
     initialMessages: isOllama ? initialMessages : [],
     initialMeta: isOllama ? initialMeta : null,
     cwd: ollamaCwd,
-    model: startOptions.model,
+    model: ollamaModel,
+    host: ollamaHost,
   });
   const openclaw = useOpenClaw({
     sessionId: openclawSessionId,

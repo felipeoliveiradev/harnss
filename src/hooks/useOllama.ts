@@ -8,6 +8,7 @@ interface UseOllamaOptions {
   initialMeta?: SessionMeta | null;
   cwd?: string;
   model?: string;
+  host?: string;
 }
 
 type OllamaEvent = {
@@ -20,7 +21,7 @@ function nextId(prefix: string): string {
   return `${prefix}-${crypto.randomUUID()}`;
 }
 
-export function useOllama({ sessionId, initialMessages, initialMeta, cwd, model }: UseOllamaOptions) {
+export function useOllama({ sessionId, initialMessages, initialMeta, cwd, model, host }: UseOllamaOptions) {
   const base = useEngineBase({ sessionId, initialMessages, initialMeta, initialPermission: null });
   const {
     messages, setMessages,
@@ -324,7 +325,7 @@ export function useOllama({ sessionId, initialMessages, initialMeta, cwd, model 
     setIsProcessing(true);
 
     const base64Images = images?.map(img => img.data.replace(/^data:image\/\w+;base64,/, ""));
-    const result = await window.claude.ollama.send(sessionIdRef.current, text, cwd, model, base64Images?.length ? base64Images : undefined);
+    const result = await window.claude.ollama.send(sessionIdRef.current, text, cwd, model, base64Images?.length ? base64Images : undefined, undefined, host);
     if (result?.error) {
       setIsProcessing(false);
       setMessages(prev => [...prev, {
@@ -335,7 +336,7 @@ export function useOllama({ sessionId, initialMessages, initialMeta, cwd, model 
         timestamp: Date.now(),
       }]);
     }
-  }, [sessionIdRef, setIsProcessing, setMessages, cwd, model]);
+  }, [sessionIdRef, setIsProcessing, setMessages, cwd, model, host]);
 
   const stop = useCallback(async () => {
     if (!sessionIdRef.current) return;

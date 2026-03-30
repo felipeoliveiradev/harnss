@@ -150,6 +150,7 @@ export function useSessionPersistence({
             engine: session.engine,
             ...(session.engine === "codex" && session.codexThreadId ? { codexThreadId: session.codexThreadId } : {}),
             ...(session.groupId ? { groupId: session.groupId } : {}),
+            ...(session.engine === "ollama" && session.ollamaHost ? { ollamaHost: session.ollamaHost } : {}),
           });
         }
       }
@@ -285,7 +286,13 @@ export function useSessionPersistence({
       backgroundStoreRef.current.handleOpenClawEvent(event);
     });
 
-    return () => { unsub(); unsubAcp(); unsubBgPerm(); unsubBgAcpPerm(); unsubBgAcpTurn(); unsubCodex(); unsubCodexApproval(); unsubOpenClaw(); };
+    const unsubOllama = window.claude.ollama.onEvent((event) => {
+      const sid = event._sessionId;
+      if (!sid || sid === activeSessionIdRef.current) return;
+      backgroundStoreRef.current.handleOllamaEvent(event);
+    });
+
+    return () => { unsub(); unsubAcp(); unsubBgPerm(); unsubBgAcpPerm(); unsubBgAcpTurn(); unsubCodex(); unsubCodexApproval(); unsubOpenClaw(); unsubOllama(); };
   }, []);
 
   useEffect(() => {
@@ -310,7 +317,8 @@ export function useSessionPersistence({
         ...(session.agentId ? { agentId: session.agentId } : {}),
         ...(session.agentSessionId ? { agentSessionId: session.agentSessionId } : {}),
         ...(session.engine === "codex" && session.codexThreadId ? { codexThreadId: session.codexThreadId } : {}),
-            ...(session.groupId ? { groupId: session.groupId } : {}),
+        ...(session.groupId ? { groupId: session.groupId } : {}),
+        ...(session.engine === "ollama" && session.ollamaHost ? { ollamaHost: session.ollamaHost } : {}),
       };
       void persistSessionWithCodexFallback(data);
     }, 2000);
@@ -392,7 +400,8 @@ export function useSessionPersistence({
       ...(session.agentId ? { agentId: session.agentId } : {}),
       ...(session.agentSessionId ? { agentSessionId: session.agentSessionId } : {}),
       ...(session.engine === "codex" && session.codexThreadId ? { codexThreadId: session.codexThreadId } : {}),
-            ...(session.groupId ? { groupId: session.groupId } : {}),
+      ...(session.groupId ? { groupId: session.groupId } : {}),
+      ...(session.engine === "ollama" && session.ollamaHost ? { ollamaHost: session.ollamaHost } : {}),
     };
     await persistSessionWithCodexFallback(data);
   }, [persistSessionWithCodexFallback]);

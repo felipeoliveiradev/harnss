@@ -542,6 +542,7 @@ export function useDraftMaterialization({
           projectId: project.id,
           activeSkills: ollamaActiveSkills.length > 0 ? ollamaActiveSkills : undefined,
           ...(options.model ? { model: options.model } : {}),
+          ...(options.ollamaHost ? { host: options.ollamaHost } : {}),
         });
 
         if (result.error || !result.sessionId) {
@@ -708,6 +709,7 @@ export function useDraftMaterialization({
           agentId: options.agentId ?? "codex",
           codexThreadId,
         } : {}),
+        ...(draftEngine === "ollama" && options.ollamaHost ? { ollamaHost: options.ollamaHost } : {}),
         ...(draftEngine === "group" && options.groupId ? { groupId: options.groupId } : {}),
       };
 

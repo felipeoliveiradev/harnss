@@ -197,7 +197,8 @@ export function useMessageQueue({ refs, setters, engines, activeSessionId }: Use
         if (result?.error) handleSendError();
       } else if (sessionEngine === "ollama") {
         targetSetIsProcessing(true);
-        const result = await window.claude.ollama.send(activeId, next.text);
+        const ollamaSession = sessionsRef.current.find((s) => s.id === activeId);
+        const result = await window.claude.ollama.send(activeId, next.text, undefined, undefined, undefined, undefined, ollamaSession?.ollamaHost);
         if (result?.error) handleSendError();
       } else if (sessionEngine === "openclaw") {
         targetSetIsProcessing(true);
