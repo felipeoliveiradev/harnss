@@ -437,20 +437,43 @@ function OllamaModelCombobox({
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [remoteModels, setRemoteModels] = useState<string[]>([]);
+  const [searching, setSearching] = useState(false);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const filtered = useMemo(() => {
+  const localFiltered = useMemo(() => {
     if (!models) return [];
     if (!query.trim()) return models;
     const q = query.toLowerCase();
     return models.filter((m) => m.toLowerCase().includes(q));
   }, [models, query]);
 
+  const merged = useMemo(() => {
+    const localSet = new Set(localFiltered);
+    const remote = remoteModels.filter((m) => !localSet.has(m));
+    return { local: localFiltered, remote };
+  }, [localFiltered, remoteModels]);
+
+  const searchRemote = useCallback((q: string) => {
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    if (!q.trim()) { setRemoteModels([]); return; }
+    searchTimer.current = setTimeout(async () => {
+      setSearching(true);
+      try {
+        const result = await window.claude.ollama.searchModels(q.trim());
+        if (result.ok) setRemoteModels(result.models);
+      } catch {}
+      setSearching(false);
+    }, 300);
+  }, []);
+
   const handleOpen = (nextOpen: boolean) => {
     setOpen(nextOpen);
     if (nextOpen) {
       onOpen?.();
       setQuery("");
+      setRemoteModels([]);
       setTimeout(() => inputRef.current?.focus(), 0);
     }
   };
@@ -459,6 +482,12 @@ function OllamaModelCombobox({
     onSelect?.(model);
     setOpen(false);
     setQuery("");
+    setRemoteModels([]);
+  };
+
+  const handleQueryChange = (value: string) => {
+    setQuery(value);
+    searchRemote(value);
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
@@ -469,6 +498,9 @@ function OllamaModelCombobox({
       setOpen(false);
     }
   };
+
+  const isLoading = loading || searching;
+  const hasResults = merged.local.length > 0 || merged.remote.length > 0;
 
   return (
     <Popover open={open} onOpenChange={handleOpen}>
@@ -488,38 +520,58 @@ function OllamaModelCombobox({
             ref={inputRef}
             type="text"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => handleQueryChange(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Search or type model name…"
+            placeholder="Search local & cloud models…"
             spellCheck={false}
             className="flex-1 bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground/40"
           />
-          {loading && <Loader2 className="h-3 w-3 shrink-0 animate-spin text-muted-foreground/50" />}
+          {isLoading && <Loader2 className="h-3 w-3 shrink-0 animate-spin text-muted-foreground/50" />}
         </div>
-        <div className="max-h-56 overflow-y-auto py-1">
-          {filtered.length > 0 ? (
-            filtered.map((m) => (
-              <button
-                key={m}
-                type="button"
-                onClick={() => handleSelect(m)}
-                className={`flex w-full items-center gap-2 px-3 py-1.5 text-start text-xs transition-colors hover:bg-muted/40 ${
-                  m === modelName ? "text-foreground" : "text-muted-foreground"
-                }`}
-              >
-                {m === modelName && <Check className="h-3 w-3 shrink-0" />}
-                <span className={m === modelName ? "" : "ps-5"}>{m}</span>
-              </button>
-            ))
-          ) : query.trim() ? (
+        <div className="max-h-64 overflow-y-auto py-1">
+          {merged.local.length > 0 && (
+            <>
+              {query.trim() && <div className="px-3 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/40">Local</div>}
+              {merged.local.map((m) => (
+                <button
+                  key={`local-${m}`}
+                  type="button"
+                  onClick={() => handleSelect(m)}
+                  className={`flex w-full items-center gap-2 px-3 py-1.5 text-start text-xs transition-colors hover:bg-muted/40 ${
+                    m === modelName ? "text-foreground" : "text-muted-foreground"
+                  }`}
+                >
+                  {m === modelName && <Check className="h-3 w-3 shrink-0" />}
+                  <span className={m === modelName ? "" : "ps-5"}>{m}</span>
+                </button>
+              ))}
+            </>
+          )}
+          {merged.remote.length > 0 && (
+            <>
+              <div className="px-3 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/40">Cloud</div>
+              {merged.remote.map((m) => (
+                <button
+                  key={`remote-${m}`}
+                  type="button"
+                  onClick={() => handleSelect(m)}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-start text-xs text-muted-foreground transition-colors hover:bg-muted/40"
+                >
+                  <span className="ps-5">{m}</span>
+                </button>
+              ))}
+            </>
+          )}
+          {!hasResults && query.trim() && !isLoading && (
             <button
               type="button"
               onClick={() => handleSelect(query.trim())}
               className="flex w-full items-center gap-2 px-3 py-1.5 text-start text-xs text-muted-foreground transition-colors hover:bg-muted/40"
             >
-              <span className="ps-5">Use "{query.trim()}"</span>
+              <span className="ps-5">Use &ldquo;{query.trim()}&rdquo;</span>
             </button>
-          ) : (
+          )}
+          {!hasResults && !query.trim() && !isLoading && (
             <div className="px-3 py-1.5 text-xs text-muted-foreground/50">No models found</div>
           )}
         </div>

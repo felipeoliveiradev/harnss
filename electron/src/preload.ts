@@ -335,6 +335,8 @@ contextBridge.exposeInMainWorld("claude", {
     },
     userResponse: (sessionId: string, text: string) =>
       ipcRenderer.invoke("ollama:user_response", { sessionId, text }),
+    searchModels: (query: string) =>
+      ipcRenderer.invoke("ollama:search-models", query) as Promise<{ ok: boolean; models: string[]; error?: string }>,
     onExit: (callback: (data: unknown) => void) => {
       const listener = (_event: IpcRendererEvent, data: unknown) => callback(data);
       ipcRenderer.on("ollama:exit", listener);

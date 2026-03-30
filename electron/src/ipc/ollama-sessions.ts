@@ -1665,6 +1665,21 @@ Do NOT create files manually. Do NOT search again. Clone NOW.`;
     }
   });
 
+  ipcMain.handle("ollama:search-models", async (_event, query: string) => {
+    try {
+      const res = await fetch(`https://ollama.com/search?q=${encodeURIComponent(query)}`, {
+        headers: { "HX-Request": "true" },
+        signal: AbortSignal.timeout(10000),
+      });
+      const html = await res.text();
+      const matches = [...html.matchAll(/<span x-test-search-response-title>([^<]+)<\/span>/g)];
+      const models = matches.map(m => m[1].trim()).filter(Boolean);
+      return { ok: true, models };
+    } catch (err) {
+      return { ok: false, models: [], error: (err as Error).message };
+    }
+  });
+
   ipcMain.handle("ollama:list-models", async () => {
     try {
       const client = await getOllamaClient();

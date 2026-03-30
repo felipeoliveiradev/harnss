@@ -359,6 +359,7 @@ declare global {
         status: () => Promise<{ available: boolean; error?: string }>;
         listModels: () => Promise<{ ok: boolean; models: string[]; error?: string }>;
         userResponse: (sessionId: string, text: string) => Promise<{ ok?: boolean }>;
+        searchModels: (query: string) => Promise<{ ok: boolean; models: string[]; error?: string }>;
         onEvent: (callback: (data: { _sessionId: string; type: string; payload: Record<string, unknown> }) => void) => () => void;
         onExit: (callback: (data: { _sessionId: string }) => void) => () => void;
       };
