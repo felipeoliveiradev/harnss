@@ -373,6 +373,20 @@ Now you may call write_file, edit_file, run_shell, github_clone.
 Execute tasks one by one. Write COMPLETE file contents. Never truncate.
 After all files: install dependencies, run build, fix errors until build passes.
 
+## PHASE 5: CONCLUSION (MANDATORY — never skip)
+
+After the project is built and working, you MUST:
+
+1. Give a SHORT summary of what was built (2-3 lines max):
+   - What was created (e.g. "Next.js portfolio landing page with 6 sections")
+   - Where it lives (e.g. "Project is in ./portfolio")
+   - How to run it (e.g. "Run: cd portfolio && npm run dev")
+
+2. Then call ask_user with suggestions for improvements. Example:
+   ask_user "The landing page is ready! Here are some improvements we could add:\n1. Dark/light theme toggle\n2. Contact form with email integration\n3. Blog section with MDX\n4. SEO optimization with meta tags\n5. Animation with Framer Motion\n\nWhich would you like me to add? Or describe something else."
+
+NEVER end silently. ALWAYS give the summary + ask for next steps.
+
 # RULES
 
 - You can ONLY affect the project through tool calls. Code in your text response does NOTHING.
@@ -1567,6 +1581,21 @@ If you already ran the CLI, start writing/editing files NOW. Do NOT search the w
           const mentionsTaskComplete = /\b(all tasks|completed|done|summary|finished|that's it|all done)\b/i.test(streamResult.content);
           const mentionsBuildPass = /\b(build.*pass|build.*success|no errors|0 errors)\b/i.test(streamResult.content);
           const hasWrittenFiles = session.state.filesCreated.length > 0 || session.state.filesModified.length > 0;
+          const mentionsSuggestions = /\b(suggest|improvement|would you like|next steps|enhance)\b/i.test(streamResult.content);
+          const hasAskedUser = session.messages.some(m => m.role === "tool" && m.tool_name === "ask_user");
+
+          if ((mentionsTaskComplete || mentionsBuildPass) && hasWrittenFiles && !mentionsSuggestions) {
+            log("OLLAMA", "task complete but no conclusion/suggestions — requesting Phase 5");
+            session.messages.push({ role: "assistant", content: streamResult.content });
+            session.messages.push({
+              role: "user",
+              content: `Good work! Now do PHASE 5 (CONCLUSION):
+1. Give a 2-3 line summary: what was built, where it is, how to run it
+2. Call ask_user with 4-5 improvement suggestions the user might want (e.g. dark mode, animations, SEO, contact form, blog)
+This is MANDATORY. Do it now.`,
+            });
+            continue;
+          }
 
           const emptyResponseCount = streamResult.content.length === 0 ? (session.state as SessionState & { emptyCount?: number }).emptyCount = ((session.state as SessionState & { emptyCount?: number }).emptyCount ?? 0) + 1 : ((session.state as SessionState & { emptyCount?: number }).emptyCount = 0);
           if (!mentionsTaskComplete && !mentionsBuildPass && loopCount < MAX_TOOL_LOOPS - 5 && emptyResponseCount < 3) {
