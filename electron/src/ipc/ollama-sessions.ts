@@ -15,7 +15,20 @@ import { multiAiSearch } from "../lib/multi-ai-search";
 
 let ollamaClient: any = null;
 let ollamaClientHost: string = "";
-async function getOllamaClient(): Promise<any> {
+let ollamaCloudClient: any = null;
+
+async function getOllamaClient(forceCloud = false): Promise<any> {
+  if (forceCloud) {
+    if (!ollamaCloudClient) {
+      const { Ollama } = await import("ollama");
+      const apiKey = getAppSetting("ollamaApiKey") || "";
+      const headers: Record<string, string> = {};
+      if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
+      ollamaCloudClient = new Ollama({ host: "https://ollama.com", ...(apiKey ? { headers } : {}) });
+      log("OLLAMA", `cloud client created: host=https://ollama.com auth=${!!apiKey}`);
+    }
+    return ollamaCloudClient;
+  }
   const host = getBaseUrl();
   if (!ollamaClient || ollamaClientHost !== host) {
     const { Ollama } = await import("ollama");
@@ -27,6 +40,10 @@ async function getOllamaClient(): Promise<any> {
     log("OLLAMA", `client created: host=${host} auth=${!!apiKey}`);
   }
   return ollamaClient;
+}
+
+function isCloudModel(model: string): boolean {
+  return model.endsWith(":cloud");
 }
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -518,7 +535,7 @@ interface ModelCapabilities {
 
 async function fetchModelCapabilities(model: string): Promise<ModelCapabilities> {
   try {
-    const client = await getOllamaClient();
+    const client = await getOllamaClient(isCloudModel(model));
     const data = await client.show({ model });
 
     let contextSize = 32768;
@@ -1047,7 +1064,7 @@ async function streamOllamaChat(
   getMainWindow: () => BrowserWindow | null,
   sessionId: string,
 ): Promise<StreamResult> {
-  const client = await getOllamaClient();
+  const client = await getOllamaClient(isCloudModel(session.model));
   const allTools = [...OLLAMA_TOOLS, ...session.mcpTools];
   log("OLLAMA", `api/chat: model=${session.model} messages=${session.messages.length} tools=${allTools.length} nativeTools=${session.supportsTools} thinking=${session.supportsThinking}`);
 
@@ -1069,12 +1086,27 @@ async function streamOllamaChat(
   if (session.supportsThinking) chatOpts.think = true;
 
   let lastChunkTime = Date.now();
+  let thinkingStartTime = 0;
+  let hasContent = false;
   const STREAM_STALL_MS = 120_000;
+  const MAX_THINKING_MS = 90_000;
 
   async function consumeStream(stream: AsyncIterable<Record<string, unknown>>): Promise<void> {
     for await (const chunk of stream as AsyncIterable<{ message?: { content?: string; thinking?: string; tool_calls?: OllamaToolCall[] }; done?: boolean; prompt_eval_count?: number; eval_count?: number }>) {
       if (controller.signal.aborted) break;
       lastChunkTime = Date.now();
+
+      if (chunk.message?.thinking && !hasContent && thinkingStartTime === 0) {
+        thinkingStartTime = Date.now();
+      }
+      if (chunk.message?.content || chunk.message?.tool_calls?.length) {
+        hasContent = true;
+      }
+      if (!hasContent && thinkingStartTime > 0 && Date.now() - thinkingStartTime > MAX_THINKING_MS) {
+        log("OLLAMA", `thinking exceeded ${MAX_THINKING_MS / 1000}s without content — aborting`);
+        controller.abort();
+        break;
+      }
 
       if (chunk.message?.thinking) {
         fullThinking += chunk.message.thinking;
@@ -1624,7 +1656,7 @@ Do NOT create files manually. Do NOT search again. Clone NOW.`;
     if (session) {
       session.abortController?.abort();
       try {
-        const client = await getOllamaClient();
+        const client = await getOllamaClient(isCloudModel(session.model));
         client.abort();
       } catch {}
       if (session.mcpBridge) disconnectMcpBridge(session.mcpBridge);
@@ -1639,7 +1671,7 @@ Do NOT create files manually. Do NOT search again. Clone NOW.`;
     if (session) {
       session.abortController?.abort();
       try {
-        const client = await getOllamaClient();
+        const client = await getOllamaClient(isCloudModel(session.model));
         client.abort();
       } catch {}
     }
