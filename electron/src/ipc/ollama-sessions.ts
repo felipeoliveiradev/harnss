@@ -736,12 +736,6 @@ async function executeToolCall(
         log("OLLAMA_TOOL", `read_file got URL "${rel}" — redirecting to read_url`);
         return executeToolCall({ function: { name: "read_url", arguments: { url: rel } } }, cwd, sessionState, getMainWindow, sessionId);
       }
-      if (sessionState.filesRead.includes(rel)) {
-        log("OLLAMA_TOOL", `read_file ${rel} — already read, returning short notice`);
-        emitStart("Read", { file_path: rel });
-        emitResult("Read", { content: "(already read)" });
-        return { toolName: "Read", input: { file_path: rel }, result: `Already read ${rel}`, content: `You already read this file earlier in this session. Use the content from your previous read. Do NOT read it again.` };
-      }
       emitStart("Read", { file_path: rel });
       const abs = safePath(cwd, rel);
       if (!abs) {
@@ -1165,10 +1159,15 @@ async function streamOllamaChat(
   let promptTokens = 0;
   let completionTokens = 0;
 
+  const FILE_TOOLS = new Set(["read_file", "write_file", "edit_file", "search_files", "list_files", "run_shell"]);
   const MAX_TOOL_CONTENT = 2000;
+  const MAX_FILE_TOOL_CONTENT = 12000;
   const trimmedMessages = session.messages.map(m => {
-    if (m.role === "tool" && m.content.length > MAX_TOOL_CONTENT) {
-      return { ...m, content: m.content.slice(0, MAX_TOOL_CONTENT) + "\n... (truncated)" };
+    if (m.role !== "tool" || !m.content) return m;
+    const isFileTool = m.tool_name && FILE_TOOLS.has(m.tool_name);
+    const limit = isFileTool ? MAX_FILE_TOOL_CONTENT : MAX_TOOL_CONTENT;
+    if (m.content.length > limit) {
+      return { ...m, content: m.content.slice(0, limit) + "\n... (truncated)" };
     }
     return m;
   });
