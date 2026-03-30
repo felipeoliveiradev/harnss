@@ -1083,6 +1083,20 @@ async function streamOllamaChat(
   });
   const compressed = compressConversation(trimmedMessages as Array<{ role: "user" | "assistant" | "system"; content: string }>);
 
+  const state = session.state;
+  const stateLines: string[] = [];
+  if (state.filesCreated.length > 0) stateLines.push(`FILES ALREADY CREATED: ${state.filesCreated.join(", ")}`);
+  if (state.filesModified.length > 0) stateLines.push(`FILES ALREADY MODIFIED: ${state.filesModified.join(", ")}`);
+  if (state.filesRead.length > 0) stateLines.push(`FILES ALREADY READ: ${state.filesRead.slice(-10).join(", ")}`);
+  if (state.originalRequest) stateLines.push(`ORIGINAL USER REQUEST: ${state.originalRequest}`);
+  if (stateLines.length > 0) {
+    stateLines.unshift("=== CURRENT SESSION STATE (do NOT repeat completed work) ===");
+    if (state.filesCreated.length > 0) {
+      stateLines.push("WARNING: A project already exists. Do NOT create a new one. Do NOT run create-next-app or github_clone again. Work on the EXISTING files.");
+    }
+    compressed.splice(1, 0, { role: "system", content: stateLines.join("\n") } as typeof compressed[0]);
+  }
+
   const chatOpts: Record<string, unknown> = {
     model: session.model,
     messages: compressed,
