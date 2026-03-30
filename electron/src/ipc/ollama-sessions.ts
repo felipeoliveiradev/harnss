@@ -1475,7 +1475,7 @@ async function streamOllamaChat(
     model: session.model,
     messages: compressed,
     stream: true,
-    options: { temperature: 0.2 },
+    options: { temperature: 0.2, num_predict: 4096 },
   };
   if (session.supportsTools) chatOpts.tools = allTools;
   if (session.supportsThinking) chatOpts.think = true;
