@@ -78,6 +78,7 @@ interface SessionState {
   pendingPages: Map<string, string[]>;
   progressSummary: string;
   lastSummaryAtLoop: number;
+  scratchpad: string[];
 }
 
 interface OllamaSession {
@@ -134,7 +135,7 @@ function emit(
 }
 
 function freshState(): SessionState {
-  return { filesRead: [], filesModified: [], filesCreated: [], originalRequest: "", toolCallCount: 0, recentToolSignatures: [], pendingPages: new Map(), progressSummary: "", lastSummaryAtLoop: 0 };
+  return { filesRead: [], filesModified: [], filesCreated: [], originalRequest: "", toolCallCount: 0, recentToolSignatures: [], pendingPages: new Map(), progressSummary: "", lastSummaryAtLoop: 0, scratchpad: [] };
 }
 
 // ── Native tool definitions ────────────────────────────────────────────────────
@@ -301,6 +302,21 @@ const OLLAMA_TOOLS = [
   {
     type: "function" as const,
     function: {
+      name: "note",
+      description: "Write a note to your scratchpad. Use this to save important conclusions, decisions, findings, and progress. Your scratchpad is included in EVERY message you receive, so notes persist even if conversation history is compressed. Use it to remember: what the user wants, what you researched, what you decided, what files you created, what's left to do.",
+      parameters: {
+        type: "object",
+        required: ["text"],
+        properties: {
+          text: { type: "string", description: "The note to save. Be concise but complete. Use your compressed format." },
+          replace: { type: "boolean", description: "If true, replace all notes with this one (use for full progress update). Default: false (append)." },
+        },
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
       name: "ask_multiple_ais",
       description: "Query multiple AI models (Claude, GPT-4, Gemini, Llama) with the same question and get their different perspectives. Use for research, cross-validation, or getting diverse opinions on technical decisions.",
       parameters: {
@@ -361,9 +377,12 @@ THINK BEFORE SEARCHING. Follow this exact process:
 0. Call recall_conversation to check what was already discussed or done in this project
 1. Call web_search ONCE with a focused query about the main topic
 2. READ the results. Decide: do you have enough info? If yes → Phase 2. If no → one more search.
-3. Maximum 3 searches total. After each search, STOP and THINK about what you learned.
+3. Maximum 3 searches total. After each search, call note to save key findings.
 4. Call github_search ONCE to find a good starter template (if building a new project)
 5. If you found a good template, call read_url on its GitHub page to check the README
+
+IMPORTANT: After EVERY major step, call note to save what you learned/decided/did.
+Your scratchpad (📋) is shown to you in every message. It's your persistent memory.
 
 RULES:
 - Call ONE tool at a time. Wait for the result. Think. Then decide next action.
@@ -1092,7 +1111,7 @@ async function executeToolCall(
         const formatted = formatWebResults(searchResult);
         log("OLLAMA_TOOL", `web_search "${query}" (${searchResult.results.length} results)`);
         emitResult("WebSearch", { query, abstract: searchResult.abstract, abstractUrl: searchResult.abstractUrl, results: searchResult.results });
-        return { toolName: "WebSearch", input: { query }, result: `Web search: ${searchResult.results.length} results`, content: compressText(trimOutput(formatted, 3000)) };
+        return { toolName: "WebSearch", input: { query }, result: `Web search: ${searchResult.results.length} results`, content: compressText(trimOutput(formatted, 8000)) };
       } catch (err) {
         const msg = (err as Error).message;
         emitResult("WebSearch", { error: msg });
@@ -1105,8 +1124,8 @@ async function executeToolCall(
       emitStart("WebFetch", { url: targetUrl });
       try {
         const crawlResult = await crawlUrl(targetUrl);
-        const truncated = crawlResult.content.length > 3000
-          ? crawlResult.content.slice(0, 3000) + "\n\n... (truncated)"
+        const truncated = crawlResult.content.length > 10000
+          ? crawlResult.content.slice(0, 10000) + "\n\n... (truncated)"
           : crawlResult.content;
         log("OLLAMA_TOOL", `read_url "${targetUrl}" (${crawlResult.content.length} chars, provider=${crawlResult.provider})`);
         emitResult("WebFetch", { url: targetUrl, title: crawlResult.title, contentLength: crawlResult.content.length, provider: crawlResult.provider });
@@ -1296,6 +1315,24 @@ async function executeToolCall(
       }
     }
 
+    case "note": {
+      const text = args.text ?? "";
+      const replace = (args as Record<string, unknown>).replace === true;
+      const session = sessions.get(sessionId);
+      if (session) {
+        if (replace) {
+          session.state.scratchpad = [text];
+        } else {
+          session.state.scratchpad.push(text);
+          if (session.state.scratchpad.length > 20) session.state.scratchpad = session.state.scratchpad.slice(-15);
+        }
+      }
+      emitStart("Note", { text: text.slice(0, 100) });
+      try { saveMessage(sessionId, session?.cwd ?? cwd, { role: "system", content: `[NOTE] ${text}`, timestamp: Date.now() }); } catch {}
+      emitResult("Note", { saved: true, totalNotes: session?.state.scratchpad.length ?? 0 });
+      return { toolName: "Note", input: { text }, result: "Note saved", content: `Note saved. You have ${session?.state.scratchpad.length ?? 0} notes.` };
+    }
+
     default: {
       return { toolName: name, input: args, result: `Unknown tool: ${name}`, content: `Unknown tool: ${name}` };
     }
@@ -1354,8 +1391,8 @@ async function streamOllamaChat(
   let completionTokens = 0;
 
   const FILE_TOOLS = new Set(["read_file", "write_file", "edit_file", "search_files", "list_files", "run_shell"]);
-  const MAX_TOOL_CONTENT = 2000;
-  const MAX_FILE_TOOL_CONTENT = 12000;
+  const MAX_TOOL_CONTENT = 15000;
+  const MAX_FILE_TOOL_CONTENT = 30000;
   const trimmedMessages = session.messages.map(m => {
     if (m.role !== "tool" || !m.content) return m;
     const isFileTool = m.tool_name && FILE_TOOLS.has(m.tool_name);
@@ -1367,8 +1404,13 @@ async function streamOllamaChat(
   });
   const compressed = compressConversation(trimmedMessages as Array<{ role: "user" | "assistant" | "system"; content: string }>);
 
-  if (session.state.progressSummary) {
-    compressed.splice(1, 0, { role: "system", content: session.state.progressSummary } as typeof compressed[0]);
+  const injections: string[] = [];
+  if (session.state.progressSummary) injections.push(session.state.progressSummary);
+  if (session.state.scratchpad.length > 0) {
+    injections.push("📋 YOUR SCRATCHPAD (your persistent notes):\n" + session.state.scratchpad.join("\n"));
+  }
+  if (injections.length > 0) {
+    compressed.splice(1, 0, { role: "system", content: injections.join("\n\n") } as typeof compressed[0]);
   }
 
   const chatOpts: Record<string, unknown> = {
@@ -1930,7 +1972,7 @@ Do NOT create files manually. Do NOT search again. Clone NOW.`;
           emit(getMainWindow, sessionId, "chat:clear-streaming", {});
         }
 
-        const RESEARCH_TOOLS = new Set(["web_search", "read_url", "ask_multiple_ais", "github_search", "ask_user", "recall_conversation", "list_files", "read_file", "search_files"]);
+        const RESEARCH_TOOLS = new Set(["web_search", "read_url", "ask_multiple_ais", "github_search", "ask_user", "recall_conversation", "note", "list_files", "read_file", "search_files"]);
         const WRITE_TOOLS = new Set(["write_file", "edit_file", "delete_file", "run_shell", "github_clone"]);
         const inResearchPhase = session.state.filesCreated.length === 0 && session.state.filesModified.length === 0;
 
