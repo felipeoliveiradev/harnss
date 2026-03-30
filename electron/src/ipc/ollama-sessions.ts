@@ -2002,8 +2002,24 @@ Do NOT create files manually. Do NOT search again. Clone NOW.`;
         let lastToolResult = "";
         let lastToolName = "";
         let needsNote = false;
+        let emptyArgErrors = 0;
         for (const call of callsToExecute) {
           if (ops >= MAX_TOOL_OPS) break;
+
+          const callArgs = call.function.arguments as Record<string, unknown>;
+          const requiredArg = callArgs.path ?? callArgs.query ?? callArgs.url ?? callArgs.command ?? callArgs.question ?? callArgs.text;
+          if (!requiredArg || (typeof requiredArg === "string" && !requiredArg.trim())) {
+            log("OLLAMA", `skipping ${call.function.name} — empty required arg`);
+            session.messages.push({ role: "tool", content: `Error: ${call.function.name} requires a non-empty argument.`, tool_name: call.function.name } as OllamaMessage);
+            emptyArgErrors++;
+            if (emptyArgErrors >= 3) {
+              log("OLLAMA", "3+ empty arg errors — telling model to stop and explain");
+              session.messages.push({ role: "user", content: "STOP. Your tool calls have empty arguments. This means something is wrong. Tell the user what you need and ask for help instead of retrying." });
+              break;
+            }
+            continue;
+          }
+
           ops++;
           const isMcp = call.function.name.startsWith("mcp_") && session.mcpBridge?.toolMap.has(call.function.name);
           const result = isMcp
@@ -2020,7 +2036,7 @@ Do NOT create files manually. Do NOT search again. Clone NOW.`;
         if (needsNote && !callsToExecute.some(c => c.function.name === "write_file" && String((c.function.arguments as Record<string, unknown>).path ?? "").includes("notes.md"))) {
           session.messages.push({
             role: "user",
-            content: `MANDATORY: Update your notebook NOW. Do: read_file "${notesPath}" then write_file "${notesPath}" with the full updated content including what you just learned. ALL details.`,
+            content: `Update your notebook: write_file "${notesPath}" with current progress.`,
           });
         }
 
@@ -2046,12 +2062,14 @@ Do NOT create files manually. Do NOT search again. Clone NOW.`;
         const wroteNotes = streamResult.toolCalls.some(c => c.function.name === "write_file" && String((c.function.arguments as Record<string, unknown>).path ?? "").includes("notes.md"));
         const lastNotesLoop = (session.state as SessionState & { lastNotesLoop?: number }).lastNotesLoop ?? 0;
         if (wroteNotes) (session.state as SessionState & { lastNotesLoop?: number }).lastNotesLoop = loopCount;
-        if (!wroteNotes && loopCount - lastNotesLoop >= 3 && session.state.toolCallCount > 2) {
+        const notesReminderSent = (session.state as SessionState & { notesReminderCount?: number }).notesReminderCount ?? 0;
+        if (!wroteNotes && loopCount - lastNotesLoop >= 4 && session.state.toolCallCount > 2 && notesReminderSent < 2) {
           const np = `.harnss/sessions/${sessionId}/notes.md`;
-          log("OLLAMA", `no notes.md update in 3 loops — reminding model`);
+          (session.state as SessionState & { notesReminderCount?: number }).notesReminderCount = notesReminderSent + 1;
+          log("OLLAMA", `no notes.md update in 4 loops — reminding model (${notesReminderSent + 1}/2)`);
           session.messages.push({
             role: "user",
-            content: `IMPORTANT: Update your notebook "${np}" NOW. Read it, update all sections, write it back. You WILL forget everything otherwise.`,
+            content: `Update your notebook: write_file "${np}" with current progress.`,
           });
         }
 
