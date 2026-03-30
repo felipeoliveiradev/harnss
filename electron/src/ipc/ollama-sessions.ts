@@ -303,13 +303,14 @@ const OLLAMA_TOOLS = [
     type: "function" as const,
     function: {
       name: "note",
-      description: "Write a note to your scratchpad. Use this to save important conclusions, decisions, findings, and progress. Your scratchpad is included in EVERY message you receive, so notes persist even if conversation history is compressed. Use it to remember: what the user wants, what you researched, what you decided, what files you created, what's left to do.",
+      description: "Write a note to your scratchpad with a status tag. Your scratchpad is shown to you in EVERY message — it's your persistent memory. Use it after every major step.\n\nStatus tags:\n🔴 BLOCK = critical issue, blocker, error that needs fixing\n🟡 TODO = task pending, next step, something to do\n🔵 INFO = research finding, reference, decision made\n🟢 DONE = completed task, verified working\n\nExamples:\nnote(\"🟡 create Hero component w/ gradient bg\", tag=\"todo\")\nnote(\"🟢 project scaffolded via CLI, deps installed\", tag=\"done\")\nnote(\"🔴 build fails: missing tailwind config\", tag=\"block\")\nnote(\"🔵 user wants dark theme, portfolio style\", tag=\"info\")",
       parameters: {
         type: "object",
         required: ["text"],
         properties: {
-          text: { type: "string", description: "The note to save. Be concise but complete. Use your compressed format." },
-          replace: { type: "boolean", description: "If true, replace all notes with this one (use for full progress update). Default: false (append)." },
+          text: { type: "string", description: "The note content. Be concise." },
+          tag: { type: "string", description: "Status: todo, done, block, info. Default: info", enum: ["todo", "done", "block", "info"] },
+          replace: { type: "boolean", description: "If true, replace all notes (full progress update). Default: false (append)." },
         },
       },
     },
@@ -1317,20 +1318,44 @@ async function executeToolCall(
 
     case "note": {
       const text = args.text ?? "";
+      const tag = (args as Record<string, unknown>).tag as string || "info";
       const replace = (args as Record<string, unknown>).replace === true;
+      const icons: Record<string, string> = { block: "🔴", todo: "🟡", info: "🔵", done: "🟢" };
+      const icon = icons[tag] || "🔵";
+      const taggedNote = `${icon} ${text}`;
       const session = sessions.get(sessionId);
       if (session) {
         if (replace) {
-          session.state.scratchpad = [text];
+          session.state.scratchpad = [taggedNote];
         } else {
-          session.state.scratchpad.push(text);
-          if (session.state.scratchpad.length > 20) session.state.scratchpad = session.state.scratchpad.slice(-15);
+          if (tag === "done") {
+            session.state.scratchpad = session.state.scratchpad.map(n => {
+              const noteText = n.slice(2).trim();
+              if (text.toLowerCase().includes(noteText.toLowerCase().slice(0, 30)) || noteText.toLowerCase().includes(text.toLowerCase().slice(0, 30))) {
+                return `🟢 ${noteText}`;
+              }
+              return n;
+            });
+            if (!session.state.scratchpad.some(n => n.includes(text.slice(0, 30)))) {
+              session.state.scratchpad.push(taggedNote);
+            }
+          } else {
+            session.state.scratchpad.push(taggedNote);
+          }
+          if (session.state.scratchpad.length > 25) session.state.scratchpad = session.state.scratchpad.slice(-20);
         }
       }
-      emitStart("Note", { text: text.slice(0, 100) });
-      try { saveMessage(sessionId, session?.cwd ?? cwd, { role: "system", content: `[NOTE] ${text}`, timestamp: Date.now() }); } catch {}
-      emitResult("Note", { saved: true, totalNotes: session?.state.scratchpad.length ?? 0 });
-      return { toolName: "Note", input: { text }, result: "Note saved", content: `Note saved. You have ${session?.state.scratchpad.length ?? 0} notes.` };
+      emitStart("Note", { text: taggedNote.slice(0, 100), tag });
+      try { saveMessage(sessionId, session?.cwd ?? cwd, { role: "system", content: `[NOTE:${tag}] ${text}`, timestamp: Date.now() }); } catch {}
+      const counts = { block: 0, todo: 0, info: 0, done: 0 };
+      for (const n of session?.state.scratchpad ?? []) {
+        if (n.startsWith("🔴")) counts.block++;
+        else if (n.startsWith("🟡")) counts.todo++;
+        else if (n.startsWith("🔵")) counts.info++;
+        else if (n.startsWith("🟢")) counts.done++;
+      }
+      emitResult("Note", { saved: true, tag, counts });
+      return { toolName: "Note", input: { text, tag }, result: `${icon} Note saved`, content: `Note saved [${tag}]. Scratchpad: ${counts.block} blocks, ${counts.todo} todos, ${counts.done} done, ${counts.info} info.` };
     }
 
     default: {
@@ -1407,7 +1432,12 @@ async function streamOllamaChat(
   const injections: string[] = [];
   if (session.state.progressSummary) injections.push(session.state.progressSummary);
   if (session.state.scratchpad.length > 0) {
-    injections.push("📋 YOUR SCRATCHPAD (your persistent notes):\n" + session.state.scratchpad.join("\n"));
+    const blocks = session.state.scratchpad.filter(n => n.startsWith("🔴"));
+    const todos = session.state.scratchpad.filter(n => n.startsWith("🟡"));
+    const infos = session.state.scratchpad.filter(n => n.startsWith("🔵"));
+    const dones = session.state.scratchpad.filter(n => n.startsWith("🟢"));
+    const ordered = [...blocks, ...todos, ...infos, ...dones];
+    injections.push("📋 SCRATCHPAD:\n" + ordered.join("\n"));
   }
   if (injections.length > 0) {
     compressed.splice(1, 0, { role: "system", content: injections.join("\n\n") } as typeof compressed[0]);
