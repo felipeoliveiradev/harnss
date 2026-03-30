@@ -373,19 +373,22 @@ Now you may call write_file, edit_file, run_shell, github_clone.
 Execute tasks one by one. Write COMPLETE file contents. Never truncate.
 After all files: install dependencies, run build, fix errors until build passes.
 
-## PHASE 5: CONCLUSION (MANDATORY — never skip)
+## PHASE 5: VERIFY & CONCLUDE (MANDATORY — never skip)
 
-After the project is built and working, you MUST:
+After writing all files, you MUST verify the project works:
 
-1. Give a SHORT summary of what was built (2-3 lines max):
+1. IDENTIFY the project: read_file on package.json (or equivalent) to find the tech stack and scripts
+2. INSTALL dependencies: run_shell "cd PROJECT && npm install" (or pnpm/yarn)
+3. RUN BUILD: run_shell "cd PROJECT && npm run build" (or the appropriate build/compile/typecheck command)
+4. If build FAILS: read the errors, fix with edit_file, rebuild. Repeat until it passes.
+5. If build PASSES: give a SHORT summary (2-3 lines):
    - What was created (e.g. "Next.js portfolio landing page with 6 sections")
    - Where it lives (e.g. "Project is in ./portfolio")
-   - How to run it (e.g. "Run: cd portfolio && npm run dev")
+   - How to run it (e.g. "cd portfolio && npm run dev")
+6. Call ask_user with 4-5 improvement suggestions. Example:
+   ask_user "The landing page is ready and builds successfully! Here are some improvements we could add:\n1. Dark/light theme toggle\n2. Contact form with email integration\n3. Blog section with MDX\n4. SEO optimization with meta tags\n5. Animation with Framer Motion\n\nWhich would you like me to add? Or describe something else."
 
-2. Then call ask_user with suggestions for improvements. Example:
-   ask_user "The landing page is ready! Here are some improvements we could add:\n1. Dark/light theme toggle\n2. Contact form with email integration\n3. Blog section with MDX\n4. SEO optimization with meta tags\n5. Animation with Framer Motion\n\nWhich would you like me to add? Or describe something else."
-
-NEVER end silently. ALWAYS give the summary + ask for next steps.
+NEVER end without verifying the build passes. NEVER end silently.
 
 # RULES
 
@@ -1585,14 +1588,18 @@ If you already ran the CLI, start writing/editing files NOW. Do NOT search the w
           const hasAskedUser = session.messages.some(m => m.role === "tool" && m.tool_name === "ask_user");
 
           if ((mentionsTaskComplete || mentionsBuildPass) && hasWrittenFiles && !mentionsSuggestions) {
-            log("OLLAMA", "task complete but no conclusion/suggestions — requesting Phase 5");
+            log("OLLAMA", "task complete but no verification/conclusion — requesting Phase 5");
             session.messages.push({ role: "assistant", content: streamResult.content });
+            const projectDir = session.state.filesCreated[0]?.split("/")[0] || ".";
             session.messages.push({
               role: "user",
-              content: `Good work! Now do PHASE 5 (CONCLUSION):
-1. Give a 2-3 line summary: what was built, where it is, how to run it
-2. Call ask_user with 4-5 improvement suggestions the user might want (e.g. dark mode, animations, SEO, contact form, blog)
-This is MANDATORY. Do it now.`,
+              content: `Good work! Now do PHASE 5 (VERIFY & CONCLUDE):
+1. read_file "${projectDir}/package.json" to check the scripts and dependencies
+2. run_shell "cd ${projectDir} && npm run build" to verify it compiles
+3. If build fails, fix the errors and rebuild
+4. If build passes, give a 2-3 line summary: what was built, where, how to run
+5. Call ask_user with 4-5 improvement suggestions (dark mode, animations, SEO, contact form, etc.)
+Do it now.`,
             });
             continue;
           }
