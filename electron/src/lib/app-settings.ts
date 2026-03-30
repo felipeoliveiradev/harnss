@@ -101,8 +101,10 @@ export interface AppSettings {
   openclawDeviceToken: string;
   openclawDeviceId: string;
   openclawDefaultAgent: string;
-  /** Ollama server base URL (default: http://localhost:11434) */
+  /** Ollama server base URL (default: http://localhost:11434, or https://ollama.com for cloud) */
   ollamaBaseUrl: string;
+  /** API key for Ollama Cloud (only needed when using https://ollama.com) */
+  ollamaApiKey: string;
   /** Default Ollama model to use for new sessions */
   ollamaDefaultModel: string;
   /** Web search provider configuration with priority ordering */
@@ -169,6 +171,7 @@ const DEFAULTS: AppSettings = {
   openclawDeviceId: "",
   openclawDefaultAgent: "",
   ollamaBaseUrl: "http://localhost:11434",
+  ollamaApiKey: "",
   ollamaDefaultModel: "llama3",
   webSearch: WEB_SEARCH_DEFAULTS,
   ignorePatterns: [],

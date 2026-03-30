@@ -14,10 +14,17 @@ import { getMcpToolsForOllama, executeMcpTool, disconnectMcpBridge, type McpBrid
 import { multiAiSearch } from "../lib/multi-ai-search";
 
 let ollamaClient: any = null;
+let ollamaClientHost: string = "";
 async function getOllamaClient(): Promise<any> {
-  if (!ollamaClient) {
+  const host = getBaseUrl();
+  if (!ollamaClient || ollamaClientHost !== host) {
     const { Ollama } = await import("ollama");
-    ollamaClient = new Ollama({ host: getBaseUrl() });
+    const apiKey = getAppSetting("ollamaApiKey") || "";
+    const headers: Record<string, string> = {};
+    if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
+    ollamaClient = new Ollama({ host, ...(apiKey ? { headers } : {}) });
+    ollamaClientHost = host;
+    log("OLLAMA", `client created: host=${host} auth=${!!apiKey}`);
   }
   return ollamaClient;
 }

@@ -62,6 +62,7 @@ export interface AppSettings {
     openclawDeviceId: string;
     openclawDefaultAgent: string;
     ollamaBaseUrl: string;
+    ollamaApiKey: string;
     ollamaDefaultModel: string;
     webSearch: WebSearchSettings;
     ignorePatterns: string[];

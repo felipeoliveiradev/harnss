@@ -29,6 +29,7 @@ export const AdvancedSettings = memo(function AdvancedSettings({
   const [showDevFillInChatTitleBar, setShowDevFillInChatTitleBar] = useState(false);
   const [showJiraBoard, setShowJiraBoard] = useState(false);
   const [ollamaBaseUrl, setOllamaBaseUrl] = useState("http://localhost:11434");
+  const [ollamaApiKey, setOllamaApiKey] = useState("");
   const [ollamaDefaultModel, setOllamaDefaultModel] = useState("llama3");
   const [ollamaTestStatus, setOllamaTestStatus] = useState<"idle" | "testing" | "connected" | "failed">("idle");
   const [ollamaTestError, setOllamaTestError] = useState<string | null>(null);
@@ -55,6 +56,7 @@ export const AdvancedSettings = memo(function AdvancedSettings({
       setShowDevFillInChatTitleBar(!!appSettings.showDevFillInChatTitleBar);
       setShowJiraBoard(!!appSettings.showJiraBoard);
       setOllamaBaseUrl(appSettings.ollamaBaseUrl || "http://localhost:11434");
+      setOllamaApiKey(appSettings.ollamaApiKey || "");
       setOllamaDefaultModel(appSettings.ollamaDefaultModel || "llama3");
       setOpenclawGatewayUrl(appSettings.openclawGatewayUrl || "ws://127.0.0.1:18789");
       setOpenclawDefaultModel(appSettings.openclawDefaultModel || "");
@@ -131,6 +133,15 @@ export const AdvancedSettings = memo(function AdvancedSettings({
       const next = value.trim() || "http://localhost:11434";
       setOllamaBaseUrl(next);
       await onUpdateAppSettings({ ollamaBaseUrl: next });
+    },
+    [onUpdateAppSettings],
+  );
+
+  const handleOllamaApiKeySave = useCallback(
+    async (value: string) => {
+      const next = value.trim();
+      setOllamaApiKey(next);
+      await onUpdateAppSettings({ ollamaApiKey: next });
     },
     [onUpdateAppSettings],
   );
@@ -445,7 +456,7 @@ export const AdvancedSettings = memo(function AdvancedSettings({
 
               <SettingRow
                 label="Server URL"
-                description="Base URL of your local Ollama server."
+                description="Local: http://localhost:11434 — Cloud: https://ollama.com"
               >
                 <div className="flex flex-col gap-1.5">
                   <div className="flex items-center gap-2">
@@ -482,6 +493,24 @@ export const AdvancedSettings = memo(function AdvancedSettings({
                     <p className="text-[11px] text-red-400">{ollamaTestError}</p>
                   )}
                 </div>
+              </SettingRow>
+
+              <SettingRow
+                label="API Key"
+                description="Required for Ollama Cloud (ollama.com). Leave empty for local server."
+              >
+                <input
+                  type="password"
+                  value={ollamaApiKey}
+                  onChange={(e) => setOllamaApiKey(e.target.value)}
+                  onBlur={(e) => handleOllamaApiKeySave(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleOllamaApiKeySave(e.currentTarget.value);
+                  }}
+                  spellCheck={false}
+                  className="h-8 w-64 rounded-md border border-foreground/10 bg-background px-2.5 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground hover:border-foreground/20 focus:border-foreground/30 focus:ring-1 focus:ring-foreground/20"
+                  placeholder="sk-..."
+                />
               </SettingRow>
 
               <SettingRow
