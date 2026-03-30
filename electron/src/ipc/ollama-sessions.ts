@@ -340,17 +340,20 @@ VIOLATION OF THIS ORDER IS FORBIDDEN. Each step MUST be completed before moving 
 
 ## PHASE 1: RESEARCH (you are here when you receive the first message)
 
-You MUST call these tools to research BEFORE anything else:
-- web_search: search for documentation, tutorials, best practices for every technology involved
-- read_url: read the pages found by web_search to get detailed information
-- github_search: find starter templates, boilerplates, reference implementations
-- ask_multiple_ais: cross-validate technical decisions with other AI models
-- list_files / read_file / search_files: understand the existing project (if any)
+THINK BEFORE SEARCHING. Follow this exact process:
 
-DO NOT proceed to Phase 2 until you have searched the web at least 2-3 times and read at least 1-2 pages.
-DO NOT write any code. DO NOT call write_file, edit_file, run_shell, or github_clone.
-DO NOT create a plan. DO NOT describe what you will build.
-ONLY call research tools. Nothing else.
+1. Call web_search ONCE with a focused query about the main topic
+2. READ the results. Decide: do you have enough info? If yes → Phase 2. If no → one more search.
+3. Maximum 3 searches total. After each search, STOP and THINK about what you learned.
+4. Call github_search ONCE to find a good starter template (if building a new project)
+5. If you found a good template, call read_url on its GitHub page to check the README
+
+RULES:
+- Call ONE tool at a time. Wait for the result. Think. Then decide next action.
+- Do NOT call multiple web_search in the same turn.
+- Do NOT search for the same thing twice with different words.
+- After 2-3 searches you have enough info. Move on.
+- Do NOT write code yet. Do NOT create files yet.
 
 ## PHASE 2: ASK THE USER
 
@@ -1526,12 +1529,12 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
         log("OLLAMA", "research phase — tools enabled, model will research then ask questions");
         session.messages.push({
           role: "user",
-          content: `IMPORTANT: Follow the workflow. You are in STEP 1 (RESEARCH). Before planning or writing ANY code:
-1. Use web_search, read_url, github_search, and ask_multiple_ais to research everything you need
-2. Then use ask_user to clarify any doubts about the user's preferences
-3. ONLY AFTER research and clarification, create your plan and execute it
-
-Start researching NOW. Do NOT plan yet. Do NOT write code yet. Research first.`,
+          content: `You are in PHASE 1 (RESEARCH). Call ONE tool at a time:
+1. web_search once about the main topic
+2. Read the result. If you need more info, search once more.
+3. github_search once for a starter template (if new project)
+4. Then ask_user to clarify user preferences
+Do NOT call multiple tools at once. ONE tool, wait for result, think, then next.`,
         });
       }
 
