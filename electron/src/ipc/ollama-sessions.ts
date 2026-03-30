@@ -1503,10 +1503,27 @@ Start researching NOW. Do NOT plan yet. Do NOT write code yet. Research first.`,
       }
 
       let loopCount = 0;
+      let researchLoops = 0;
+      const MAX_RESEARCH_LOOPS = 8;
+      let forcedExecution = false;
 
       while (loopCount < MAX_TOOL_LOOPS) {
         loopCount++;
-        log("OLLAMA", `tool loop iteration ${loopCount}/${MAX_TOOL_LOOPS} (messages=${session.messages.length})`);
+        const inResearch = session.state.filesCreated.length === 0 && session.state.filesModified.length === 0;
+        if (inResearch) researchLoops++;
+
+        if (inResearch && researchLoops > MAX_RESEARCH_LOOPS && !forcedExecution) {
+          forcedExecution = true;
+          log("OLLAMA", `research budget exhausted (${MAX_RESEARCH_LOOPS} loops) — forcing execution`);
+          session.messages.push({
+            role: "user",
+            content: `STOP RESEARCHING. You have done enough research (${researchLoops} rounds). Move to execution NOW.
+Use the official CLI: run_shell with the appropriate create command and non-interactive flags.
+If you already ran the CLI, start writing/editing files NOW. Do NOT search the web again.`,
+          });
+        }
+
+        log("OLLAMA", `tool loop iteration ${loopCount}/${MAX_TOOL_LOOPS} (messages=${session.messages.length} research=${researchLoops})`);
 
         const streamResult = await streamOllamaChat(session, controller, getMainWindow, sessionId);
         log("OLLAMA", `stream result: toolCalls=${streamResult.toolCalls.length} content=${streamResult.content.length} chars`);
