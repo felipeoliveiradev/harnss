@@ -1652,6 +1652,15 @@ Do NOT create files manually. Do NOT search again. Clone NOW.`;
       await client.list();
       return { available: true };
     } catch (err) {
+      const host = getBaseUrl();
+      if (host.includes("ollama.com")) {
+        try {
+          const res = await fetch(`${host}/api/version`, { signal: AbortSignal.timeout(5000) });
+          if (res.ok) return { available: true };
+        } catch {}
+        const apiKey = getAppSetting("ollamaApiKey");
+        if (apiKey) return { available: true };
+      }
       return { available: false, error: (err as Error).message };
     }
   });
@@ -1659,9 +1668,35 @@ Do NOT create files manually. Do NOT search again. Clone NOW.`;
   ipcMain.handle("ollama:list-models", async () => {
     try {
       const client = await getOllamaClient();
+      const host = getBaseUrl();
+      const isCloud = host.includes("ollama.com");
       const data = await client.list();
-      return { ok: true, models: (data.models ?? []).map((m: { name: string }) => m.name) };
+      const localModels = (data.models ?? []).map((m: { name: string }) => m.name);
+
+      if (isCloud || localModels.length === 0) {
+        const cloudModels = [
+          "llama4", "gemma3", "qwen3", "phi4", "deepseek-r1",
+          "mistral", "codellama", "llama3.3", "qwen2.5-coder",
+          "devstral", "command-r", "mixtral",
+        ];
+        const merged = [...new Set([...localModels, ...cloudModels])].sort();
+        return { ok: true, models: merged, isCloud };
+      }
+
+      return { ok: true, models: localModels, isCloud: false };
     } catch (err) {
+      const host = getBaseUrl();
+      if (host.includes("ollama.com")) {
+        return {
+          ok: true,
+          isCloud: true,
+          models: [
+            "llama4", "gemma3", "qwen3", "phi4", "deepseek-r1",
+            "mistral", "codellama", "llama3.3", "qwen2.5-coder",
+            "devstral", "command-r", "mixtral",
+          ],
+        };
+      }
       return { ok: false, models: [], error: (err as Error).message };
     }
   });
