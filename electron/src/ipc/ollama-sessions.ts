@@ -78,7 +78,6 @@ interface SessionState {
   pendingPages: Map<string, string[]>;
   progressSummary: string;
   lastSummaryAtLoop: number;
-  scratchpad: string[];
   visitedUrls: Map<string, string>;
   searchQueries: Set<string>;
 }
@@ -137,7 +136,7 @@ function emit(
 }
 
 function freshState(): SessionState {
-  return { filesRead: [], filesModified: [], filesCreated: [], originalRequest: "", toolCallCount: 0, recentToolSignatures: [], pendingPages: new Map(), progressSummary: "", lastSummaryAtLoop: 0, scratchpad: [], visitedUrls: new Map(), searchQueries: new Set() };
+  return { filesRead: [], filesModified: [], filesCreated: [], originalRequest: "", toolCallCount: 0, recentToolSignatures: [], pendingPages: new Map(), progressSummary: "", lastSummaryAtLoop: 0, visitedUrls: new Map(), searchQueries: new Set() };
 }
 
 // ── Native tool definitions ────────────────────────────────────────────────────
@@ -304,22 +303,6 @@ const OLLAMA_TOOLS = [
   {
     type: "function" as const,
     function: {
-      name: "note",
-      description: "Write a note to your scratchpad with a status tag. Your scratchpad is shown to you in EVERY message — it's your persistent memory. Use it after every major step.\n\nStatus tags:\n🔴 BLOCK = critical issue, blocker, error that needs fixing\n🟡 TODO = task pending, next step, something to do\n🔵 INFO = research finding, reference, decision made\n🟢 DONE = completed task, verified working\n\nExamples:\nnote(\"🟡 create Hero component w/ gradient bg\", tag=\"todo\")\nnote(\"🟢 project scaffolded via CLI, deps installed\", tag=\"done\")\nnote(\"🔴 build fails: missing tailwind config\", tag=\"block\")\nnote(\"🔵 user wants dark theme, portfolio style\", tag=\"info\")",
-      parameters: {
-        type: "object",
-        required: ["text"],
-        properties: {
-          text: { type: "string", description: "The note content. Be concise." },
-          tag: { type: "string", description: "Status: todo, done, block, info. Default: info", enum: ["todo", "done", "block", "info"] },
-          replace: { type: "boolean", description: "If true, replace all notes (full progress update). Default: false (append)." },
-        },
-      },
-    },
-  },
-  {
-    type: "function" as const,
-    function: {
       name: "ask_multiple_ais",
       description: "Query multiple AI models (Claude, GPT-4, Gemini, Llama) with the same question and get their different perspectives. Use for research, cross-validation, or getting diverse opinions on technical decisions.",
       parameters: {
@@ -373,34 +356,52 @@ Working directory: ${cwd}
 
 VIOLATION OF THIS ORDER IS FORBIDDEN. Each step MUST be completed before moving to the next.
 
-## PHASE 1: RESEARCH (you are here when you receive the first message)
+## YOUR NOTEBOOK: .harnss/sessions/SESSION_ID/notes.md
 
-THINK BEFORE SEARCHING. Follow this exact process:
+You have a persistent notebook file. This is YOUR memory — survives everything.
 
-0. Call recall_conversation to check what was already discussed or done in this project
-1. Call web_search ONCE with a focused query about the main topic
-2. READ the results. Decide: do you have enough info? If yes → Phase 2. If no → one more search.
-3. Maximum 3 searches total. After each search, call note to save key findings.
-4. Call github_search ONCE to find a good starter template (if building a new project)
-5. If you found a good template, call read_url on its GitHub page to check the README
-
-CRITICAL: After EVERY step, call note to save what you did AND what to do next.
-Your scratchpad (📋) is your ONLY memory between messages. If it's not in the scratchpad, you WILL forget it.
-
-What to note:
-- 🔵 INFO: what the user wants, key decisions, tech choices
-- 🟡 TODO: next step with HOW to do it (e.g. "edit src/app/page.tsx: add Hero section w/ h1+subtitle+CTA button")
-- 🟢 DONE: what was completed (e.g. "project created at ./portfolio via CLI")
-- 🔴 BLOCK: errors to fix (e.g. "build fails: Cannot find module @/components/Hero")
-
-ALWAYS include HOW in todos. Bad: "🟡 add hero". Good: "🟡 edit_file src/app/page.tsx: add Hero comp w/ gradient bg, h1 'Welcome', subtitle, CTA btn link to #contact"
+The path will be shown in your context as "📋 YOUR NOTEBOOK (path)". Use that exact path.
 
 RULES:
-- Call ONE tool at a time. Wait for the result. Think. Then decide next action.
-- Do NOT call multiple web_search in the same turn.
-- Do NOT search for the same thing twice with different words.
-- After 2-3 searches you have enough info. Move on.
-- Do NOT write code yet. Do NOT create files yet.
+1. FIRST THING every session: read_file on your notebook path to load your memory
+2. After EVERY research/data tool, write_file the full updated notebook
+3. The notebook MUST contain ALL of this:
+
+```markdown
+# Notes
+
+## 🔵 Context
+- What the user wants (full detail)
+- Tech stack decisions
+- Project location
+- Key data found (names, URLs, numbers)
+
+## 🟢 Done
+- [task] — [result]
+
+## 🟡 Todo
+- [file_path]: [exactly what to do, which tool to use, what content]
+
+## 🔴 Blocks
+- [error message] — [how to fix]
+```
+
+4. ALWAYS write the FULL file. Not append. Read → update all sections → write.
+5. Include ALL data you need. Names, URLs, numbers, paths. Be complete.
+
+## PHASE 1: RESEARCH
+
+0. read_file .harnss/notes.md — check what was already done
+1. web_search ONCE about the main topic
+2. READ results. Update .harnss/notes.md with findings.
+3. Maximum 3 searches. After each, update notes.
+4. github_search ONCE for starter template (if new project)
+5. read_url on the template page to check README
+
+RULES:
+- Call ONE tool at a time. Wait for result. Update notes. Then next.
+- Do NOT search the same thing twice.
+- Do NOT write code yet.
 
 ## PHASE 2: ASK THE USER
 
@@ -1344,48 +1345,6 @@ async function executeToolCall(
       }
     }
 
-    case "note": {
-      const text = args.text ?? "";
-      const tag = (args as Record<string, unknown>).tag as string || "info";
-      const replace = (args as Record<string, unknown>).replace === true;
-      const icons: Record<string, string> = { block: "🔴", todo: "🟡", info: "🔵", done: "🟢" };
-      const icon = icons[tag] || "🔵";
-      const taggedNote = `${icon} ${text}`;
-      const session = sessions.get(sessionId);
-      if (session) {
-        if (replace) {
-          session.state.scratchpad = [taggedNote];
-        } else {
-          if (tag === "done") {
-            session.state.scratchpad = session.state.scratchpad.map(n => {
-              const noteText = n.slice(2).trim();
-              if (text.toLowerCase().includes(noteText.toLowerCase().slice(0, 30)) || noteText.toLowerCase().includes(text.toLowerCase().slice(0, 30))) {
-                return `🟢 ${noteText}`;
-              }
-              return n;
-            });
-            if (!session.state.scratchpad.some(n => n.includes(text.slice(0, 30)))) {
-              session.state.scratchpad.push(taggedNote);
-            }
-          } else {
-            session.state.scratchpad.push(taggedNote);
-          }
-          if (session.state.scratchpad.length > 25) session.state.scratchpad = session.state.scratchpad.slice(-20);
-        }
-      }
-      emitStart("Note", { text: taggedNote.slice(0, 100), tag });
-      try { saveMessage(sessionId, session?.cwd ?? cwd, { role: "system", content: `[NOTE:${tag}] ${text}`, timestamp: Date.now() }); } catch {}
-      const counts = { block: 0, todo: 0, info: 0, done: 0 };
-      for (const n of session?.state.scratchpad ?? []) {
-        if (n.startsWith("🔴")) counts.block++;
-        else if (n.startsWith("🟡")) counts.todo++;
-        else if (n.startsWith("🔵")) counts.info++;
-        else if (n.startsWith("🟢")) counts.done++;
-      }
-      emitResult("Note", { saved: true, tag, counts });
-      return { toolName: "Note", input: { text, tag }, result: `${icon} Note saved`, content: `Note saved [${tag}]. Scratchpad: ${counts.block} blocks, ${counts.todo} todos, ${counts.done} done, ${counts.info} info.` };
-    }
-
     default: {
       return { toolName: name, input: args, result: `Unknown tool: ${name}`, content: `Unknown tool: ${name}` };
     }
@@ -1459,14 +1418,14 @@ async function streamOllamaChat(
 
   const injections: string[] = [];
   if (session.state.progressSummary) injections.push(session.state.progressSummary);
-  if (session.state.scratchpad.length > 0) {
-    const blocks = session.state.scratchpad.filter(n => n.startsWith("🔴"));
-    const todos = session.state.scratchpad.filter(n => n.startsWith("🟡"));
-    const infos = session.state.scratchpad.filter(n => n.startsWith("🔵"));
-    const dones = session.state.scratchpad.filter(n => n.startsWith("🟢"));
-    const ordered = [...blocks, ...todos, ...infos, ...dones];
-    injections.push("📋 SCRATCHPAD:\n" + ordered.join("\n"));
-  }
+  try {
+    const sessionNotesDir = path.join(session.cwd, ".harnss", "sessions", sessionId);
+    const notesPath = path.join(sessionNotesDir, "notes.md");
+    if (fs.existsSync(notesPath)) {
+      const notes = fs.readFileSync(notesPath, "utf-8").trim();
+      if (notes) injections.push(`📋 YOUR NOTEBOOK (.harnss/sessions/${sessionId}/notes.md):\n` + notes);
+    }
+  } catch {}
   if (injections.length > 0) {
     compressed.splice(1, 0, { role: "system", content: injections.join("\n\n") } as typeof compressed[0]);
   }
@@ -1770,6 +1729,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     });
 
     try { saveSessionMeta(sessionId, projectId || cwd, "", sessionModel, "ollama", Date.now()); } catch {}
+    try { fs.mkdirSync(path.join(cwd, ".harnss", "sessions", sessionId), { recursive: true }); } catch {}
 
     triggerIndex(cwd);
 
@@ -2030,7 +1990,7 @@ Do NOT create files manually. Do NOT search again. Clone NOW.`;
           emit(getMainWindow, sessionId, "chat:clear-streaming", {});
         }
 
-        const RESEARCH_TOOLS = new Set(["web_search", "read_url", "ask_multiple_ais", "github_search", "ask_user", "recall_conversation", "note", "list_files", "read_file", "search_files"]);
+        const RESEARCH_TOOLS = new Set(["web_search", "read_url", "ask_multiple_ais", "github_search", "ask_user", "recall_conversation", "list_files", "read_file", "search_files"]);
         const WRITE_TOOLS = new Set(["write_file", "edit_file", "delete_file", "run_shell", "github_clone"]);
         const inResearchPhase = session.state.filesCreated.length === 0 && session.state.filesModified.length === 0;
 
@@ -2065,10 +2025,11 @@ Do NOT create files manually. Do NOT search again. Clone NOW.`;
           if (NOTE_AFTER.has(call.function.name) && !result.content.includes("Already")) needsNote = true;
         }
 
-        if (needsNote && !callsToExecute.some(c => c.function.name === "note")) {
+        const notesPath = `.harnss/sessions/${sessionId}/notes.md`;
+        if (needsNote && !callsToExecute.some(c => c.function.name === "write_file" && String((c.function.arguments as Record<string, unknown>).path ?? "").includes("notes.md"))) {
           session.messages.push({
             role: "user",
-            content: "MANDATORY: Call note NOW before doing anything else. Save ALL important details from the tool results above: names, data, URLs, structure, decisions. Be COMPLETE. If you don't note it, you WILL forget it.",
+            content: `MANDATORY: Update your notebook NOW. Do: read_file "${notesPath}" then write_file "${notesPath}" with the full updated content including what you just learned. ALL details.`,
           });
         }
 
@@ -2091,14 +2052,15 @@ Do NOT create files manually. Do NOT search again. Clone NOW.`;
           });
         }
 
-        const calledNote = streamResult.toolCalls.some(c => c.function.name === "note");
-        const lastNoteLoop = (session.state as SessionState & { lastNoteLoop?: number }).lastNoteLoop ?? 0;
-        if (calledNote) (session.state as SessionState & { lastNoteLoop?: number }).lastNoteLoop = loopCount;
-        if (!calledNote && loopCount - lastNoteLoop >= 3 && session.state.toolCallCount > 2) {
-          log("OLLAMA", `no note call in 3 loops — reminding model to use scratchpad`);
+        const wroteNotes = streamResult.toolCalls.some(c => c.function.name === "write_file" && String((c.function.arguments as Record<string, unknown>).path ?? "").includes("notes.md"));
+        const lastNotesLoop = (session.state as SessionState & { lastNotesLoop?: number }).lastNotesLoop ?? 0;
+        if (wroteNotes) (session.state as SessionState & { lastNotesLoop?: number }).lastNotesLoop = loopCount;
+        if (!wroteNotes && loopCount - lastNotesLoop >= 3 && session.state.toolCallCount > 2) {
+          const np = `.harnss/sessions/${sessionId}/notes.md`;
+          log("OLLAMA", `no notes.md update in 3 loops — reminding model`);
           session.messages.push({
             role: "user",
-            content: "IMPORTANT: Call the note tool NOW to save what you learned so far. Use tags: 🔵info for findings, 🟡todo for next steps with HOW to do them, 🟢done for completed work. Your scratchpad is empty — you will forget everything if you don't note it.",
+            content: `IMPORTANT: Update your notebook "${np}" NOW. Read it, update all sections, write it back. You WILL forget everything otherwise.`,
           });
         }
 
