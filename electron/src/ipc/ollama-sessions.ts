@@ -624,6 +624,18 @@ function emitContextUsage(getMainWindow: () => BrowserWindow | null, sessionId: 
 
 // ── Utility functions ──────────────────────────────────────────────────────────
 
+function compressCode(content: string): string {
+  return content
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/.*$/gm, "")
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/^\s*[\r\n]/gm, "")
+    .replace(/^( {4}|\t)/gm, " ")
+    .replace(/^ {2,}/gm, (m) => " ".repeat(Math.ceil(m.length / 2)))
+    .replace(/\n{3,}/g, "\n")
+    .trim();
+}
+
 function safePath(cwd: string, relPath: string): string | null {
   const abs = path.resolve(cwd, relPath);
   if (!abs.startsWith(cwd + path.sep) && abs !== cwd) return null;
@@ -749,11 +761,13 @@ async function executeToolCall(
           emitResult("Read", { error: msg });
           return { toolName: "Read", input: { file_path: rel }, result: msg, content: msg };
         }
-        const content = fs.readFileSync(abs, "utf-8");
-        log("OLLAMA_TOOL", `read_file ${rel} (${stat.size} bytes)`);
+        const rawContent = fs.readFileSync(abs, "utf-8");
+        const compressed = rawContent.length > 6000 ? compressCode(rawContent) : rawContent;
+        const saved = rawContent.length - compressed.length;
+        log("OLLAMA_TOOL", `read_file ${rel} (${stat.size} bytes${saved > 100 ? `, compressed -${saved}` : ""})`);
         if (!sessionState.filesRead.includes(rel)) sessionState.filesRead.push(rel);
-        emitResult("Read", { content: content.slice(0, 300) + (content.length > 300 ? "\n..." : "") });
-        return { toolName: "Read", input: { file_path: rel }, result: `Read ${rel}: OK (${stat.size} bytes)`, content };
+        emitResult("Read", { content: compressed.slice(0, 300) + (compressed.length > 300 ? "\n..." : "") });
+        return { toolName: "Read", input: { file_path: rel }, result: `Read ${rel}: OK (${stat.size} bytes)`, content: compressed };
       } catch {
         emitResult("Read", { error: "file not found" });
         return { toolName: "Read", input: { file_path: rel }, result: "file not found", content: "file not found" };
