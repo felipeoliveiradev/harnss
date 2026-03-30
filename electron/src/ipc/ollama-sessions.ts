@@ -1675,14 +1675,13 @@ Do NOT create files manually. Do NOT search again. Clone NOW.`;
         signal: AbortSignal.timeout(10000),
       });
       const html = await res.text();
-      const names = [...html.matchAll(/<span x-test-search-response-title>([^<]+)<\/span>/g)].map(m => m[1].trim()).filter(Boolean);
-      const hrefs = [...html.matchAll(/href="\/library\/([^"]+)"/g)].map(m => m[1].trim());
-      const hrefSet = new Set(hrefs);
-
-      const models = names.map(name => {
-        if (hrefSet.has(`${name}:cloud`)) return `${name}:cloud`;
-        return name;
-      });
+      const cards = [...html.matchAll(/<a[^>]*href="\/library\/([^"]+)"[^>]*>([\s\S]*?)<\/a>/g)];
+      const models = cards.map(m => {
+        const name = m[1].trim();
+        const cardHtml = m[2];
+        const isCloudOnly = /text-cyan-500[^>]*>cloud<\/span>/i.test(cardHtml);
+        return isCloudOnly ? `${name}:cloud` : name;
+      }).filter(Boolean);
       return { ok: true, models };
     } catch (err) {
       return { ok: false, models: [], error: (err as Error).message };
