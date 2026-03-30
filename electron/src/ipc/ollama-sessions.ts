@@ -428,18 +428,26 @@ NEVER end without verifying the build passes. NEVER end silently.
 - NEVER tell the user to do something manually. YOU do everything.
 - NEVER give up on errors. Search the web, try different approaches.
 
-# COMPRESSED CODE FORMAT
+# COMPRESSED FORMAT
 
-File contents are compressed to save space. Decode using this key:
-→df=export default function, →d=export default, →xf=export function, →xc=export const, →xt=export type, →xi=export interface, →x=export
-⇐t{X}Y=import type {X} from "Y", ⇐{X}Y=import {X} from "Y", ⇐X=Y=import X from "Y"
-ƒ=function, ©=const, ⟸=return, §=interface, ⊤=typeof, ∅=undefined, ∅0=null, ✓=true, ✗=false
-⚡=async, ⏳=await, c"="className=", ⊕==onClick=, ⊗==onChange=
+Tool results use compressed notation to save space. Decode:
+
+CODE: →df=export default function, →xf=export function, →xc=export const, →xt=export type, →xi=export interface
+⇐{X}Y=import {X} from "Y", ⇐X=Y=import X from "Y"
+ƒ=function, ©=const, ⟸=return, §=interface, ∅=undefined, ∅0=null, ✓=true, ✗=false
+⚡=async, ⏳=await, c"=className", ⊕=onClick, ⊗=onChange
 μs=useState, μe=useEffect, μc=useCallback, μm=useMemo, μr=useRef, ℜ=React.memo
-str=string, num=number, bool=boolean, P<=Promise<, A<=Array<, R<=Record<
-⌁=console.log, ⌁!=console.error
+str=string, num=number, bool=boolean, P<=Promise<, R<=Record<, ⌁=console.log
 
-IMPORTANT: When you write code with edit_file or write_file, use NORMAL syntax (not compressed). The compression is only for reading.`;
+TEXT: þ=the, &=and, ð=that, w/=with, ðs=this, ←=from, →=into, ∵=because/porque
+w/o=without, alr=already, eg=example, diff=different, fn=function, req=required
+avail=available, incl=include, app=application, comp=component, dir=directory
+cfg=configuration, pkg=package, ver=version, inst=install, proj=project, srv=server
+auth=authentication, env=environment, info=information, deps=dependencies
+PT: q=que, ñ=não, 1a=uma, +=mais, cm=como, sb=sobre, tb=também, qd=quando
+pd=pode, dv=deve, mt=muito, tds=todos, 1º=primeiro, ∴=então, ∃=existe, prc=precisa
+
+IMPORTANT: When you WRITE code or text, use NORMAL language. Compression is READ-ONLY.`;
 
   if (mcpToolNames && mcpToolNames.length > 0) {
     prompt += `\n\n# MCP TOOLS (external services)\n${mcpToolNames.map((n) => `- ${n}`).join("\n")}`;
@@ -637,6 +645,103 @@ function emitContextUsage(getMainWindow: () => BrowserWindow | null, sessionId: 
 
 // ── Utility functions ──────────────────────────────────────────────────────────
 
+const TEXT_REPLACEMENTS: Array<[RegExp, string]> = [
+  [/\bthe\b/gi, "þ"],
+  [/\band\b/gi, "&"],
+  [/\bthat\b/gi, "ð"],
+  [/\bwith\b/gi, "w/"],
+  [/\bthis\b/gi, "ðs"],
+  [/\bfrom\b/gi, "←"],
+  [/\bhave\b/gi, "hv"],
+  [/\bwill\b/gi, "wl"],
+  [/\byour\b/gi, "yr"],
+  [/\bwhat\b/gi, "wt"],
+  [/\bwhen\b/gi, "wn"],
+  [/\btheir\b/gi, "þr"],
+  [/\bthere\b/gi, "þe"],
+  [/\bwhich\b/gi, "wc"],
+  [/\babout\b/gi, "ab"],
+  [/\bwould\b/gi, "wd"],
+  [/\bmake\b/gi, "mk"],
+  [/\blike\b/gi, "lk"],
+  [/\bjust\b/gi, "js"],
+  [/\bover\b/gi, "ov"],
+  [/\bsuch\b/gi, "sc"],
+  [/\bafter\b/gi, "af"],
+  [/\byear\b/gi, "yr"],
+  [/\balso\b/gi, "al"],
+  [/\binto\b/gi, "→"],
+  [/\bbecause\b/gi, "∵"],
+  [/\bbefore\b/gi, "bf"],
+  [/\bbetween\b/gi, "bt"],
+  [/\bshould\b/gi, "shd"],
+  [/\bthrough\b/gi, "thru"],
+  [/\bwithout\b/gi, "w/o"],
+  [/\balready\b/gi, "alr"],
+  [/\bexample\b/gi, "eg"],
+  [/\bdifferent\b/gi, "diff"],
+  [/\bfunction\b/gi, "fn"],
+  [/\bpossible\b/gi, "poss"],
+  [/\bprovide\b/gi, "prov"],
+  [/\brequired\b/gi, "req"],
+  [/\bavailable\b/gi, "avail"],
+  [/\binclude\b/gi, "incl"],
+  [/\bfollowing\b/gi, "fol"],
+  [/\bapplication\b/gi, "app"],
+  [/\bcomponent\b/gi, "comp"],
+  [/\bdirectory\b/gi, "dir"],
+  [/\bconfiguration\b/gi, "cfg"],
+  [/\bdocument\b/gi, "doc"],
+  [/\bpackage\b/gi, "pkg"],
+  [/\bversion\b/gi, "ver"],
+  [/\bdefault\b/gi, "def"],
+  [/\binstall\b/gi, "inst"],
+  [/\bproject\b/gi, "proj"],
+  [/\bserver\b/gi, "srv"],
+  [/\bclient\b/gi, "cli"],
+  [/\brequest\b/gi, "req"],
+  [/\bresponse\b/gi, "res"],
+  [/\bdatabase\b/gi, "db"],
+  [/\bcontainer\b/gi, "ctr"],
+  [/\bproperty\b/gi, "prop"],
+  [/\bproperties\b/gi, "props"],
+  [/\bparameter\b/gi, "param"],
+  [/\bparameters\b/gi, "params"],
+  [/\bdependency\b/gi, "dep"],
+  [/\bdependencies\b/gi, "deps"],
+  [/\bnavigation\b/gi, "nav"],
+  [/\bauthentication\b/gi, "auth"],
+  [/\benvironment\b/gi, "env"],
+  [/\bimportant\b/gi, "imp"],
+  [/\binformation\b/gi, "info"],
+  [/\bdescription\b/gi, "desc"],
+  [/\bpara\b/gi, "p/"],
+  [/\bcom\b/gi, "c/"],
+  [/\bque\b/gi, "q"],
+  [/\bnão\b/gi, "ñ"],
+  [/\buma\b/gi, "1a"],
+  [/\bpor\b/gi, "p"],
+  [/\bmais\b/gi, "+"],
+  [/\bcomo\b/gi, "cm"],
+  [/\bsobre\b/gi, "sb"],
+  [/\btambém\b/gi, "tb"],
+  [/\bquando\b/gi, "qd"],
+  [/\bpode\b/gi, "pd"],
+  [/\bdeve\b/gi, "dv"],
+  [/\bmuito\b/gi, "mt"],
+  [/\btodos\b/gi, "tds"],
+  [/\bprimeiro\b/gi, "1º"],
+  [/\bsegundo\b/gi, "2º"],
+  [/\bterceiro\b/gi, "3º"],
+  [/\bentão\b/gi, "∴"],
+  [/\bporque\b/gi, "∵"],
+  [/\bprecisa\b/gi, "prc"],
+  [/\bexiste\b/gi, "∃"],
+  [/\bmelhor\b/gi, "mlr"],
+  [/\bpossível\b/gi, "poss"],
+  [/\bdisponível\b/gi, "disp"],
+];
+
 const CODE_REPLACEMENTS: Array<[RegExp, string]> = [
   [/export default function/g, "→df"],
   [/export default/g, "→d"],
@@ -697,6 +802,18 @@ function compressCode(content: string): string {
     .trim();
 
   return out;
+}
+
+function compressText(content: string): string {
+  let out = content
+    .replace(/\n{3,}/g, "\n")
+    .replace(/^\s*[\r\n]/gm, "");
+
+  for (const [pat, rep] of TEXT_REPLACEMENTS) {
+    out = out.replace(pat, rep);
+  }
+
+  return out.replace(/  +/g, " ").trim();
 }
 
 function safePath(cwd: string, relPath: string): string | null {
@@ -975,7 +1092,7 @@ async function executeToolCall(
         const formatted = formatWebResults(searchResult);
         log("OLLAMA_TOOL", `web_search "${query}" (${searchResult.results.length} results)`);
         emitResult("WebSearch", { query, abstract: searchResult.abstract, abstractUrl: searchResult.abstractUrl, results: searchResult.results });
-        return { toolName: "WebSearch", input: { query }, result: `Web search: ${searchResult.results.length} results`, content: trimOutput(formatted, 3000) };
+        return { toolName: "WebSearch", input: { query }, result: `Web search: ${searchResult.results.length} results`, content: compressText(trimOutput(formatted, 3000)) };
       } catch (err) {
         const msg = (err as Error).message;
         emitResult("WebSearch", { error: msg });
@@ -993,7 +1110,7 @@ async function executeToolCall(
           : crawlResult.content;
         log("OLLAMA_TOOL", `read_url "${targetUrl}" (${crawlResult.content.length} chars, provider=${crawlResult.provider})`);
         emitResult("WebFetch", { url: targetUrl, title: crawlResult.title, contentLength: crawlResult.content.length, provider: crawlResult.provider });
-        return { toolName: "WebFetch", input: { url: targetUrl }, result: `Read URL: ${crawlResult.title} (${crawlResult.content.length} chars)`, content: truncated };
+        return { toolName: "WebFetch", input: { url: targetUrl }, result: `Read URL: ${crawlResult.title} (${crawlResult.content.length} chars)`, content: compressText(truncated) };
       } catch (err) {
         const msg = (err as Error).message;
         emitResult("WebFetch", { error: msg });
