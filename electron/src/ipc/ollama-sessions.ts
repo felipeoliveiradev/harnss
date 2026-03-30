@@ -68,6 +68,8 @@ interface SessionState {
   toolCallCount: number;
   recentToolSignatures: string[];
   pendingPages: Map<string, string[]>;
+  progressSummary: string;
+  lastSummaryAtLoop: number;
 }
 
 interface OllamaSession {
@@ -123,7 +125,7 @@ function emit(
 }
 
 function freshState(): SessionState {
-  return { filesRead: [], filesModified: [], filesCreated: [], originalRequest: "", toolCallCount: 0, recentToolSignatures: [], pendingPages: new Map() };
+  return { filesRead: [], filesModified: [], filesCreated: [], originalRequest: "", toolCallCount: 0, recentToolSignatures: [], pendingPages: new Map(), progressSummary: "", lastSummaryAtLoop: 0 };
 }
 
 // ── Native tool definitions ────────────────────────────────────────────────────
@@ -1083,18 +1085,8 @@ async function streamOllamaChat(
   });
   const compressed = compressConversation(trimmedMessages as Array<{ role: "user" | "assistant" | "system"; content: string }>);
 
-  const state = session.state;
-  const stateLines: string[] = [];
-  if (state.filesCreated.length > 0) stateLines.push(`FILES ALREADY CREATED: ${state.filesCreated.join(", ")}`);
-  if (state.filesModified.length > 0) stateLines.push(`FILES ALREADY MODIFIED: ${state.filesModified.join(", ")}`);
-  if (state.filesRead.length > 0) stateLines.push(`FILES ALREADY READ: ${state.filesRead.slice(-10).join(", ")}`);
-  if (state.originalRequest) stateLines.push(`ORIGINAL USER REQUEST: ${state.originalRequest}`);
-  if (stateLines.length > 0) {
-    stateLines.unshift("=== CURRENT SESSION STATE (do NOT repeat completed work) ===");
-    if (state.filesCreated.length > 0) {
-      stateLines.push("WARNING: A project already exists. Do NOT create a new one. Do NOT run create-next-app or github_clone again. Work on the EXISTING files.");
-    }
-    compressed.splice(1, 0, { role: "system", content: stateLines.join("\n") } as typeof compressed[0]);
+  if (session.state.progressSummary) {
+    compressed.splice(1, 0, { role: "system", content: session.state.progressSummary } as typeof compressed[0]);
   }
 
   const chatOpts: Record<string, unknown> = {
@@ -1679,6 +1671,27 @@ Do NOT create files manually. Do NOT search again. Clone NOW.`;
             role: "user",
             content: "STOP — you are repeating the same command. It is not working. Try a COMPLETELY DIFFERENT approach. For example: if npx create-next-app keeps failing, create the project manually using mkdir and write_file instead. If a build keeps failing on the same error, search the web for a solution. Move on to the next task in your plan.",
           });
+        }
+
+        const SUMMARY_INTERVAL = 5;
+        if (loopCount - session.state.lastSummaryAtLoop >= SUMMARY_INTERVAL && session.state.toolCallCount > 3) {
+          session.state.lastSummaryAtLoop = loopCount;
+          const summaryParts: string[] = ["=== SESSION PROGRESS (do NOT repeat completed work) ==="];
+          summaryParts.push(`Original request: ${session.state.originalRequest}`);
+          if (session.state.filesCreated.length > 0) {
+            summaryParts.push(`Project created: ${session.state.filesCreated.slice(0, 5).join(", ")}${session.state.filesCreated.length > 5 ? ` (+${session.state.filesCreated.length - 5} more)` : ""}`);
+            summaryParts.push("WARNING: Project already exists. Do NOT run create-next-app, github_clone, or scaffold commands again. Edit the EXISTING files.");
+          }
+          if (session.state.filesModified.length > 0) {
+            summaryParts.push(`Files modified: ${session.state.filesModified.join(", ")}`);
+          }
+          const lastAssistantMsgs = session.messages.filter(m => m.role === "assistant" && m.content.length > 50).slice(-2);
+          if (lastAssistantMsgs.length > 0) {
+            summaryParts.push(`Last actions: ${lastAssistantMsgs.map(m => m.content.slice(0, 150)).join(" | ")}`);
+          }
+          summaryParts.push("Continue from where you left off. Do NOT start over.");
+          session.state.progressSummary = summaryParts.join("\n");
+          log("OLLAMA", `progress summary updated at loop ${loopCount}: ${session.state.filesCreated.length} created, ${session.state.filesModified.length} modified`);
         }
 
         emit(getMainWindow, sessionId, "lifecycle:start", {});
