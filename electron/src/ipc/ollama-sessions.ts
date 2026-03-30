@@ -736,6 +736,12 @@ async function executeToolCall(
         log("OLLAMA_TOOL", `read_file got URL "${rel}" — redirecting to read_url`);
         return executeToolCall({ function: { name: "read_url", arguments: { url: rel } } }, cwd, sessionState, getMainWindow, sessionId);
       }
+      if (sessionState.filesRead.includes(rel)) {
+        log("OLLAMA_TOOL", `read_file ${rel} — already read, returning short notice`);
+        emitStart("Read", { file_path: rel });
+        emitResult("Read", { content: "(already read)" });
+        return { toolName: "Read", input: { file_path: rel }, result: `Already read ${rel}`, content: `You already read this file earlier in this session. Use the content from your previous read. Do NOT read it again.` };
+      }
       emitStart("Read", { file_path: rel });
       const abs = safePath(cwd, rel);
       if (!abs) {
