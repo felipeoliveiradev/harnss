@@ -23,6 +23,7 @@ import {
   Pencil,
   Shield,
   Sparkles,
+  Search,
   Square,
   Users,
   X,
@@ -419,6 +420,114 @@ function OpenClawAgentDropdown({
   );
 }
 
+function OllamaModelCombobox({
+  modelName,
+  models,
+  loading,
+  disabled,
+  onSelect,
+  onOpen,
+}: {
+  modelName?: string;
+  models?: string[];
+  loading?: boolean;
+  disabled?: boolean;
+  onSelect?: (model: string) => void;
+  onOpen?: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const filtered = useMemo(() => {
+    if (!models) return [];
+    if (!query.trim()) return models;
+    const q = query.toLowerCase();
+    return models.filter((m) => m.toLowerCase().includes(q));
+  }, [models, query]);
+
+  const handleOpen = (nextOpen: boolean) => {
+    setOpen(nextOpen);
+    if (nextOpen) {
+      onOpen?.();
+      setQuery("");
+      setTimeout(() => inputRef.current?.focus(), 0);
+    }
+  };
+
+  const handleSelect = (model: string) => {
+    onSelect?.(model);
+    setOpen(false);
+    setQuery("");
+  };
+
+  const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" && query.trim()) {
+      handleSelect(query.trim());
+    }
+    if (e.key === "Escape") {
+      setOpen(false);
+    }
+  };
+
+  return (
+    <Popover open={open} onOpenChange={handleOpen}>
+      <PopoverTrigger asChild>
+        <button
+          className="flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+          disabled={disabled}
+        >
+          {modelName || "Ollama"}
+          <ChevronDown className="h-3 w-3" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-72 p-0" sideOffset={4}>
+        <div className="flex items-center gap-2 border-b border-border/40 px-3 py-2">
+          <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground/50" />
+          <input
+            ref={inputRef}
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Search or type model name…"
+            spellCheck={false}
+            className="flex-1 bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground/40"
+          />
+          {loading && <Loader2 className="h-3 w-3 shrink-0 animate-spin text-muted-foreground/50" />}
+        </div>
+        <div className="max-h-56 overflow-y-auto py-1">
+          {filtered.length > 0 ? (
+            filtered.map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => handleSelect(m)}
+                className={`flex w-full items-center gap-2 px-3 py-1.5 text-start text-xs transition-colors hover:bg-muted/40 ${
+                  m === modelName ? "text-foreground" : "text-muted-foreground"
+                }`}
+              >
+                {m === modelName && <Check className="h-3 w-3 shrink-0" />}
+                <span className={m === modelName ? "" : "ps-5"}>{m}</span>
+              </button>
+            ))
+          ) : query.trim() ? (
+            <button
+              type="button"
+              onClick={() => handleSelect(query.trim())}
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-start text-xs text-muted-foreground transition-colors hover:bg-muted/40"
+            >
+              <span className="ps-5">Use "{query.trim()}"</span>
+            </button>
+          ) : (
+            <div className="px-3 py-1.5 text-xs text-muted-foreground/50">No models found</div>
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 function EngineControls({
   isCodexAgent,
   isACPAgent,
@@ -501,37 +610,14 @@ function EngineControls({
 }) {
   if (isOllamaAgent) {
     return (
-      <DropdownMenu onOpenChange={(open) => { if (open && onFetchOllamaModels) onFetchOllamaModels(); }}>
-        <DropdownMenuTrigger asChild>
-          <button
-            className="flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
-            disabled={isProcessing}
-          >
-            {ollamaModelName || "Ollama"}
-            <ChevronDown className="h-3 w-3" />
-          </button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="start">
-          {ollamaModelsLoading ? (
-            <div className="flex items-center gap-2 px-2 py-1.5 text-xs text-muted-foreground">
-              <Loader2 className="h-3 w-3 animate-spin" />
-              Loading models…
-            </div>
-          ) : ollamaModels && ollamaModels.length > 0 ? (
-            ollamaModels.map((m) => (
-              <DropdownMenuItem
-                key={m}
-                onClick={() => onOllamaModelChange?.(m)}
-                className={m === ollamaModelName ? "bg-accent" : ""}
-              >
-                {m}
-              </DropdownMenuItem>
-            ))
-          ) : (
-            <div className="px-2 py-1.5 text-xs text-muted-foreground">No models found</div>
-          )}
-        </DropdownMenuContent>
-      </DropdownMenu>
+      <OllamaModelCombobox
+        modelName={ollamaModelName}
+        models={ollamaModels}
+        loading={ollamaModelsLoading}
+        disabled={isProcessing}
+        onSelect={onOllamaModelChange}
+        onOpen={onFetchOllamaModels}
+      />
     );
   }
 
