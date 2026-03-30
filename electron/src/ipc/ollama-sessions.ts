@@ -426,7 +426,20 @@ NEVER end without verifying the build passes. NEVER end silently.
 - run_shell is NON-INTERACTIVE. No stdin. Use --yes/-y flags. If a command hangs, switch to manual file creation.
 - Reply in the user's language. Keep text to 1-2 lines. Let tools do the work.
 - NEVER tell the user to do something manually. YOU do everything.
-- NEVER give up on errors. Search the web, try different approaches.`;
+- NEVER give up on errors. Search the web, try different approaches.
+
+# COMPRESSED CODE FORMAT
+
+File contents are compressed to save space. Decode using this key:
+→df=export default function, →d=export default, →xf=export function, →xc=export const, →xt=export type, →xi=export interface, →x=export
+⇐t{X}Y=import type {X} from "Y", ⇐{X}Y=import {X} from "Y", ⇐X=Y=import X from "Y"
+ƒ=function, ©=const, ⟸=return, §=interface, ⊤=typeof, ∅=undefined, ∅0=null, ✓=true, ✗=false
+⚡=async, ⏳=await, c"="className=", ⊕==onClick=, ⊗==onChange=
+μs=useState, μe=useEffect, μc=useCallback, μm=useMemo, μr=useRef, ℜ=React.memo
+str=string, num=number, bool=boolean, P<=Promise<, A<=Array<, R<=Record<
+⌁=console.log, ⌁!=console.error
+
+IMPORTANT: When you write code with edit_file or write_file, use NORMAL syntax (not compressed). The compression is only for reading.`;
 
   if (mcpToolNames && mcpToolNames.length > 0) {
     prompt += `\n\n# MCP TOOLS (external services)\n${mcpToolNames.map((n) => `- ${n}`).join("\n")}`;
@@ -624,16 +637,66 @@ function emitContextUsage(getMainWindow: () => BrowserWindow | null, sessionId: 
 
 // ── Utility functions ──────────────────────────────────────────────────────────
 
+const CODE_REPLACEMENTS: Array<[RegExp, string]> = [
+  [/export default function/g, "→df"],
+  [/export default/g, "→d"],
+  [/export function/g, "→xf"],
+  [/export const/g, "→xc"],
+  [/export type/g, "→xt"],
+  [/export interface/g, "→xi"],
+  [/export /g, "→x "],
+  [/import type \{([^}]+)\} from ["']([^"']+)["'];?/g, "⇐t{$1}$2"],
+  [/import \{([^}]+)\} from ["']([^"']+)["'];?/g, "⇐{$1}$2"],
+  [/import (\w+) from ["']([^"']+)["'];?/g, "⇐$1=$2"],
+  [/function /g, "ƒ "],
+  [/const /g, "© "],
+  [/return /g, "⟸ "],
+  [/interface /g, "§ "],
+  [/typeof /g, "⊤ "],
+  [/undefined/g, "∅"],
+  [/null/g, "∅0"],
+  [/true/g, "✓"],
+  [/false/g, "✗"],
+  [/async /g, "⚡"],
+  [/await /g, "⏳"],
+  [/className="/g, 'c="'],
+  [/onClick=/g, "⊕="],
+  [/onChange=/g, "⊗="],
+  [/useState/g, "μs"],
+  [/useEffect/g, "μe"],
+  [/useCallback/g, "μc"],
+  [/useMemo/g, "μm"],
+  [/useRef/g, "μr"],
+  [/React\.memo/g, "ℜ"],
+  [/string/g, "str"],
+  [/number/g, "num"],
+  [/boolean/g, "bool"],
+  [/Promise</g, "P<"],
+  [/Array</g, "A<"],
+  [/Record</g, "R<"],
+  [/console\.log/g, "⌁"],
+  [/console\.error/g, "⌁!"],
+];
+
 function compressCode(content: string): string {
-  return content
+  let out = content
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/\/\/.*$/gm, "")
     .replace(/<!--[\s\S]*?-->/g, "")
     .replace(/^\s*[\r\n]/gm, "")
+    .replace(/\n{3,}/g, "\n");
+
+  for (const [pat, rep] of CODE_REPLACEMENTS) {
+    out = out.replace(pat, rep);
+  }
+
+  out = out
     .replace(/^( {4}|\t)/gm, " ")
-    .replace(/^ {2,}/gm, (m) => " ".repeat(Math.ceil(m.length / 2)))
-    .replace(/\n{3,}/g, "\n")
+    .replace(/^ {2,}/gm, (m) => " ".repeat(Math.ceil(m.length / 3)))
+    .replace(/  +/g, " ")
     .trim();
+
+  return out;
 }
 
 function safePath(cwd: string, relPath: string): string | null {
