@@ -365,26 +365,13 @@ The path will be shown in your context as "📋 YOUR NOTEBOOK (path)". Use that 
 RULES:
 1. FIRST THING every session: read_file on your notebook path to load your memory
 2. After EVERY research/data tool, write_file the full updated notebook
-3. The notebook MUST contain ALL of this:
+3. The notebook MUST contain ALL of these sections:
 
-```markdown
 # Notes
-
-## 🔵 Context
-- What the user wants (full detail)
-- Tech stack decisions
-- Project location
-- Key data found (names, URLs, numbers)
-
-## 🟢 Done
-- [task] — [result]
-
-## 🟡 Todo
-- [file_path]: [exactly what to do, which tool to use, what content]
-
-## 🔴 Blocks
-- [error message] — [how to fix]
-```
+## 🔵 Context — what user wants, tech stack, project path, key data
+## 🟢 Done — completed tasks with results
+## 🟡 Todo — pending tasks with file paths and exactly what to do
+## 🔴 Blocks — errors and how to fix them
 
 4. ALWAYS write the FULL file. Not append. Read → update all sections → write.
 5. Include ALL data you need. Names, URLs, numbers, paths. Be complete.
