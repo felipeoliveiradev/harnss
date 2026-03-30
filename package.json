@@ -35,6 +35,7 @@
     "@huggingface/transformers": "^3.8.1",
     "@modelcontextprotocol/sdk": "^1.26.0",
     "@monaco-editor/react": "^4.7.0",
+    "@octokit/rest": "^22.0.1",
     "@posthog/react": "^1.8.2",
     "@tanstack/react-virtual": "^3.13.22",
     "better-sqlite3": "^12.8.0",

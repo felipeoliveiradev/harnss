@@ -113,6 +113,9 @@ export interface AppSettings {
   ignoreDefaultsDisabled: boolean;
   /** Crawler provider configuration with priority ordering */
   crawler: CrawlerSettings;
+  githubToken: string;
+  openRouterApiKey: string;
+  moltbookApiKey: string;
 }
 
 const CRAWLER_DEFAULTS: CrawlerSettings = {
@@ -171,6 +174,9 @@ const DEFAULTS: AppSettings = {
   ignorePatterns: [],
   ignoreDefaultsDisabled: false,
   crawler: CRAWLER_DEFAULTS,
+  githubToken: "",
+  openRouterApiKey: "",
+  moltbookApiKey: "",
 };
 
 // ── Internal state ──

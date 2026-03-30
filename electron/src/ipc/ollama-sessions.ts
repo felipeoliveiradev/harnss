@@ -11,6 +11,7 @@ import { webSearch, formatWebResults } from "../lib/rag/web-search";
 import { crawlUrl } from "../lib/rag/web-crawl";
 import { filterFiles } from "../lib/harnssignore";
 import { getMcpToolsForOllama, executeMcpTool, disconnectMcpBridge, type McpBridgeState } from "../lib/mcp-bridge";
+import { multiAiSearch } from "../lib/multi-ai-search";
 
 let ollamaClient: any = null;
 async function getOllamaClient(): Promise<any> {
@@ -230,9 +231,53 @@ const OLLAMA_TOOLS = [
       },
     },
   },
+  {
+    type: "function" as const,
+    function: {
+      name: "ask_multiple_ais",
+      description: "Query multiple AI models (Claude, GPT-4, Gemini, Llama) with the same question and get their different perspectives. Use for research, cross-validation, or getting diverse opinions on technical decisions.",
+      parameters: {
+        type: "object",
+        required: ["query"],
+        properties: {
+          query: { type: "string", description: "The research question to ask all models" },
+        },
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "github_search",
+      description: "Search GitHub repositories for starter templates, boilerplates, and open-source projects.",
+      parameters: {
+        type: "object",
+        required: ["query"],
+        properties: {
+          query: { type: "string", description: "Search query" },
+          language: { type: "string", description: "Filter by language" },
+          sort: { type: "string", description: "Sort by: stars, forks, updated" },
+        },
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "github_clone",
+      description: "Clone a GitHub repository to a local directory.",
+      parameters: {
+        type: "object",
+        required: ["url", "destination"],
+        properties: {
+          url: { type: "string", description: "HTTPS clone URL" },
+          destination: { type: "string", description: "Local path to clone into" },
+          depth: { type: "number", description: "Shallow clone depth (1 for latest only)" },
+        },
+      },
+    },
+  },
 ];
-
-// ── System prompt (behavior only, no tool format) ──────────────────────────────
 
 function buildSystemPrompt(cwd: string, skillContents?: string[], mcpToolNames?: string[]): string {
   let prompt = `You are an expert software engineer operating as a coding agent inside Harnss, a desktop IDE.
@@ -1044,6 +1089,101 @@ async function executeToolCall(
       const output = [shellResult.stdout, shellResult.stderr].filter(Boolean).join("\n");
       emitResult("Bash", { stdout: shellResult.stdout, stderr: shellResult.stderr, exitCode: shellResult.exitCode, output });
       return { toolName: "Bash", input: { command }, result: `exit ${shellResult.exitCode}`, content: output || "(no output)" };
+    }
+
+    case "ask_multiple_ais": {
+      const query = args.query ?? "";
+      emitStart("MultiAiSearch", { query });
+      try {
+        const openRouterApiKey = getAppSetting("openRouterApiKey") || "";
+        const moltbookApiKey = getAppSetting("moltbookApiKey") || "";
+        const searchResult = await multiAiSearch({ query, openRouterApiKey, moltbookApiKey });
+        const results = (searchResult as { results: Array<{ model: string; response: string; error?: string }> }).results ?? [];
+        const formatted = results
+          .map((r: { model: string; response: string; error?: string }) =>
+            r.error
+              ? `### ${r.model}\nError: ${r.error}`
+              : `### ${r.model}\n${r.response}`,
+          )
+          .join("\n\n---\n\n");
+        log("OLLAMA_TOOL", `ask_multiple_ais "${query}" (${results.length} models)`);
+        emitResult("MultiAiSearch", { query, modelCount: results.length, results });
+        return { toolName: "MultiAiSearch", input: { query }, result: `Multi-AI search: ${results.length} models responded`, content: formatted || "No results" };
+      } catch (err) {
+        const msg = (err as Error).message;
+        emitResult("MultiAiSearch", { error: msg });
+        return { toolName: "MultiAiSearch", input: { query }, result: msg, content: `Multi-AI search failed: ${msg}` };
+      }
+    }
+
+    case "github_search": {
+      const query = args.query ?? "";
+      const language = args.language as string | undefined;
+      const sort = args.sort as string | undefined;
+      emitStart("GitHubSearch", { query, language, sort });
+      try {
+        const https = await import("https");
+        const data = await new Promise<{ total_count: number; items: Array<{ full_name: string; description: string | null; html_url: string; stargazers_count: number; language: string | null; clone_url: string }> }>((resolve, reject) => {
+          let q = encodeURIComponent(query);
+          if (language) q += `+language:${encodeURIComponent(language)}`;
+          const apiPath = `/search/repositories?q=${q}&sort=${sort || "stars"}&per_page=10`;
+          const options: Record<string, unknown> = {
+            hostname: "api.github.com",
+            path: apiPath,
+            method: "GET",
+            headers: { "User-Agent": "Harnss-Desktop", Accept: "application/vnd.github.v3+json" },
+          };
+          const ghToken = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+          if (ghToken) (options.headers as Record<string, string>)["Authorization"] = `Bearer ${ghToken}`;
+          const req = https.default.request(options as https.RequestOptions, (res) => {
+            let body = "";
+            res.on("data", (chunk: Buffer) => { body += chunk; });
+            res.on("end", () => {
+              if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+                try { resolve(JSON.parse(body)); } catch (e) { reject(e); }
+              } else { reject(new Error(`GitHub API ${res.statusCode}`)); }
+            });
+          });
+          req.on("error", reject);
+          req.setTimeout(15000, () => { req.destroy(); reject(new Error("timeout")); });
+          req.end();
+        });
+        const formatted = data.items
+          .map((r) => `${r.full_name} (${r.stargazers_count} stars) — ${r.description || "No description"}\n  ${r.html_url}\n  Clone: ${r.clone_url}`)
+          .join("\n\n");
+        log("OLLAMA_TOOL", `github_search "${query}" (${data.total_count} total)`);
+        emitResult("GitHubSearch", { query, totalCount: data.total_count, items: data.items.slice(0, 5) });
+        return { toolName: "GitHubSearch", input: { query }, result: `GitHub search: ${data.items.length} repos`, content: formatted || "No repositories found." };
+      } catch (err) {
+        const msg = (err as Error).message;
+        emitResult("GitHubSearch", { error: msg });
+        return { toolName: "GitHubSearch", input: { query }, result: msg, content: `GitHub search failed: ${msg}` };
+      }
+    }
+
+    case "github_clone": {
+      const url = args.url ?? "";
+      const destination = args.destination ?? "";
+      const depth = (args as Record<string, unknown>).depth as number | undefined;
+      emitStart("GitHubClone", { url, destination, depth });
+      try {
+        const cloneArgs = ["clone"];
+        if (depth) cloneArgs.push("--depth", String(depth));
+        cloneArgs.push(url, destination);
+        const result = await runShell(`git ${cloneArgs.join(" ")}`, cwd);
+        if (result.exitCode === 0) {
+          log("OLLAMA_TOOL", `github_clone ${url} -> ${destination}`);
+          emitResult("GitHubClone", { status: "ok", url, destination });
+          return { toolName: "GitHubClone", input: { url, destination }, result: `Cloned ${url} -> ${destination}`, content: `Repository cloned to ${destination}\n${result.stdout}`.trim() };
+        }
+        const errOutput = result.stderr || result.stdout || "clone failed";
+        emitResult("GitHubClone", { error: errOutput });
+        return { toolName: "GitHubClone", input: { url, destination }, result: errOutput, content: errOutput };
+      } catch (err) {
+        const msg = (err as Error).message;
+        emitResult("GitHubClone", { error: msg });
+        return { toolName: "GitHubClone", input: { url, destination }, result: msg, content: `Clone failed: ${msg}` };
+      }
     }
 
     default: {

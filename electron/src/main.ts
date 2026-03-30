@@ -57,6 +57,8 @@ import { registerGroupSessionHandlers } from "./ipc/group-sessions";
 import * as settingsIpc from "./ipc/settings";
 import * as jiraIpc from "./ipc/jira";
 import * as previewIpc from "./ipc/preview";
+import * as multiAiIpc from "./ipc/multi-ai";
+import * as githubIpc from "./ipc/github";
 import { onSettingsChanged } from "./ipc/settings";
 
 // --- Performance: Chromium/V8 flags (must be set before app.whenReady()) ---
@@ -339,6 +341,8 @@ skillsRegistryIpc.register();
 settingsIpc.register();
 jiraIpc.register();
 previewIpc.register();
+multiAiIpc.register();
+githubIpc.register();
 
 // Listen for analytics settings changes and reinitialize PostHog
 let lastAnalyticsEnabled: boolean | undefined;

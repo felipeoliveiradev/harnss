@@ -388,6 +388,18 @@ contextBridge.exposeInMainWorld("claude", {
     get: () => ipcRenderer.invoke("settings:get"),
     set: (patch: Record<string, unknown>) => ipcRenderer.invoke("settings:set", patch),
   },
+  github: {
+    search: (options: { query: string; language?: string; sort?: string; per_page?: number }) => ipcRenderer.invoke("github:search", options),
+    browse: (owner: string, repo: string, ref?: string) => ipcRenderer.invoke("github:browse", owner, repo, ref),
+    read: (owner: string, repo: string, filePath: string, ref?: string) => ipcRenderer.invoke("github:read", owner, repo, filePath, ref),
+    clone: (url: string, destination: string, options?: { depth?: number; branch?: string }) => ipcRenderer.invoke("github:clone", url, destination, options),
+    searchCode: (query: string, options?: { language?: string; per_page?: number }) => ipcRenderer.invoke("github:search-code", query, options),
+    onCloneProgress: (callback: (data: unknown) => void) => {
+      const listener = (_event: IpcRendererEvent, data: unknown) => callback(data);
+      ipcRenderer.on("github:clone-progress", listener);
+      return () => ipcRenderer.removeListener("github:clone-progress", listener);
+    },
+  },
   webSearch: {
     test: (providerId: string) => ipcRenderer.invoke("web-search:test", providerId),
     history: (limit?: number) => ipcRenderer.invoke("web-search:history", limit),
@@ -434,6 +446,10 @@ contextBridge.exposeInMainWorld("claude", {
       ipcRenderer.invoke("jira:get-transitions", params),
     transitionIssue: (params: { instanceUrl: string; issueKey: string; transitionId: string }) =>
       ipcRenderer.invoke("jira:transition-issue", params),
+  },
+  multiAi: {
+    search: (options: { query: string; models?: string[]; useMoltbook?: boolean; cacheTtlHours?: number }) =>
+      ipcRenderer.invoke("multi-ai:search", options),
   },
   analytics: {
     capture: (event: string, properties?: Record<string, unknown>) =>

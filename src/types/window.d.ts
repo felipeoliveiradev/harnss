@@ -458,6 +458,20 @@ declare global {
         getTransitions: (params: JiraGetTransitionsParams) => Promise<JiraTransition[]>;
         transitionIssue: (params: JiraTransitionIssueParams) => Promise<{ ok: true }>;
       };
+      multiAi: {
+        search: (options: {
+          query: string;
+          models?: string[];
+          useMoltbook?: boolean;
+          cacheTtlHours?: number;
+        }) => Promise<{
+          results: Array<{
+            model: string;
+            response: string;
+            error?: string;
+          }>;
+        }>;
+      };
       analytics: {
         capture: (event: string, properties?: Record<string, unknown>) => void;
       };
