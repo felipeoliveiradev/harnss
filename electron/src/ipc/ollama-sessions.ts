@@ -1195,6 +1195,8 @@ async function streamOllamaChat(
       delete chatOpts.think;
       const stream = await client.chat(chatOpts);
       await consumeStream(stream);
+    } else if (errMsg.includes("aborted") || errMsg.includes("AbortError")) {
+      log("OLLAMA", "stream aborted (thinking timeout or user interrupt)");
     } else {
       clearInterval(stallTimer);
       throw err;
