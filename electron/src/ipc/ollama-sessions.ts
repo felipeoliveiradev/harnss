@@ -1074,7 +1074,14 @@ async function streamOllamaChat(
   let promptTokens = 0;
   let completionTokens = 0;
 
-  const compressed = compressConversation(session.messages as Array<{ role: "user" | "assistant" | "system"; content: string }>);
+  const MAX_TOOL_CONTENT = 4000;
+  const trimmedMessages = session.messages.map(m => {
+    if (m.role === "tool" && m.content.length > MAX_TOOL_CONTENT) {
+      return { ...m, content: m.content.slice(0, MAX_TOOL_CONTENT) + "\n... (truncated)" };
+    }
+    return m;
+  });
+  const compressed = compressConversation(trimmedMessages as Array<{ role: "user" | "assistant" | "system"; content: string }>);
 
   const chatOpts: Record<string, unknown> = {
     model: session.model,
@@ -1147,6 +1154,12 @@ async function streamOllamaChat(
     if (Date.now() - lastChunkTime > STREAM_STALL_MS) {
       log("OLLAMA", `stream stalled for ${STREAM_STALL_MS / 1000}s — aborting`);
       controller.abort();
+      client.abort();
+      clearInterval(stallTimer);
+    } else if (!hasContent && thinkingStartTime > 0 && Date.now() - thinkingStartTime > MAX_THINKING_MS) {
+      log("OLLAMA", `thinking timeout ${MAX_THINKING_MS / 1000}s — aborting from timer`);
+      controller.abort();
+      client.abort();
       clearInterval(stallTimer);
     } else if (!fullContent && !fullThinking && Date.now() - lastChunkTime > 5000) {
       emit(getMainWindow, sessionId, "chat:thinking", { text: "Thinking..." });
@@ -1159,6 +1172,7 @@ async function streamOllamaChat(
     clearInterval(stallTimer);
   } catch (err) {
     const errMsg = (err as Error).message || String(err);
+    log("OLLAMA", `chat error: ${errMsg}`);
     if (session.supportsThinking && errMsg.includes("does not support thinking")) {
       log("OLLAMA", "model does not support thinking — retrying without");
       session.supportsThinking = false;
