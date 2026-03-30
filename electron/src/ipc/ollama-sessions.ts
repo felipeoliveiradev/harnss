@@ -1667,7 +1667,10 @@ Do NOT create files manually. Do NOT search again. Clone NOW.`;
 
   ipcMain.handle("ollama:search-models", async (_event, query: string) => {
     try {
-      const res = await fetch(`https://ollama.com/search?q=${encodeURIComponent(query)}`, {
+      const url = query.trim()
+        ? `https://ollama.com/search?q=${encodeURIComponent(query)}&c=cloud`
+        : `https://ollama.com/search?c=cloud`;
+      const res = await fetch(url, {
         headers: { "HX-Request": "true" },
         signal: AbortSignal.timeout(10000),
       });

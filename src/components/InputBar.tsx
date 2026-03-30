@@ -474,6 +474,7 @@ function OllamaModelCombobox({
       onOpen?.();
       setQuery("");
       setRemoteModels([]);
+      searchRemote("");
       setTimeout(() => inputRef.current?.focus(), 0);
     }
   };
@@ -529,39 +530,33 @@ function OllamaModelCombobox({
           {isLoading && <Loader2 className="h-3 w-3 shrink-0 animate-spin text-muted-foreground/50" />}
         </div>
         <div className="max-h-64 overflow-y-auto py-1">
-          {merged.local.length > 0 && (
-            <>
-              {query.trim() && <div className="px-3 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/40">Local</div>}
-              {merged.local.map((m) => (
-                <button
-                  key={`local-${m}`}
-                  type="button"
-                  onClick={() => handleSelect(m)}
-                  className={`flex w-full items-center gap-2 px-3 py-1.5 text-start text-xs transition-colors hover:bg-muted/40 ${
-                    m === modelName ? "text-foreground" : "text-muted-foreground"
-                  }`}
-                >
-                  {m === modelName && <Check className="h-3 w-3 shrink-0" />}
-                  <span className={m === modelName ? "" : "ps-5"}>{m}</span>
-                </button>
-              ))}
-            </>
+          {merged.local.map((m) => (
+            <button
+              key={`local-${m}`}
+              type="button"
+              onClick={() => handleSelect(m)}
+              className={`flex w-full items-center gap-2 px-3 py-1.5 text-start text-xs transition-colors hover:bg-muted/40 ${
+                m === modelName ? "text-foreground" : "text-muted-foreground"
+              }`}
+            >
+              {m === modelName && <Check className="h-3 w-3 shrink-0" />}
+              <span className={m === modelName ? "" : "ps-5"}>{m}</span>
+            </button>
+          ))}
+          {merged.remote.length > 0 && merged.local.length > 0 && (
+            <div className="mx-3 my-1 border-t border-border/30" />
           )}
-          {merged.remote.length > 0 && (
-            <>
-              <div className="px-3 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/40">Cloud</div>
-              {merged.remote.map((m) => (
-                <button
-                  key={`remote-${m}`}
-                  type="button"
-                  onClick={() => handleSelect(m)}
-                  className="flex w-full items-center gap-2 px-3 py-1.5 text-start text-xs text-muted-foreground transition-colors hover:bg-muted/40"
-                >
-                  <span className="ps-5">{m}</span>
-                </button>
-              ))}
-            </>
-          )}
+          {merged.remote.map((m) => (
+            <button
+              key={`remote-${m}`}
+              type="button"
+              onClick={() => handleSelect(m)}
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-start text-xs text-muted-foreground transition-colors hover:bg-muted/40"
+            >
+              <span className="ps-5 flex-1">{m}</span>
+              <span className="shrink-0 rounded-full bg-sky-500/10 px-1.5 py-0.5 text-[9px] font-medium text-sky-400">cloud</span>
+            </button>
+          ))}
           {!hasResults && query.trim() && !isLoading && (
             <button
               type="button"
